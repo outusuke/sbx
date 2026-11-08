@@ -1,0 +1,372 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# sbx-gui - GTK4 + libadwaita settings editor for sbx. It reads and writes the same files as the command line:
+# ~/.config/sbx/default.conf and ~/.config/sbx/apps/NAME.conf.   Usage: sbx-gui [NAME | --default]
+import os, pwd, re, shutil, subprocess, sys, tempfile
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, GLib, Gtk
+
+HOME  = os.path.realpath(os.path.expanduser("~"))
+USER  = pwd.getpwuid(os.getuid()).pw_name
+CONF  = HOME + "/.config/sbx"
+APPS  = CONF + "/apps"
+HOMES = HOME + "/.sbx-homes"
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+OUTSIDE = ("/mnt/", "/media/", "/run/media/", "/tmp/")      # same as DRIVES + /tmp in sbx
+
+# Keep in sync with SCALARS in sbx: key, title, subtitle, default.
+GROUPS = [
+    ("Network", [("net", "Network", "Internet and your local network", True)]),
+    ("Display and devices", [
+        ("wayland", "Wayland", "Lets graphical programs open a window", True),
+        ("x11", "X11", "Weaker isolation than Wayland", False),
+        ("gpu", "Graphics card", "/dev/dri and NVIDIA devices", True),
+        ("sound", "Sound", "PipeWire and PulseAudio, which includes the microphone", True)]),
+    ("Desktop", [("portals", "Notifications and portals", "Settings, open links, file chooser, print and a few more. Needs xdg-dbus-proxy", False)]),
+    ("Privacy", [
+        ("private", "Private home erased on exit", "Nothing the program saves in its home is kept", False),
+        ("hostname", "Hide the computer name", "The program sees the name sbx", False)]),
+]
+SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
+SHORT = {"net": "network", "wayland": "Wayland", "x11": "X11", "gpu": "graphics", "sound": "sound",
+         "portals": "portals", "private": "private home", "hostname": "hostname"}
+LISTS = ("whitelist", "read_only")
+
+
+# ---- settings files (same format as sbx) ----
+def path_for(scope):
+    return f"{CONF}/default.conf" if scope is None else f"{APPS}/{scope}.conf"
+
+
+def strip(line):
+    return re.sub(r"(^|\s)#.*$", "", line).strip()
+
+
+def read_lines(scope):
+    try: return open(path_for(scope)).read().splitlines()
+    except OSError: return []
+
+
+def parse(scope):
+    sc, ls = {}, {k: [] for k in LISTS}
+    for line in read_lines(scope):
+        k, _, v = (x.strip() for x in strip(line).partition("="))
+        if k in ls and v: ls[k].append(v)
+        elif k in SWITCHES: sc[k] = v.lower() not in ("0", "false", "no", "off", "")
+    return sc, ls
+
+
+def save(scope, lines):
+    p = path_for(scope)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p + ".tmp", "w") as f: f.write("\n".join(lines) + ("\n" if lines else ""))
+    os.replace(p + ".tmp", p)
+
+
+def key_of(line):
+    m = re.match(r"\s*([A-Za-z_]+)\s*=", line)
+    return m.group(1) if m else None
+
+
+def set_key(scope, key, val):
+    lines = [l for l in read_lines(scope) if key_of(l) != key]
+    if val is not None: lines.append(f"{key}={int(val)}")
+    save(scope, lines)
+
+
+def add_item(scope, key, v):
+    lines = read_lines(scope)
+    if re.search(r"(^|\s)#", v): return False        # sbx would read the rest as a comment
+    if v not in parse(scope)[1][key]: save(scope, lines + [f"{key}={v}"])
+    return True
+
+
+def remove_item(scope, key, v):
+    save(scope, [l for l in read_lines(scope) if not (key_of(l) == key and strip(l).partition("=")[2].strip() == v)])
+
+
+def app_names():
+    n = set()
+    try: n |= {f[:-5] for f in os.listdir(APPS) if f.endswith(".conf")}
+    except OSError: pass
+    try: n |= {f for f in os.listdir(HOMES) if os.path.isdir(f"{HOMES}/{f}")}
+    except OSError: pass
+    return sorted(x for x in n if NAME_RE.match(x))
+
+
+def summary(scope):
+    sc, ls = parse(scope)
+    parts = [f"{SHORT[k]} {'on' if sc[k] else 'off'}" for k in SWITCHES if k in sc]
+    n = len(ls["whitelist"]) + len(ls["read_only"])
+    if n: parts.append(f"{n} shared folder{'s' if n != 1 else ''}")
+    return " · ".join(parts) or "Uses the default settings"
+
+
+def path_problem(p):
+    """Why sbx would refuse this path, or None."""
+    if not p: return "That location is not a local path."
+    p = os.path.realpath(p)
+    for g in (CONF, HOMES):
+        if p == g or p.startswith(g + "/") or g.startswith(p + "/"):
+            return "That would expose sbx's own settings or private homes."
+    if p == HOME: return "That is your whole home folder. Pick a folder inside it."
+    if p.startswith(HOME + "/") or p.startswith(OUTSIDE): return None
+    return "sbx only shares paths inside your home, on /mnt or /media, or in /tmp."
+
+
+def tilde(p):
+    return "~/" + p[len(HOME) + 1:] if p.startswith(HOME + "/") else p
+
+
+def sbx_cmd():
+    return shutil.which("sbx") or "/usr/local/bin/sbx"
+
+
+# ---- window ----
+class Win(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="sbx", default_width=600, default_height=760)
+        self.toasts = Adw.ToastOverlay()
+        self.nav = Adw.NavigationView()
+        self.toasts.set_child(self.nav)
+        self.set_content(self.toasts)
+        self.main = self.main_page()
+        self.nav.push(self.main)
+        self.nav.connect("popped", lambda *_: self.fill_apps())
+
+    def page(self, title, content, end=()):
+        view = Adw.ToolbarView()
+        bar = Adw.HeaderBar()
+        for b in end: bar.pack_end(b)
+        view.add_top_bar(bar)
+        view.set_content(content)
+        return Adw.NavigationPage(child=view, title=title)
+
+    def alert(self, heading, body="", child=None):
+        d = Adw.AlertDialog(heading=heading, body=body)
+        if child: d.set_extra_child(child)
+        d.add_response("ok", "OK")
+        d.present(self)
+
+    def ask(self, heading, body, label, then):
+        d = Adw.AlertDialog(heading=heading, body=body)
+        d.add_responses("cancel", "Cancel", "go", label)
+        d.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE)
+        d.set_close_response("cancel")
+        d.choose(self, None, lambda dlg, res: dlg.choose_finish(res) == "go" and then())
+
+    # -- main page --
+    def main_page(self):
+        page = Adw.PreferencesPage()
+        g = Adw.PreferencesGroup(description="Settings for programs started with sbx. Changes apply the next time a program starts.")
+        row = Adw.ActionRow(title="Default settings", subtitle="Used by every program unless it has its own", activatable=True)
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.connect("activated", lambda *_: self.open(None))
+        g.add(row)
+        page.add(g)
+        self.apps_group = Adw.PreferencesGroup(title="Programs")
+        self.app_rows = []
+        page.add(self.apps_group)
+        self.fill_apps()
+        add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add a program")
+        add.connect("clicked", lambda *_: self.add_program())
+        return self.page("sbx", page, [add])
+
+    def fill_apps(self):
+        for r in self.app_rows: self.apps_group.remove(r)
+        self.app_rows.clear()
+        for n in app_names():
+            r = Adw.ActionRow(title=n, subtitle=summary(n), activatable=True, use_markup=False)
+            r.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+            r.connect("activated", lambda _r, n=n: self.open(n))
+            self.apps_group.add(r); self.app_rows.append(r)
+        if not self.app_rows:
+            r = Adw.ActionRow(title="No programs yet", subtitle="Press + to add one. Programs also show up here after their first run.")
+            self.apps_group.add(r); self.app_rows.append(r)
+
+    def add_program(self):
+        entry = Gtk.Entry(placeholder_text="firefox", activates_default=True)
+        d = Adw.AlertDialog(heading="Add a program", body="The name you type to start it, for example firefox.")
+        d.set_extra_child(entry)
+        d.add_responses("cancel", "Cancel", "add", "Add")
+        d.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("add"); d.set_close_response("cancel")
+
+        def done(dlg, res):
+            if dlg.choose_finish(res) != "add": return
+            name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(entry.get_text().strip())).lstrip("._-")[:64]
+            if not name: return
+            if not os.path.exists(path_for(name)): save(name, [])
+            self.fill_apps(); self.open(name)
+        d.choose(self, None, done)
+
+    def open(self, scope):
+        self.nav.push(self.program_page(scope))
+
+    # -- program page --
+    def program_page(self, scope):
+        page = Adw.PreferencesPage()
+        for title, rows in GROUPS:
+            g = Adw.PreferencesGroup(title=title)
+            for key, t, s, _d in rows: g.add(self.switch_row(scope, key))
+            page.add(g)
+        page.add(self.folders_group(scope, "whitelist", "Folders: read and write",
+                                    "The program can change these. Everything else is read-only or hidden."))
+        page.add(self.folders_group(scope, "read_only", "Folders: read-only", "The program can look at these but not change them."))
+        if scope is not None:
+            rg = Adw.PreferencesGroup(title="Run")
+            run = Adw.ActionRow(title=f"Run {scope}", subtitle="Starts it with these settings", activatable=True, use_markup=False)
+            run.add_suffix(Gtk.Image.new_from_icon_name("media-playback-start-symbolic"))
+            run.connect("activated", lambda *_: self.run_program(scope))
+            cmd = Adw.ActionRow(title="Show command", subtitle="The bwrap command sbx would run", activatable=True)
+            cmd.connect("activated", lambda *_: self.show_command(scope))
+            rg.add(run); rg.add(cmd)
+            page.add(rg)
+        dg = Adw.PreferencesGroup(title="Reset")
+        rs = Adw.ActionRow(title="Reset settings", subtitle="Removes everything above for " + ("all programs" if scope is None else scope),
+                           activatable=True, use_markup=False)
+        rs.connect("activated", lambda *_: self.ask("Reset settings?", "Folders and switches go back to the defaults. Program data is not touched.", "Reset",
+                                                    lambda: self.reset(scope)))
+        dg.add(rs)
+        if scope is not None and os.path.isdir(f"{HOMES}/{scope}"):
+            tr = Adw.ActionRow(title="Move private home to Trash", subtitle=tilde(f"{HOMES}/{scope}"), activatable=True, use_markup=False)
+            tr.connect("activated", lambda *_: self.ask("Move private home to Trash?", "Everything this program saved is moved to the Trash and can be restored from there.",
+                                                        "Move to Trash", lambda: self.trash_home(scope, tr)))
+            dg.add(tr)
+        page.add(dg)
+        return self.page("Default settings" if scope is None else scope, page)
+
+    def switch_row(self, scope, key):
+        title, sub, default = SWITCHES[key]
+        row = Adw.SwitchRow(title=title, use_markup=False)
+        undo = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                          tooltip_text="Use the default again")
+        row.add_suffix(undo)
+        busy = [False]
+
+        def show():
+            sc = parse(scope)[0]
+            dsc = parse(None)[0] if scope is not None else {}
+            own = key in sc
+            busy[0] = True
+            row.set_active(sc[key] if own else dsc.get(key, default))
+            busy[0] = False
+            row.set_subtitle(sub + ("  ·  from default settings" if scope is not None and not own else ""))
+            undo.set_visible(scope is not None and own)
+
+        def toggled(*_):
+            if not busy[0]: set_key(scope, key, row.get_active()); show()
+        row.connect("notify::active", toggled)
+        undo.connect("clicked", lambda *_: (set_key(scope, key, None), show()))
+        show()
+        return row
+
+    def folders_group(self, scope, key, title, desc):
+        g = Adw.PreferencesGroup(title=title, description=desc)
+        rows = []
+
+        def refill():
+            for r in rows: g.remove(r)
+            rows.clear()
+            if scope is not None:
+                for v in parse(None)[1][key]:
+                    r = Adw.ActionRow(title=v, subtitle="From default settings", use_markup=False)
+                    g.add(r); rows.append(r)
+            for v in parse(scope)[1][key]:
+                r = Adw.ActionRow(title=v, use_markup=False)
+                rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Remove")
+                rm.connect("clicked", lambda _b, v=v: (remove_item(scope, key, v), refill()))
+                r.add_suffix(rm); g.add(r); rows.append(r)
+            if not rows:
+                r = Adw.ActionRow(title="None"); g.add(r); rows.append(r)
+
+        def pick(folder):
+            dlg = Gtk.FileDialog(title="Choose a folder to share" if folder else "Choose a file to share")
+
+            def done(d, res):
+                try: f = d.select_folder_finish(res) if folder else d.open_finish(res)
+                except GLib.Error: return
+                bad = path_problem(f.get_path())
+                if bad: self.alert("Can't share that", bad)
+                elif not add_item(scope, key, tilde(f.get_path())):
+                    self.alert("Can't share that", "Names containing ' #' can't be stored in the settings file.")
+                else: refill()
+            (dlg.select_folder if folder else dlg.open)(self, None, done)
+        box = Gtk.Box(spacing=6)
+        for label, folder in (("Folder…", True), ("File…", False)):
+            b = Gtk.Button(label=label, css_classes=["flat"])
+            b.connect("clicked", lambda _b, folder=folder: pick(folder))
+            box.append(b)
+        g.set_header_suffix(box)
+        refill()
+        return g
+
+    # -- actions --
+    def run_program(self, name):
+        # bwrap --die-with-parent kills the program when its parent exits, so a child of this window would die with it.
+        # A transient user service has the systemd user manager as parent instead (its output goes to the journal).
+        sr = shutil.which("systemd-run")
+        if sr:
+            cmd = [sr, "--user", "--collect", "--quiet", "--same-dir", f"--unit=sbx-{name}-{os.getpid()}"]
+            for k in ("WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
+                      "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE",
+                      "LANG", "LANGUAGE", "LC_ALL", "TZ", "PATH"):
+                if k in os.environ: cmd.append(f"--setenv={k}={os.environ[k]}")
+            cmd += [sbx_cmd(), name]
+        else:
+            cmd = [sbx_cmd(), name]
+        err = tempfile.TemporaryFile()
+        try: p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
+        except OSError as e:
+            return self.alert("Couldn't start sbx", str(e))
+        self.toasts.add_toast(Adw.Toast(title=f"Starting {name}…"))
+
+        def check():
+            rc = p.poll()
+            if rc not in (None, 0):
+                err.seek(0)
+                self.alert(f"{name} stopped with an error", err.read(4096).decode(errors="replace")[-700:] or f"Exit code {rc}")
+            err.close()
+            return False
+        GLib.timeout_add(2000, check)
+
+    def show_command(self, name):
+        try: r = subprocess.run([sbx_cmd(), "preview", name], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return self.alert("Couldn't run sbx", str(e))
+        lab = Gtk.Label(label=(r.stdout or r.stderr).strip(), wrap=True, selectable=True, xalign=0, css_classes=["monospace"])
+        sw = Gtk.ScrolledWindow(min_content_height=220, min_content_width=420, child=lab)
+        self.alert("Command", "", sw)
+
+    def reset(self, scope):
+        save(scope, [])
+        self.nav.replace([self.main, self.program_page(scope)])
+
+    def trash_home(self, name, row):
+        try: Gio.File.new_for_path(f"{HOMES}/{name}").trash(None)
+        except GLib.Error as e:
+            return self.alert("Couldn't move it to the Trash", e.message)
+        row.set_sensitive(False)
+        self.toasts.add_toast(Adw.Toast(title="Moved to the Trash"))
+
+
+class App(Adw.Application):
+    def __init__(self, target):
+        super().__init__(application_id="org.sbx.Gui")
+        self.target = target
+
+    def do_activate(self):
+        first = self.props.active_window is None
+        win = self.props.active_window or Win(self)
+        win.present()
+        if first and self.target is not False: win.open(self.target)
+
+
+if __name__ == "__main__":
+    argv = sys.argv[:]
+    target = False                                       # sbx-gui NAME opens that program, --default the defaults
+    if len(argv) > 1 and argv[1] == "--default": target = None; del argv[1]
+    elif len(argv) > 1 and NAME_RE.match(argv[1]): target = argv[1]; del argv[1]
+    sys.exit(App(target).run(argv))

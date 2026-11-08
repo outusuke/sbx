@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 # sbx - run a normal program in a bubblewrap sandbox, firejail style:
 # the whole system is visible but read-only, your real home is hidden, the program gets a private home.
 import errno, glob, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess, sys, tempfile, uuid
@@ -180,7 +181,8 @@ def parse_conf(path):
         line = re.sub(r"(^|\s)#.*$", "", line).strip()
         if "=" not in line: continue
         k, _, v = (x.strip() for x in line.partition("="))
-        if k in ls and v: ls[k].append(v)
+        if k in ls: 
+            if v: ls[k].append(v)
         elif k in SCALARS: sc[k] = v.lower() not in ("0", "false", "no", "off", "")
         else: warn(f"{path}: ignoring unknown setting '{k}'")
     return sc, ls
@@ -199,7 +201,10 @@ def share_path(p, cli):
     q = os.path.expanduser(p)
     if not cli and not os.path.isabs(q): return warn(f"skipping '{p}': use a full path or ~/...")
     q = os.path.realpath(q)
+    guarded = [os.path.realpath(x) for x in (CONF, HOMES)]       # the sandbox must not be able to rewrite its own rules
     why = ("doesn't exist" if not os.path.exists(q) else "is your whole home" if q == HOME else
+           "would expose sbx's own settings or private homes"
+           if any(q == g or q.startswith(g + "/") or g.startswith(q + "/") for g in guarded) else
            None if q.startswith((HOME + "/",) + DRIVES + ("/tmp/",)) else
            "is outside your home, /mnt, /media and /tmp")
     if not why: return q
@@ -311,7 +316,7 @@ def build(prog, args, sec_fd, live=False, o=None):
         if os.path.isfile("/var/lib/dbus/machine-id") and not os.path.islink("/var/lib/dbus/machine-id"):
             a += ["--ro-bind", mid, "/var/lib/dbus/machine-id"]
     for k, v in env.items(): a += ["--setenv", k, v]
-    return name, a + ["--chdir", cwd or HOME, "--", real if real.startswith(HOME + "/") else path] + args, state
+    return name, a + ["--chdir", cwd or HOME, "--", real if HOME + "/" in (real[:len(HOME) + 1], path[:len(HOME) + 1]) else path] + args, state
 
 
 FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here": ("here", True),
@@ -328,6 +333,10 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --hostname   hostname 'sbx' inside\n"
          "  --whitelist=PATH    share a file or folder (read-write); can be repeated\n"
          "  --read-only=PATH    share a file or folder (read-only); can be repeated\n"
+         "notes: the program starts in its private home, so use full paths or --here for files.\n"
+         "  Flags can only turn things off (or on, for x11/portals/private/hostname/here); settings files set the rest.\n"
+         "  net=1 also shares abstract Unix sockets (some X servers); only net=0 closes that.\n"
+         "  32-bit programs are blocked by the syscall filter. Terminal programs lose /dev/tty (--new-session).\n"
          "settings: ~/.config/sbx/default.conf and ~/.config/sbx/apps/NAME.conf with lines like\n"
          "  net=0   gpu=0   portals=1   whitelist=~/Projects   read_only=~/.gitconfig")
 
