@@ -1,0 +1,372 @@
+#!/usr/bin/python3
+# sbx - run a normal program in a bubblewrap sandbox, firejail style:
+# the whole system is visible but read-only, your real home is hidden, the program gets a private home.
+import errno, glob, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess, sys, tempfile, uuid
+
+_pw   = pwd.getpwuid(os.getuid())
+HOME  = os.path.realpath(_pw.pw_dir)
+USER  = _pw.pw_name
+CONF  = f"{HOME}/.config/sbx"
+HOMES = f"{HOME}/.sbx-homes"
+
+# Blocked syscalls (same list as ajail): kexec_load kexec_file_load perf_event_open bpf syslog uselib acct quotactl
+# add_key keyctl request_key move_pages mbind get_mempolicy set_mempolicy migrate_pages open_by_handle_at
+# name_to_handle_at
+SYSCALLS = {"x86_64": (0xC000003E, [246, 320, 298, 321, 103, 134, 163, 179, 248, 250, 249, 279, 237, 239, 238, 256, 304, 303]),
+            "aarch64": (0xC00000B7, [104, 294, 241, 280, 116, 89, 60, 217, 219, 218, 239, 235, 236, 237, 238, 265, 264])}
+
+# Existing system files and folders hidden from the program (a file is replaced by an empty one, a folder by an empty tmpfs).
+SECRETS = ["/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/gshadow-", "/etc/sudoers", "/etc/sudoers.d",
+           "/etc/security/opasswd", "/etc/ssl/private", "/etc/NetworkManager/system-connections"]
+SECRET_GLOBS = ["/etc/ssh/ssh_host_*_key"]
+# Folders emptied so other drives and other users stay out of sight (/home is added below if it is a real folder).
+EMPTY_DIRS = ["/root", "/mnt", "/media", "/srv", "/var/tmp"]
+DRIVES = ("/mnt/", "/media/", "/run/media/")
+ENV_KEEP = ("LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME", "TZ", "TERM", "COLORTERM",
+            "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE")
+# Settings (key=value files) and their defaults. Lists: whitelist, read_only.
+SCALARS = {"net": True, "private": False, "wayland": True, "x11": False, "gpu": True, "sound": True,
+           "portals": False, "hostname": False}
+# User fonts, icons and themes, shown read-only to programs that can draw a window.
+THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes"]
+# Desktop portals a program may call when portals=1 (through xdg-dbus-proxy, which runs outside the sandbox).
+# Everything else (Screenshot, ScreenCast, RemoteDesktop, InputCapture, Secret, Location, Documents...) stays blocked.
+PORTAL_NAME = "org.freedesktop.portal.Desktop"
+PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Background", "Account",
+                "Email", "Trash", "NetworkMonitor", "ProxyResolver", "GameMode", "MemoryMonitor",
+                "PowerProfileMonitor", "Realtime")
+
+
+def die(msg, code=1):
+    print(f"sbx: {msg}", file=sys.stderr); sys.exit(code)
+
+
+def clean(n):
+    return (re.sub(r"[^A-Za-z0-9._-]", "_", n).lstrip("._-")[:64]) or "app"
+
+
+def seccomp_file():
+    """Syscall blocklist as a raw BPF program (same as ajail). None on architectures without a list."""
+    arch = SYSCALLS.get(platform.machine())
+    if not arch: return None
+    audit, nrs = arch
+    deny = 0x00050000 | errno.EPERM
+    n = len(nrs)
+    ins = [(0x20, 0, 0, 4), (0x15, 1, 0, audit), (0x06, 0, 0, deny), (0x20, 0, 0, 0),
+           (0x35, n + 1, 0, 0x40000000)]                       # x32 calls: deny
+    ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
+    ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)]       # allow, deny
+    tf = tempfile.TemporaryFile()
+    tf.write(b"".join(struct.pack("=HBBI", *i) for i in ins)); tf.flush(); tf.seek(0)
+    return tf
+
+
+def machine_id(name, create):
+    """A random machine-id per program, so the real one can't be used to recognise your computer."""
+    p = f"{CONF}/ids/{name}"
+    if create and not os.path.exists(p):
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f: f.write(uuid.uuid4().hex + "\n")
+    return p
+
+
+def find_program(prog):
+    path = os.path.abspath(prog) if "/" in prog else shutil.which(prog)
+    if not path or not os.path.isfile(path) or not os.access(path, os.X_OK):
+        die(f"'{prog}' not found or not executable")
+    real = os.path.realpath(path)
+    if real.startswith(DRIVES):
+        die(f"'{prog}' is on another drive, which the sandbox hides. Copy it somewhere else first.")
+    return path, real
+
+
+def resolv_dirs():
+    """/etc/resolv.conf is often a link into /run, which is emptied; keep the folder it points to."""
+    out = ["/run/systemd/resolve", "/run/NetworkManager"]
+    try:
+        t = os.path.realpath("/etc/resolv.conf")
+        if t.startswith("/run/") and os.path.dirname(t) not in out: out.append(os.path.dirname(t))
+    except OSError:
+        pass
+    return out
+
+
+def wayland_path():
+    wl = os.environ.get("WAYLAND_DISPLAY", "")
+    if not wl: return None
+    p = wl if wl.startswith("/") else f"{runtime_dir()}/{wl}"
+    return p if os.path.exists(p) else None
+
+
+def runtime_dir():
+    return os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+
+
+def scoped_xauth(src, disp, dst):
+    """A copy of the XAUTHORITY file with only the cookie for this display (no xauth tool needed), or None."""
+    num = disp[1:].split(".")[0].encode()
+    try:
+        with open(src, "rb") as f: data = f.read(1_000_000)
+    except OSError:
+        return None
+    keep, i = [], 0
+    while i + 2 <= len(data):
+        start = i
+        i += 2                                    # family
+        fields = []
+        for _ in range(4):                        # address, display number, auth name, auth data
+            if i + 2 > len(data): return None     # truncated or not an Xauthority file: use it unchanged
+            n = int.from_bytes(data[i:i+2], "big"); i += 2
+            fields.append(data[i:i+n]); i += n
+        if i > len(data): return None
+        if fields[1] in (num, b""): keep.append(data[start:i])
+    if not keep: return None
+    try:
+        os.makedirs(os.path.dirname(dst), mode=0o700, exist_ok=True)
+        fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f: f.write(b"".join(keep))
+    except OSError:
+        return None
+    return dst
+
+
+def portal_rules():
+    rules = ["--talk=org.freedesktop.Notifications", f"--see={PORTAL_NAME}"]
+    rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in PORTAL_BASIC]
+    rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
+              f"--call={PORTAL_NAME}=org.freedesktop.DBus.Properties.*@/org/freedesktop/portal/desktop",
+              "--broadcast=org.freedesktop.portal.*=@/org/freedesktop/portal/*"]
+    return rules
+
+
+def start_proxy(sock):
+    """Start xdg-dbus-proxy with the portal rules. Returns (process, pipe) or None (a warning says why)."""
+    px = shutil.which("xdg-dbus-proxy")
+    if not px: return warn("xdg-dbus-proxy missing, so portals are off: sudo dnf install xdg-dbus-proxy")
+    addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={runtime_dir()}/bus"
+    os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
+    r, w = os.pipe()
+    proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + portal_rules(), pass_fds=[w],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.close(w)
+    ok = False
+    try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
+    except OSError: pass
+    if ok: return proc, r
+    stop_proxy((proc, r), sock)
+    warn("could not start xdg-dbus-proxy; running without portals")
+
+
+def stop_proxy(px, sock):
+    if px:
+        try: os.close(px[1])
+        except OSError: pass
+        try: px[0].terminate(); px[0].wait(2)
+        except Exception: pass
+    try: os.unlink(sock)
+    except OSError: pass
+
+
+def warn(msg):
+    print(f"sbx: {msg}", file=sys.stderr)
+
+
+def parse_conf(path):
+    """Plain key=value file. Scalars: see SCALARS. Lists: whitelist, read_only. '#' starts a comment."""
+    sc, ls = {}, {"whitelist": [], "read_only": []}
+    try: lines = open(path).read().splitlines()
+    except OSError: return sc, ls
+    for line in lines:
+        line = re.sub(r"(^|\s)#.*$", "", line).strip()
+        if "=" not in line: continue
+        k, _, v = (x.strip() for x in line.partition("="))
+        if k in ls and v: ls[k].append(v)
+        elif k in SCALARS: sc[k] = v.lower() not in ("0", "false", "no", "off", "")
+        else: warn(f"{path}: ignoring unknown setting '{k}'")
+    return sc, ls
+
+
+def load_conf(name):
+    """Built-in defaults < default.conf < apps/NAME.conf. Lists add up."""
+    g, a = parse_conf(f"{CONF}/default.conf"), parse_conf(f"{CONF}/apps/{name}.conf")
+    cfg = {**SCALARS, **g[0], **a[0]}
+    for k in ("whitelist", "read_only"): cfg[k] = list(dict.fromkeys(g[1][k] + a[1][k]))
+    return cfg
+
+
+def share_path(p, cli):
+    """A file or folder to share: inside your home (not the whole home), on a drive, or in /tmp. None if it can't be."""
+    q = os.path.expanduser(p)
+    if not cli and not os.path.isabs(q): return warn(f"skipping '{p}': use a full path or ~/...")
+    q = os.path.realpath(q)
+    why = ("doesn't exist" if not os.path.exists(q) else "is your whole home" if q == HOME else
+           None if q.startswith((HOME + "/",) + DRIVES + ("/tmp/",)) else
+           "is outside your home, /mnt, /media and /tmp")
+    if not why: return q
+    if cli: die(f"'{p}' {why}")
+    warn(f"skipping '{p}': it {why}")
+
+
+def program_share(real):
+    """What a program in your home brings along: its app folder for .../APP/bin/tool (at least two levels below home,
+    so ~/bin, ~/.local/bin and ~/.cargo/bin stay closed), otherwise just the file."""
+    d = os.path.dirname(real)
+    if os.path.basename(d) == "bin":
+        root = os.path.dirname(d)
+        if root.startswith(HOME + "/") and "/" in root[len(HOME) + 1:]: return root
+    return real
+
+
+def share_dir(d):
+    """The current folder for --here: a folder inside your home, on a drive, or in /tmp, never the whole home."""
+    d = os.path.realpath(d)
+    if d == HOME: die("--here: refusing to share your whole home; go into a subfolder first")
+    if d.startswith(HOME + "/"):
+        if d[len(HOME) + 1:].split("/")[0].startswith("."): die("--here: hidden folders in your home can't be shared")
+        return d
+    if d.startswith(DRIVES + ("/tmp/",)): return d
+    die("--here: only folders inside your home, on /mnt, /media or in /tmp can be shared")
+
+
+def build(prog, args, sec_fd, live=False, o=None):
+    """The bwrap command. live=True also creates what a real run needs (machine-id, proxy, X cookie) and returns it
+    in `state` so main() can clean up; preview (live=False) only prints."""
+    o = o or {}
+    path, real = find_program(prog)
+    cwd = share_dir(os.getcwd()) if o.get("here") else None
+    name = clean(os.path.basename(path))                        # the name you typed, not the file behind a link
+    cfg = load_conf(name)
+    cfg.update({k: v for k, v in o.items() if k in SCALARS})    # a flag beats the settings files
+    rw = [p for p in [share_path(x, False) for x in cfg["whitelist"]] + [share_path(x, True) for x in o.get("whitelist", [])] if p]
+    ro = [p for p in [share_path(x, False) for x in cfg["read_only"]] + [share_path(x, True) for x in o.get("read_only", [])] if p]
+    rt = runtime_dir()
+    tag = f"{rt}/sbx/{os.getpid() if live else 'PID'}"
+    state = {"proxy": None, "bus": tag + ".bus", "files": []}
+    env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": "/usr/local/bin:/usr/bin:/usr/sbin",
+           "XDG_RUNTIME_DIR": rt, "SBX_ACTIVE": "1"}
+    for k in ENV_KEEP:
+        if k in os.environ: env[k] = os.environ[k]
+    a = ["bwrap", "--unshare-all"] + (["--share-net"] if cfg["net"] else []) + ["--die-with-parent", "--new-session", "--clearenv"]
+    if cfg["hostname"]: a += ["--hostname", "sbx"]
+    if sec_fd is not None: a += ["--seccomp", str(sec_fd)]
+    a += ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run"]
+    for d in resolv_dirs():
+        if os.path.isdir(d): a += ["--ro-bind", d, d]
+    a += ["--perms", "0700", "--dir", rt]
+    # Desktop access (each one a setting): Wayland, X11, GPU, sound, portals.
+    gui, late = False, []          # late: mounts that may sit inside the home, so they go after the home is replaced
+    wp = wayland_path() if cfg["wayland"] else None
+    if wp:
+        a += ["--ro-bind", wp, wp]; gui = True
+        env["WAYLAND_DISPLAY"] = os.environ["WAYLAND_DISPLAY"]; env["XDG_SESSION_TYPE"] = "wayland"
+    if cfg["x11"]:
+        disp = os.environ.get("DISPLAY", "")
+        if disp.startswith(":"):
+            sock = f"/tmp/.X11-unix/X{disp[1:].split('.')[0]}"
+            a += ["--ro-bind-try", sock, sock]; env["DISPLAY"] = disp; gui = True
+        xa = os.environ.get("XAUTHORITY")
+        if xa and os.path.isfile(xa):
+            src = xa
+            if live and disp.startswith(":"):                  # only this display's cookie, not every cookie in the file
+                src = scoped_xauth(xa, disp, tag + ".xauth") or xa
+                if src != xa: state["files"].append(src)
+            late += ["--ro-bind", src, xa]; env["XAUTHORITY"] = xa
+    if cfg["gpu"]:
+        a += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
+        for p in glob.glob("/dev/nvidia*"): a += ["--dev-bind", p, p]
+    if cfg["sound"]:
+        for x in ("pipewire-0", "pulse/native"): a += ["--ro-bind-try", f"{rt}/{x}", f"{rt}/{x}"]
+        env["PULSE_SERVER"] = f"unix:{rt}/pulse/native"
+    if cfg["portals"]:
+        sock = state["bus"]
+        if live:
+            state["proxy"] = start_proxy(sock)
+            if not state["proxy"]: sock = None
+        if sock:
+            a += ["--ro-bind", sock, f"{rt}/bus"]; env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
+    # Hide the real home and other users: empty the folder that holds your home, then put the private home in its place.
+    parent = os.path.dirname(HOME)
+    hide = [parent if parent != "/" else HOME]
+    for d in EMPTY_DIRS + ["/home"]:
+        if os.path.isdir(d) and not os.path.islink(d) and d not in hide and not HOME.startswith(d + "/"):
+            hide.append(d)
+    for d in hide: a += ["--tmpfs", d]
+    a += ["--tmpfs", HOME] if cfg["private"] else ["--bind", f"{HOMES}/{name}", HOME]     # private=1: erased on exit
+    a += late
+    if gui:
+        for rel in THEME: a += ["--ro-bind-try", f"{HOME}/{rel}", f"{HOME}/{rel}"]
+    if cwd: a += ["--bind", cwd, cwd]                                               # --here
+    for p in rw: a += ["--bind", p, p]                  # --whitelist and whitelist=
+    for p in ro: a += ["--ro-bind", p, p]               # --read-only and read_only= (after the above, so it wins)
+    # A program that lives in the (hidden) home is shown read-only, with its app folder if it has one.
+    if real.startswith(HOME + "/"):
+        ps = program_share(real)
+        a += ["--ro-bind", ps, ps]
+    for p in SECRETS + [x for g in SECRET_GLOBS for x in glob.glob(g)]:
+        if os.path.isdir(p): a += ["--tmpfs", p]
+        elif os.path.isfile(p): a += ["--ro-bind", "/dev/null", p]
+    if os.path.isfile("/etc/machine-id"):
+        mid = machine_id(name, live)
+        a += ["--ro-bind", mid, "/etc/machine-id"]
+        if os.path.isfile("/var/lib/dbus/machine-id") and not os.path.islink("/var/lib/dbus/machine-id"):
+            a += ["--ro-bind", mid, "/var/lib/dbus/machine-id"]
+    for k, v in env.items(): a += ["--setenv", k, v]
+    return name, a + ["--chdir", cwd or HOME, "--", real if real.startswith(HOME + "/") else path] + args, state
+
+
+FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here": ("here", True),
+         "--no-wayland": ("wayland", False), "--x11": ("x11", True), "--no-gpu": ("gpu", False),
+         "--no-sound": ("sound", False), "--portals": ("portals", True), "--hostname": ("hostname", True)}
+
+USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
+         "sbx preview [options] PROGRAM [args]   print the bwrap command instead of running it\n"
+         "options (before the program; each also exists as a setting, e.g. net=0, x11=1):\n"
+         "  --net=none   no network                    --no-wayland  hide the Wayland socket\n"
+         "  --private    private home erased on exit    --x11         share the X11 socket (weaker isolation)\n"
+         "  --here       share the current folder      --no-gpu      hide /dev/dri and NVIDIA devices\n"
+         "  --no-sound   hide PipeWire/PulseAudio      --portals     notifications and basic portals (xdg-dbus-proxy)\n"
+         "  --hostname   hostname 'sbx' inside\n"
+         "  --whitelist=PATH    share a file or folder (read-write); can be repeated\n"
+         "  --read-only=PATH    share a file or folder (read-only); can be repeated\n"
+         "settings: ~/.config/sbx/default.conf and ~/.config/sbx/apps/NAME.conf with lines like\n"
+         "  net=0   gpu=0   portals=1   whitelist=~/Projects   read_only=~/.gitconfig")
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help", "help"): print(USAGE); return
+    preview = a[0] == "preview"
+    if preview: a = a[1:]
+    opts = {}
+    while a and a[0].startswith("-"):
+        f = a.pop(0)
+        if f == "--": break
+        elif f in FLAGS: opts[FLAGS[f][0]] = FLAGS[f][1]
+        elif f.startswith("--whitelist="): opts.setdefault("whitelist", []).append(f.split("=", 1)[1])
+        elif f.startswith("--read-only="): opts.setdefault("read_only", []).append(f.split("=", 1)[1])
+        else: die(f"unknown option {f}\n{USAGE}")
+    if not a: die("usage: sbx [preview] [options] PROGRAM [args]")
+    if preview:
+        print(shlex.join(build(a[0], a[1:], "FD", False, opts)[1])); return
+    if os.geteuid() == 0: die("refusing to run as root")
+    if os.environ.get("SBX_ACTIVE"): die("already inside an sbx sandbox")
+    if not shutil.which("bwrap"): die("bubblewrap missing: sudo dnf install bubblewrap")
+    sec = seccomp_file()
+    if sec is None: print(f"sbx: no system-call filter for {platform.machine()}; running without it", file=sys.stderr)
+    fd = sec.fileno() if sec else None
+    if sec: os.set_inheritable(fd, True)
+    name, cmd, st = build(a[0], a[1:], fd, True, opts)
+    os.makedirs(HOMES, mode=0o700, exist_ok=True)
+    os.makedirs(f"{HOMES}/{name}", mode=0o700, exist_ok=True)
+    if not st["proxy"] and not st["files"]: os.execvp("bwrap", cmd)
+    p = subprocess.Popen(cmd, pass_fds=[fd] if fd is not None else ())     # a helper must be cleaned up afterwards
+    for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, lambda *_: p.terminate())
+    rc = p.wait()
+    stop_proxy(st["proxy"], st["bus"])
+    for f in st["files"]:
+        try: os.unlink(f)
+        except OSError: pass
+    sys.exit(rc)
+
+
+main()
