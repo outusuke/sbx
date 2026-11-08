@@ -78,6 +78,17 @@ Switches (all `0`/`1`), with defaults: `net=1`, `wayland=1`, `x11=0`, `gpu=1`, `
 
 `sbx-gui` edits these same files. Run `sbx-gui`, `sbx-gui NAME` or `sbx-gui --default`.
 
+## Checking it
+
+```
+sbx ./sbx-selftest               # run inside the sandbox: every row should say PASS
+python3 test_sbx.py              # runs the self-test against planted canary files, plus a preview snapshot
+```
+
+`sbx-selftest` tries to read `~/.ssh`, the real `~/.config/sbx` and `~/.sbx-homes`, `/etc/shadow` and `/root`, writes to the system, and calls blocked system calls (`bpf`, `perf_event_open`, `mbind`, `keyctl`); each must fail. Pass extra paths to check that they are hidden too. Run without `sbx` it must fail, and `test_sbx.py` checks that it does.
+
+`sbx-preview.snap` holds the exact `bwrap` command for a few option sets. When a change to `sbx` alters the mount list, the test fails with a diff. Review it, then `UPDATE_SNAPSHOTS=1 python3 test_sbx.py` and commit the new snapshot.
+
 ## Limits
 
 - This is a convenience sandbox, not a security boundary against a hostile program or a kernel exploit. The system-call filter is a blocklist, and nested user namespaces are still allowed.
