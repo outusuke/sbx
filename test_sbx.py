@@ -69,7 +69,7 @@ def render(args):
 def fake_preview(prog, flags, patch=None):
     S = load_sbx()
     S.update(HOME="/home/user", USER="user", CONF="/home/user/.config/sbx", HOMES="/home/user/.sbx-homes")
-    S["find_program"] = lambda p: (p, p) if p.startswith("/") else (f"/usr/bin/{p}", f"/usr/bin/{p}")
+    S["find_program"] = lambda p, noexec=False: (p, p) if p.startswith("/") else (f"/usr/bin/{p}", f"/usr/bin/{p}")
     S["runtime_dir"] = lambda: "/run/user/1000"
     S["wayland_path"] = lambda: "/run/user/1000/wayland-0"
     S["wl_supported"] = lambda p: True
@@ -403,6 +403,70 @@ class Units(unittest.TestCase):
         self.S["sweep_stale"]()
         for n, kept in names.items(): self.assertEqual(os.path.exists(f"{d}/{n}"), kept, n)
 
+    # -- opening downloaded programs
+    def test_elf_interpreter(self):
+        S = self.S
+        bash = shutil.which("bash")
+        if bash and S["elf_interpreter"](bash): self.assertTrue(os.path.isabs(S["elf_interpreter"](bash)))
+        interp = self.write("ld.so", "x"); path = os.path.abspath(interp)
+        hdr = lambda cls, fields: b"\x7fELF" + bytes([cls, 1, 1]) + b"\0" * 9 + fields
+        text = path.encode() + b"\0"
+        e64 = hdr(2, struct.pack("<HHIQQQIHHHHHH", 3, 62, 1, 0, 64, 0, 0, 64, 56, 1, 0, 0, 0))
+        e64 += b"\0" * (64 - len(e64)) + struct.pack("<IIQQQQQQ", 3, 4, 120, 0, 0, len(text), len(text), 1) + b"\0" * 0
+        e64 = e64 + b"\0" * (120 - len(e64)) + text
+        e32 = hdr(1, struct.pack("<HHIIIIIHHHHHH", 3, 3, 1, 0, 52, 0, 0, 52, 32, 1, 0, 0, 0))
+        e32 += b"\0" * (52 - len(e32)) + struct.pack("<IIIIIIII", 3, 84, 0, 0, len(text), len(text), 4, 1)
+        e32 = e32 + b"\0" * (84 - len(e32)) + text
+        for label, data in (("64-bit", e64), ("32-bit", e32)):
+            p = f"{self.tmp}/{label}"
+            with open(p, "wb") as f: f.write(data)
+            self.assertEqual(S["elf_interpreter"](p), path, label)
+        for label, data in (("script", b"#!/bin/sh\necho\n"), ("empty", b""), ("truncated", e64[:70]), ("static", e64[:64] + b"\0" * 56)):
+            p = f"{self.tmp}/{label}"
+            with open(p, "wb") as f: f.write(data)
+            self.assertIsNone(S["elf_interpreter"](p), label)
+        self.assertIsNone(S["elf_interpreter"](f"{self.tmp}/missing"))
+
+    def test_opener_folder_rules(self):
+        S, h = self.S, self.home
+        self.write(".config/user-dirs.dirs", 'XDG_DOWNLOAD_DIR="$HOME/Transferências"\nXDG_DESKTOP_DIR="$HOME/Área de Trabalho"\n# x\n')
+        of = S["opener_folder"]
+        self.assertEqual(of(f"{h}/Games/Crash/game"), f"{h}/Games/Crash")
+        self.assertEqual(of(f"{h}/Downloads/Crash/game"), f"{h}/Downloads/Crash", "a subfolder of Downloads is the program's own")
+        for bad in (f"{h}/game", f"{h}/Downloads/game", f"{h}/Desktop/game", f"{h}/Transferências/game", f"{h}/Área de Trabalho/game",
+                    f"{h}/.local/bin/game", f"{h}/.cache/x/game", "/usr/bin/game", "/tmp/game", "/opt/x/game"):
+            self.assertIsNone(of(bad), bad)
+        self.assertEqual(of("/tmp/x/game"), "/tmp/x")
+
+    def test_opener_install_and_remove(self):
+        S, h = self.S, self.home
+        bindir = f"{self.tmp}/bin"; os.makedirs(bindir)
+        log = f"{self.tmp}/xdg.log"
+        with open(f"{bindir}/xdg-mime", "w") as f:
+            f.write(f'#!/bin/sh\necho "$@" >> {log}\nshift\nid=$1; shift\n'
+                    f'mkdir -p "$XDG_CONFIG_HOME"; for m in "$@"; do echo "$m=$id;" >> "$XDG_CONFIG_HOME/mimeapps.list"; done\n')
+        os.chmod(f"{bindir}/xdg-mime", 0o755)
+        cfg = f"{self.tmp}/cfg"
+        env = {"PATH": f"{bindir}:/usr/bin:/bin", "XDG_CONFIG_HOME": cfg}
+        self.write(".local/share/applications/keep.desktop", "x")
+        os.makedirs(cfg); open(f"{cfg}/mimeapps.list", "w").write("[Default Applications]\ntext/plain=other.desktop;\n")
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(out): S["cmd_opener"](True)
+        dest = f"{h}/.local/share/applications/sbx-run.desktop"
+        with open(dest) as f: text = f.read()
+        for must in ("Name=Run in sbx", "Exec=", " open %f", "application/x-executable;application/x-pie-executable;", "Terminal=false", "X-Sbx-Opener=true"):
+            self.assertIn(must, text)
+        with open(log) as f: self.assertIn("default sbx-run.desktop application/x-executable application/x-pie-executable", f.read())
+        with open(f"{cfg}/mimeapps.list", "a") as f: f.write("application/x-executable=sbx-run.desktop;other.desktop;\n")
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(out): S["cmd_opener"](False)
+        self.assertFalse(os.path.exists(dest))
+        with open(f"{cfg}/mimeapps.list") as f: left = f.read()
+        self.assertNotIn("sbx-run", left)
+        self.assertIn("text/plain=other.desktop;", left); self.assertIn("application/x-executable=other.desktop;", left, "other handlers stay")
+        with open(dest, "w") as f: f.write("[Desktop Entry]\nName=mine\n")                      # not ours: left alone
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["cmd_opener"](False)
+        self.assertTrue(os.path.exists(dest))
+
     def test_exit_codes(self):
         e = self.S["exit_code"]
         self.assertEqual([e(0), e(3), e(-15), e(-9)], [0, 3, 143, 137])
@@ -700,6 +764,41 @@ class Isolation(unittest.TestCase):
                          env={"MY_PROXY": "http://p:3128", "OTHER": "no"})
         self.assertEqual(r.stdout.strip(), f"http://p:3128|a b|{self.home}|", r.stderr)
         self.assertIn("HOME can't be changed", r.stderr)
+
+    def test_open_runs_a_program_with_its_folder_and_nothing_else(self):
+        bash = shutil.which("bash")
+        S = load_sbx()
+        if not bash or not S["elf_interpreter"](os.path.realpath(bash)): self.skipTest("no dynamically linked bash to copy")
+        game, dl = f"{self.home}/Games/Crash", f"{self.home}/Downloads"
+        os.makedirs(game, exist_ok=True); os.makedirs(dl, exist_ok=True)
+        for p in (f"{game}/CrashBandicoot-Linux", f"{dl}/loose"):
+            shutil.copy(os.path.realpath(bash), p); os.chmod(p, 0o644)                      # no execute bit
+        for p, t in ((f"{game}/data.pak", "assets"), (f"{dl}/other.txt", "other")):
+            with open(p, "w") as f: f.write(t)
+
+        def sbx_open(path, stdin):
+            return subprocess.run([sys.executable, self.sbx, "open", path], input=stdin, capture_output=True, text=True,
+                                  env=self.env, timeout=60, cwd="/")
+        r = sbx_open(f"{game}/CrashBandicoot-Linux", f'pwd; ls; echo saved > save.dat; cat {self.home}/.ssh/id_canary 2>&1; echo done\n')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split("\n")[0], game, "it starts in its own folder")
+        self.assertIn("data.pak", r.stdout); self.assertNotIn(TOKEN, r.stdout + r.stderr)
+        self.assertTrue(os.path.exists(f"{game}/save.dat"), "it can save beside itself")
+        r = sbx_open(f"{dl}/loose", f"pwd; ls {dl}; ls -A\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split("\n")[0], self.home, "Downloads is not a program folder: it starts in its private home")
+        self.assertNotIn("other.txt", r.stdout, "the rest of Downloads stays hidden")
+        with open(f"{self.home}/Downloads/notelf", "w") as f: f.write("#!/bin/sh\n")
+        r = sbx_open(f"{dl}/notelf", "")
+        self.assertEqual(r.returncode, 1); self.assertIn("chmod +x", r.stderr)
+        self.assertEqual(sbx_open(f"{dl}/missing", "").returncode, 1)
+        r = sbx_open(f"{game}/CrashBandicoot-Linux", "exit 3\n")                          # quits at once with an error: reported, status kept
+        self.assertEqual(r.returncode, 3); self.assertIn("didn't start", r.stderr)
+        os.makedirs(f"{self.home}/.config/sbx/apps", exist_ok=True)                         # a settings file means no extras
+        with open(f"{self.home}/.config/sbx/apps/CrashBandicoot-Linux.conf", "w") as f: f.write("net=0\n")
+        try: r = sbx_open(f"{game}/CrashBandicoot-Linux", "pwd; ls -A\n")
+        finally: os.unlink(f"{self.home}/.config/sbx/apps/CrashBandicoot-Linux.conf")
+        self.assertEqual(r.stdout.split("\n")[0], self.home); self.assertNotIn("data.pak", r.stdout)
 
     def test_exit_status_is_the_programs(self):
         self.assertEqual(self.sbx_run("/bin/sh", "-c", "exit 7").returncode, 7)

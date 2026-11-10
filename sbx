@@ -37,11 +37,19 @@ DRIVES = ("/mnt/", "/media/", "/run/media/")
 OUTSIDE = DRIVES + ("/tmp/",)                    # places outside the home that can be shared
 ENV_KEEP = ("LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME", "TZ", "TERM", "COLORTERM",
             "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE")
+# Variables that only tune graphics, windowing and toolkits (no tokens, keys, accounts or paths into your home). Passed through
+# when compat=1 / --compat, and only if they are set.
+COMPAT_ENV = ("WGPU_BACKEND", "WGPU_ADAPTER_NAME", "WGPU_POWER_PREF", "ICED_BACKEND", "LIBGL_ALWAYS_SOFTWARE", "LIBGL_DRI3_DISABLE",
+              "VK_ICD_FILENAMES", "VK_DRIVER_FILES", "__GLX_VENDOR_LIBRARY_NAME", "__NV_PRIME_RENDER_OFFLOAD", "DRI_PRIME",
+              "SDL_VIDEODRIVER", "SDL_AUDIODRIVER", "QT_QPA_PLATFORM", "QT_QPA_PLATFORMTHEME", "QT_SCALE_FACTOR", "GDK_BACKEND",
+              "GDK_SCALE", "MOZ_ENABLE_WAYLAND")
+COMPAT_PREFIXES = ("MESA_", "RADV_")
 ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    # env= and setenv= can't touch these
 # Settings (key=value files) and their defaults. Lists: LISTS. Text values: LIMITS (a pattern each value must match).
 SCALARS = {"net": True, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "portals": False, "hostname": False, "userns": True, "theme": True, "camera": False,
-           "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "allow_sensitive": False}
+           "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "allow_sensitive": False,
+           "compat": False}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%"}
 # Folders in your home that hold secrets. Sharing one (or a folder around one) needs allow_sensitive=1 / --allow-sensitive.
@@ -562,6 +570,9 @@ def build(prog, args, live=False, o=None):
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": sandbox_path(), "XDG_RUNTIME_DIR": rt, "SBX_ACTIVE": "1"}
     for k in ENV_KEEP:
         if k in os.environ: env[k] = os.environ[k]
+    if cfg["compat"]:
+        for k, v in os.environ.items():
+            if (k in COMPAT_ENV or k.startswith(COMPAT_PREFIXES)) and k not in ENV_PROTECTED: env[k] = v
     a = ["bwrap", "--unshare-all"] + (["--share-net"] if cfg["net"] else [])
     if not cfg["userns"]: a += ["--unshare-user", "--disable-userns"]
     a += ["--die-with-parent", "--new-session", "--clearenv"]
@@ -779,7 +790,7 @@ FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here":
          "--hostname": ("hostname", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--allow-sensitive": ("allow_sensitive", True),
-         "--ignore-config": ("ignore_config", True)}
+         "--compat": ("compat", True), "--ignore-config": ("ignore_config", True)}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
                "--loader": "loader"}
@@ -801,6 +812,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --hostname    hostname 'sbx' inside        --no-userns    the program can't create user namespaces\n"
          "  --camera --alsa --input --kvm --rocm --printing     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons and GTK settings\n"
+         "  --compat      pass graphics/toolkit variables (WGPU_*, MESA_*, SDL_*, QT_QPA_*...) that are set; nothing else\n"
          "  --wayland-strict       no Wayland at all if the compositor can't restrict it\n"
          "  --whitelist=PATH       share a file or folder (read-write); can be repeated\n"
          "  --read-only=PATH       share a file or folder (read-only); can be repeated\n"

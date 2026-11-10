@@ -24,7 +24,8 @@ GROUPS = [
         ("wayland", "Wayland", "Lets graphical programs open a window", True),
         ("wayland_strict", "Wayland only if restricted", "No Wayland at all when the compositor can't limit what the program may do", False),
         ("x11", "X11", "Weaker isolation than Wayland", False),
-        ("theme", "Your fonts, icons and GTK settings", "Shown read-only so the program looks like your desktop", True)]),
+        ("theme", "Your fonts, icons and GTK settings", "Shown read-only so the program looks like your desktop", True),
+        ("compat", "Graphics and toolkit variables", "Passes WGPU_*, MESA_*, SDL_*, QT_QPA_* and similar if set. Never tokens or other variables", False)]),
     ("Devices", [
         ("gpu", "Graphics card", "/dev/dri and NVIDIA devices", True),
         ("sound", "Sound", "PipeWire and PulseAudio, which includes the microphone", True),
@@ -45,7 +46,7 @@ SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "userns": "user namespaces",
          "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm",
-         "printing": "printing", "allow_sensitive": "secret folders"}
+         "printing": "printing", "allow_sensitive": "secret folders", "compat": "compat variables"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 LISTS = ("whitelist", "read_only")
 CURRENT = []                                              # the scope (None or a name) of the page being shown

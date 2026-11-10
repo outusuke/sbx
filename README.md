@@ -72,6 +72,7 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | `--no-sound` | hide PipeWire/PulseAudio (this includes the microphone) |
 | `--camera` `--alsa` `--input` `--kvm` `--rocm` `--printing` | share `/dev/video*`, `/dev/snd`, `/dev/input`, `/dev/kvm`, `/dev/kfd`, the CUPS socket |
 | `--no-theme` | don't show your fonts, icons and GTK/fontconfig settings |
+| `--compat` | pass through the graphics and toolkit variables that are set (`WGPU_*`, `ICED_BACKEND`, `MESA_*`, `RADV_*`, `VK_ICD_FILENAMES`, `SDL_VIDEODRIVER`, `QT_QPA_PLATFORM`, `GDK_BACKEND`...). Tokens, keys and everything else stay out |
 | `--portals` | allow notifications and basic desktop portals via `xdg-dbus-proxy` |
 | `--hostname` | program sees hostname `sbx`, also in `/etc/hostname` and `/etc/hosts` |
 | `--no-userns` | the program can't create user namespaces |
