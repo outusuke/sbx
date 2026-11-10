@@ -11,7 +11,9 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Doctor
         run: python3 sbx doctor || true
+      - name: The installable sbx is exactly what src/ builds (and the layer rule holds)
+        run: python3 build.py --check
       - name: Lint
-        run: python3 -m pyflakes sbx sbx-gui sbx-selftest test_sbx.py
+        run: python3 -m pyflakes sbx sbx-gui sbx-selftest test_sbx.py build.py tools/verify_move.py
       - name: Tests (the isolation tests must not be skipped on CI)
         run: python3 test_sbx.py -v 2>&1 | tee out.txt; ! grep -q "skipped" out.txt
