@@ -725,6 +725,25 @@ def teardown(st):
             pass
 
 
+def give_exec_bit(path):
+    """For a dynamically linked ELF file without the execute bit: set the bit for this run and return the old mode.
+    Returns False if it can't be set (the caller then uses the loader), None if there is nothing to do. Running through the
+    loader instead would make /proc/self/exe the loader, which breaks programs that read their own file (.NET single-file apps)."""
+    if not os.path.isfile(path) or os.access(path, os.X_OK) or not elf_interpreter(path): return None
+    try:
+        mode = os.stat(path).st_mode
+        os.chmod(path, mode | 0o100)
+        return mode
+    except OSError:
+        return False
+
+
+def undo_exec_bit(prog, mode):
+    if mode is not None:
+        try: os.chmod(os.path.abspath(prog), mode)
+        except OSError: pass
+
+
 def run(prog, args, opts):
     if os.geteuid() == 0: die("refusing to run as root")
     if os.environ.get("SBX_ACTIVE"): die("already inside an sbx sandbox")
@@ -732,16 +751,24 @@ def run(prog, args, opts):
     if platform.machine() not in ARCHES: warn(f"no system-call filter for {platform.machine()}; running without it")
     sweep_stale()
     os.makedirs(HOMES, mode=0o700, exist_ok=True)
-    name, cmd, st = build(prog, args, True, opts)
+    restore = None
+    if not opts.get("loader") and "/" in prog:
+        restore = give_exec_bit(os.path.abspath(prog))      # a dynamically linked ELF file without the execute bit
+        if restore is False:                                # can't change it: go through the loader instead
+            opts, restore = {**opts, "loader": elf_interpreter(os.path.abspath(prog))}, None
+    try:
+        name, cmd, st = build(prog, args, True, opts)
+    except BaseException:
+        undo_exec_bit(prog, restore); raise
     if st["prefix"] and not shutil.which("systemd-run"):
-        teardown(st); die(f"memory/tasks/cpu limits need systemd-run: {install_hint('systemd')}")
+        teardown(st); undo_exec_bit(prog, restore); die(f"memory/tasks/cpu limits need systemd-run: {install_hint('systemd')}")
     os.makedirs(f"{HOMES}/{name}", mode=0o700, exist_ok=True)
     try:
         p = subprocess.Popen(st["prefix"] + cmd, pass_fds=st["fds"])
         for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, lambda *_: p.terminate())
         rc = p.wait()
     finally:
-        teardown(st)
+        teardown(st); undo_exec_bit(prog, restore)
     sys.exit(exit_code(rc))
 
 
@@ -967,18 +994,9 @@ def cmd_open(a):
     f = os.path.abspath(a[0])
     name = clean(os.path.basename(f))
     if not os.path.isfile(f): notify(f"Can't open {name}", "no such file"); sys.exit(1)
-    flags, restore = [], None
-    if not os.access(f, os.X_OK):
-        interp = elf_interpreter(f)
-        if not interp:
-            notify(f"Can't run {name}", "it is not executable and not a dynamically linked program; run chmod +x on it"); sys.exit(1)
-        # Running it through the loader makes /proc/self/exe point at the loader, which breaks programs that read their own
-        # file (.NET single-file apps: "Failure processing application bundle"). So set the execute bit for this run only.
-        try:
-            mode = os.stat(f).st_mode
-            os.chmod(f, mode | 0o100); restore = mode
-        except OSError:
-            flags.append(f"--loader={interp}")
+    flags = []
+    if not os.access(f, os.X_OK) and not elf_interpreter(f):
+        notify(f"Can't run {name}", "it is not executable and not a dynamically linked program; run chmod +x on it"); sys.exit(1)
     if not os.path.exists(f"{CONF}/apps/{name}.conf"):
         flags.append("--input")
         folder = opener_folder(os.path.realpath(f))
@@ -987,11 +1005,7 @@ def cmd_open(a):
     me = os.path.realpath(sys.argv[0]) if os.path.isfile(sys.argv[0]) else shutil.which("sbx")
     if not me: notify("sbx not found"); sys.exit(1)
     err, t0 = tempfile.TemporaryFile(), time.monotonic()
-    try: rc = subprocess.run([sys.executable, me, *flags, f], stderr=err).returncode
-    finally:
-        if restore is not None:
-            try: os.chmod(f, restore)
-            except OSError: pass
+    rc = subprocess.run([sys.executable, me, *flags, f], stderr=err).returncode
     err.seek(0)
     text = err.read().decode(errors="replace")
     sys.stderr.write(text)
