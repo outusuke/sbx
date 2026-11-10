@@ -190,6 +190,13 @@ def set_menu_entry(on):
         subprocess.run(["update-desktop-database", os.path.dirname(MENU_DESKTOP)], stderr=subprocess.DEVNULL, timeout=10)
 
 
+def launcher_is_ours(name):
+    """True if ~/.local/share/applications/NAME.desktop was made by `sbx desktop`."""
+    try:
+        with open(f"{HOME}/.local/share/applications/{name}.desktop") as f: return "X-Sbx-Sandboxed=true" in f.read()
+    except OSError: return False
+
+
 def sbx_cmd():
     return shutil.which("sbx") or "/usr/local/bin/sbx"
 
@@ -324,6 +331,9 @@ class Win(Adw.ApplicationWindow):
             cmd.connect("activated", lambda *_: self.show_command(scope))
             rg.add(run); rg.add(cmd)
             page.add(rg)
+            mg = Adw.PreferencesGroup(title="App menu")
+            mg.add(self.app_menu_row(scope))
+            page.add(mg)
         dg = Adw.PreferencesGroup(title="Reset")
         rs = Adw.ActionRow(title="Reset settings", subtitle="Removes everything above for " + ("all programs" if scope is None else scope),
                            activatable=True, use_markup=False)
@@ -361,6 +371,29 @@ class Win(Adw.ApplicationWindow):
         row.connect("notify::active", toggled)
         undo.connect("clicked", lambda *_: (set_key(scope, key, None), show()))
         show()
+        return row
+
+    def app_menu_row(self, scope):
+        """Switch that puts the program in the desktop's app menu as 'NAME (sbx)', through `sbx desktop NAME`."""
+        row = Adw.SwitchRow(title="Add to the app menu through sbx", use_markup=False,
+                            subtitle=f"Makes a launcher called {scope} (sbx) that starts the program in the sandbox")
+        busy = [False]
+
+        def set_active(v):
+            busy[0] = True; row.set_active(v); busy[0] = False
+
+        def toggled(*_):
+            if busy[0]: return
+            want = row.get_active()
+            try: r = subprocess.run([sbx_cmd(), "desktop"] + ([] if want else ["--remove"]) + [scope], capture_output=True, text=True, timeout=15)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                set_active(not want); return self.alert("Couldn't run sbx", str(e))
+            if r.returncode != 0:
+                set_active(launcher_is_ours(scope))
+                return self.alert("Couldn't change the app menu", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
+            self.toasts.add_toast(Adw.Toast(title="Added to the app menu" if want else "Removed from the app menu"))
+        set_active(launcher_is_ours(scope))
+        row.connect("notify::active", toggled)
         return row
 
     def folders_group(self, scope):
