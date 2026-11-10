@@ -257,9 +257,7 @@ class Win(Adw.ApplicationWindow):
             g = Adw.PreferencesGroup(title=title)
             for key, t, s, _d in rows: g.add(self.switch_row(scope, key))
             page.add(g)
-        page.add(self.folders_group(scope, "whitelist", "Folders: read and write",
-                                    "The program can change these. Everything else is read-only or hidden."))
-        page.add(self.folders_group(scope, "read_only", "Folders: read-only", "The program can look at these but not change them."))
+        page.add(self.folders_group(scope))
         if scope is not None:
             rg = Adw.PreferencesGroup(title="Run")
             run = Adw.ActionRow(title=f"Run {scope}", subtitle="Starts it with these settings", activatable=True, use_markup=False)
@@ -308,22 +306,36 @@ class Win(Adw.ApplicationWindow):
         show()
         return row
 
-    def folders_group(self, scope, key, title, desc):
-        g = Adw.PreferencesGroup(title=title, description=desc)
+    def folders_group(self, scope):
+        """One list of shared folders and files. Each row has its own access choice: read and write, read only, or not shared."""
+        g = Adw.PreferencesGroup(title="Shared folders and files",
+                                 description="Everything not listed here is read-only or hidden from the program.")
         rows = []
+        MODES = (("whitelist", "Read and write"), ("read_only", "Read only"))
 
         def refill():
             for r in rows: g.remove(r)
             rows.clear()
             if scope is not None:
-                for v in parse(None)[1][key]:
-                    r = Adw.ActionRow(title=v, subtitle="From default settings", use_markup=False)
-                    g.add(r); rows.append(r)
-            for v in parse(scope)[1][key]:
-                r = Adw.ActionRow(title=v, use_markup=False)
-                rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Remove")
-                rm.connect("clicked", lambda _b, v=v: (remove_item(scope, key, v), refill()))
-                r.add_suffix(rm); g.add(r); rows.append(r)
+                for key, label in MODES:
+                    for v in parse(None)[1][key]:
+                        r = Adw.ActionRow(title=v, subtitle=f"From default settings: {label.lower()}", use_markup=False)
+                        g.add(r); rows.append(r)
+            for key, _label in MODES:
+                for v in parse(scope)[1][key]:
+                    r = Adw.ActionRow(title=v, use_markup=False)
+                    dd = Gtk.DropDown(model=Gtk.StringList.new([l for _k, l in MODES] + ["Not shared"]), valign=Gtk.Align.CENTER)
+                    dd.set_selected([k for k, _l in MODES].index(key))
+
+                    def changed(w, _p, v=v, key=key):
+                        i = w.get_selected()
+                        if i >= len(MODES): remove_item(scope, key, v)           # "Not shared"
+                        elif MODES[i][0] != key:
+                            remove_item(scope, key, v); add_item(scope, MODES[i][0], v)
+                        else: return
+                        GLib.idle_add(refill)                                    # not while the menu is still closing
+                    dd.connect("notify::selected", changed)
+                    r.add_suffix(dd); g.add(r); rows.append(r)
             if not rows:
                 r = Adw.ActionRow(title="None"); g.add(r); rows.append(r)
 
@@ -335,7 +347,7 @@ class Win(Adw.ApplicationWindow):
                 except GLib.Error: return
                 bad = path_problem(f.get_path())
                 if bad: self.alert("Can't share that", bad)
-                elif not add_item(scope, key, tilde(f.get_path())):
+                elif not add_item(scope, "read_only", tilde(f.get_path())):      # starts read only; the row's menu changes it
                     self.alert("Can't share that", "Names containing ' #' can't be stored in the settings file.")
                 else: refill()
             (dlg.select_folder if folder else dlg.open)(self, None, done)
