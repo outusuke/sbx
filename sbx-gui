@@ -35,7 +35,17 @@ GROUPS = [
         ("rocm", "AMD compute (ROCm)", "/dev/kfd", False),
         ("kvm", "Virtual machines", "/dev/kvm", False),
         ("printing", "Printing", "The CUPS socket", False)]),
-    ("Desktop", [("portals", "Notifications and portals", "Settings, open links, file chooser, print and a few more. Needs xdg-dbus-proxy", False)]),
+    ("Desktop", [
+        ("portals", "Notifications and portals", "Settings, open links, file chooser, print and a few more. Needs xdg-dbus-proxy", False),
+        ("portal_screenshot", "Screenshots", "Lets the program ask the desktop for a screenshot. Needs Notifications and portals", False),
+        ("portal_screencast", "Screen sharing", "Lets the program ask to share your screen or a window (Discord, Teams, Slack). Needs Notifications and portals", False),
+        ("portal_location", "Location", "Lets the program ask the desktop where you are. Needs Notifications and portals", False),
+        ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window. Needs Notifications and portals", False),
+        ("portal_wallpaper", "Wallpaper", "Lets the program ask to change your desktop wallpaper. Needs Notifications and portals", False),
+        ("portal_launcher", "Create launchers", "Lets the program ask to add its own entries to your app menu. Needs Notifications and portals", False),
+        ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access. Needs Notifications and portals", False),
+        ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access. Needs Notifications and portals", False),
+        ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access. Needs Notifications and portals", False)]),
     ("Privacy and safety", [
         ("private", "Private home erased on exit", "Nothing the program saves in its home is kept", False),
         ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),
@@ -46,7 +56,10 @@ SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "userns": "user namespaces",
          "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm",
-         "printing": "printing", "allow_sensitive": "secret folders", "compat": "compat variables"}
+         "printing": "printing", "allow_sensitive": "secret folders", "compat": "compat variables",
+         "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",
+         "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
+         "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 LISTS = ("whitelist", "read_only")
 CURRENT = []                                              # the scope (None or a name) of the page being shown

@@ -191,6 +191,18 @@ class Units(unittest.TestCase):
         with open(p, "w") as f: f.write(text)
         return p
 
+    # -- extra portals
+    def test_extra_portals_are_blocked_until_their_switch_is_on(self):
+        S = self.S
+        base = " ".join(S["portal_rules"]({k: False for k in S["PORTAL_EXTRA"]}))
+        for name in S["PORTAL_EXTRA"].values(): self.assertNotIn(f"portal.{name}.*", base)
+        on = " ".join(S["portal_rules"]({"portal_screencast": True, "portal_secret": True}))
+        self.assertIn("portal.ScreenCast.*", on); self.assertIn("portal.Secret.*", on)
+        self.assertNotIn("portal.Screenshot.*", on)
+        o, _ = S["parse_options"](["--portal-remote-desktop", "--portal-screenshot", "x"])
+        self.assertEqual(o, {"portal_remote_desktop": True, "portal_screenshot": True})
+        self.assertFalse(any(S["SCALARS"][k] for k in S["PORTAL_EXTRA"]))
+
     # -- settings
     def test_parse_conf_reads_everything_and_reports_what_it_skips(self):
         p = self.write("c.conf", "# comment\nnet=0  # off\n gpu = no \nsound=maybe\nx11=\nbogus=1\nmemory=2G\ntasks=lots\n"

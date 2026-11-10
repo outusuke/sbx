@@ -74,6 +74,7 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | `--no-theme` | don't show your fonts, icons and GTK/fontconfig settings |
 | `--compat` | pass through the graphics and toolkit variables that are set (`WGPU_*`, `ICED_BACKEND`, `MESA_*`, `RADV_*`, `VK_ICD_FILENAMES`, `SDL_VIDEODRIVER`, `QT_QPA_PLATFORM`, `GDK_BACKEND`...). Tokens, keys and everything else stay out |
 | `--portals` | allow notifications and basic desktop portals via `xdg-dbus-proxy` |
+| `--portal-screenshot` `--portal-screencast` `--portal-location` `--portal-shortcuts` `--portal-wallpaper` `--portal-launcher` `--portal-remote-desktop` `--portal-input-capture` `--portal-secret` | one more desktop portal each (needs `--portals`). Settings: `portal_screenshot=1` and so on |
 | `--hostname` | program sees hostname `sbx`, also in `/etc/hostname` and `/etc/hosts` |
 | `--no-userns` | the program can't create user namespaces |
 | `--env=NAME` / `--setenv=NAME=VALUE` | pass a variable through / set one (`HOME`, `USER`, `LOGNAME`, `XDG_RUNTIME_DIR`, `SBX_ACTIVE` are protected) |
@@ -123,7 +124,7 @@ setenv=GTK_THEME=Adwaita:dark
 memory=2G
 ```
 
-Switches (all `0`/`1`), with defaults: `net=1`, `wayland=1`, `wayland_strict=0`, `x11=0`, `gpu=1`, `sound=1`, `portals=0`, `private=0`, `hostname=0`, `userns=1`, `theme=1`, `camera=0`, `alsa=0`, `input=0`, `kvm=0`, `rocm=0`, `printing=0`, `allow_sensitive=0`. Anything else (`net=maybe`) is reported with its file and line number and ignored, instead of silently counting as on or off.
+Switches (all `0`/`1`), with defaults: `net=1`, `wayland=1`, `wayland_strict=0`, `x11=0`, `gpu=1`, `sound=1`, `portals=0`, `private=0`, `hostname=0`, `userns=1`, `theme=1`, `camera=0`, `alsa=0`, `input=0`, `kvm=0`, `rocm=0`, `printing=0`, `allow_sensitive=0`, `compat=0`, and the extra portals `portal_screenshot`, `portal_screencast`, `portal_location`, `portal_shortcuts`, `portal_wallpaper`, `portal_launcher`, `portal_remote_desktop`, `portal_input_capture`, `portal_secret` (all `0`, and only used when `portals=1`). Anything else (`net=maybe`) is reported with its file and line number and ignored, instead of silently counting as on or off.
 
 Lists that add up across the two files: `whitelist`, `read_only`, `env`, `setenv`, `allow_syscall`. Limits: `memory`, `tasks`, `cpu`; an empty value in a program's file cancels the default's. Command-line flags beat the files. Flags can only change a setting in the direction shown in the table above (for example, there is no flag to turn the network back on); `--ignore-config` starts from the built-in defaults.
 
