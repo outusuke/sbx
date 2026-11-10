@@ -147,6 +147,49 @@ def tilde(p):
     return "~/" + p[len(HOME) + 1:] if p.startswith(HOME + "/") else p
 
 
+MENU_DESKTOP = HOME + "/.local/share/applications/org.sbx.Gui.desktop"
+MENU_ICON = HOME + "/.local/share/icons/hicolor/scalable/apps/org.sbx.Gui.svg"
+MENU_ENTRY = f"""[Desktop Entry]
+Type=Application
+Name=sbx
+GenericName=Sandbox Settings
+Comment=Edit the settings of programs run in the sbx sandbox
+Exec={os.path.realpath(sys.argv[0]) if os.path.basename(sys.argv[0]) == "sbx-gui" else "/usr/local/bin/sbx-gui"}
+Icon=org.sbx.Gui
+Terminal=false
+StartupNotify=true
+Categories=System;Settings;Security;GTK;
+Keywords=sandbox;bubblewrap;firejail;permissions;
+"""
+MENU_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#3584e4"/>
+  <path d="M64 24 L94 36 V62 C94 80 81 94 64 102 C47 94 34 80 34 62 V36 Z" fill="#fff" opacity=".95"/>
+  <rect x="50" y="58" width="28" height="22" rx="4" fill="#3584e4"/>
+  <path d="M55 58 V51 a9 9 0 0 1 18 0 V58" fill="none" stroke="#3584e4" stroke-width="5"/>
+</svg>
+"""
+
+
+def menu_entry_exists():
+    return os.path.isfile(MENU_DESKTOP)
+
+
+def set_menu_entry(on):
+    """Add or remove sbx-gui's own launcher in the user's app menu (no root needed)."""
+    if on:
+        os.makedirs(os.path.dirname(MENU_DESKTOP), exist_ok=True)
+        os.makedirs(os.path.dirname(MENU_ICON), exist_ok=True)
+        for path, text in ((MENU_ICON, MENU_SVG), (MENU_DESKTOP, MENU_ENTRY)):
+            with open(path + ".tmp", "w") as f: f.write(text)
+            os.replace(path + ".tmp", path)
+    else:
+        for path in (MENU_DESKTOP, MENU_ICON):
+            try: os.unlink(path)
+            except OSError: pass
+    if shutil.which("update-desktop-database"):
+        subprocess.run(["update-desktop-database", os.path.dirname(MENU_DESKTOP)], stderr=subprocess.DEVNULL, timeout=10)
+
+
 def sbx_cmd():
     return shutil.which("sbx") or "/usr/local/bin/sbx"
 
@@ -211,6 +254,19 @@ class Win(Adw.ApplicationWindow):
         row.connect("activated", lambda *_: self.open(None))
         g.add(row)
         page.add(g)
+        mg = Adw.PreferencesGroup()
+        menu = Adw.SwitchRow(title="Show sbx in the app menu", subtitle="Adds a launcher for this window to your application menu.")
+        menu.set_active(menu_entry_exists())
+
+        def on_menu(r, _p):
+            try:
+                set_menu_entry(r.get_active())
+                self.toasts.add_toast(Adw.Toast(title="Added to the app menu" if r.get_active() else "Removed from the app menu"))
+            except (OSError, subprocess.SubprocessError) as e:
+                self.toasts.add_toast(Adw.Toast(title=f"Could not change it: {getattr(e, 'strerror', None) or e}"))
+        menu.connect("notify::active", on_menu)
+        mg.add(menu)
+        page.add(mg)
         self.apps_group = Adw.PreferencesGroup(title="Programs")
         self.app_rows = []
         page.add(self.apps_group)
