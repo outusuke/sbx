@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # sbx-gui - GTK4 + libadwaita settings editor for sbx. It reads and writes the same files as the command line:
 # ~/.config/sbx/default.conf and ~/.config/sbx/apps/NAME.conf.   Usage: sbx-gui [NAME | --default]
-import os, pwd, re, shutil, subprocess, sys, tempfile
+import json, os, pwd, re, shutil, subprocess, sys, tempfile
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -16,23 +16,39 @@ HOMES = HOME + "/.sbx-homes"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 OUTSIDE = ("/mnt/", "/media/", "/run/media/", "/tmp/")      # same as DRIVES + /tmp in sbx
 
-# Keep in sync with SCALARS in sbx: key, title, subtitle, default.
+# Wording for each switch: key, title, subtitle, default. The list of switches itself comes from `sbx schema` (see
+# load_schema), so a switch added to sbx shows up here at once, under "Other", even before it has wording of its own.
 GROUPS = [
     ("Network", [("net", "Network", "Internet and your local network", True)]),
-    ("Display and devices", [
+    ("Display", [
         ("wayland", "Wayland", "Lets graphical programs open a window", True),
+        ("wayland_strict", "Wayland only if restricted", "No Wayland at all when the compositor can't limit what the program may do", False),
         ("x11", "X11", "Weaker isolation than Wayland", False),
+        ("theme", "Your fonts, icons and GTK settings", "Shown read-only so the program looks like your desktop", True)]),
+    ("Devices", [
         ("gpu", "Graphics card", "/dev/dri and NVIDIA devices", True),
-        ("sound", "Sound", "PipeWire and PulseAudio, which includes the microphone", True)]),
+        ("sound", "Sound", "PipeWire and PulseAudio, which includes the microphone", True),
+        ("alsa", "ALSA sound devices", "/dev/snd, for programs that don't use PipeWire or PulseAudio", False),
+        ("camera", "Camera", "/dev/video*", False),
+        ("input", "Game controllers and input devices", "/dev/input", False),
+        ("rocm", "AMD compute (ROCm)", "/dev/kfd", False),
+        ("kvm", "Virtual machines", "/dev/kvm", False),
+        ("printing", "Printing", "The CUPS socket", False)]),
     ("Desktop", [("portals", "Notifications and portals", "Settings, open links, file chooser, print and a few more. Needs xdg-dbus-proxy", False)]),
-    ("Privacy", [
+    ("Privacy and safety", [
         ("private", "Private home erased on exit", "Nothing the program saves in its home is kept", False),
-        ("hostname", "Hide the computer name", "The program sees the name sbx", False)]),
+        ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),
+        ("userns", "Allow user namespaces", "Turn off to stop the program creating nested sandboxes. Chromium, Electron and Flatpak need this on", True),
+        ("allow_sensitive", "Allow sharing secret folders", "Lets you share ~/.ssh, ~/.gnupg and similar. Only if you really mean it", False)]),
 ]
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
-SHORT = {"net": "network", "wayland": "Wayland", "x11": "X11", "gpu": "graphics", "sound": "sound",
-         "portals": "portals", "private": "private home", "hostname": "hostname"}
+SHORT = {"net": "network", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics",
+         "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "userns": "user namespaces",
+         "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm",
+         "printing": "printing", "allow_sensitive": "secret folders"}
+SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 LISTS = ("whitelist", "read_only")
+CURRENT = []                                              # the scope (None or a name) of the page being shown
 
 
 # ---- settings files (same format as sbx) ----
@@ -49,12 +65,17 @@ def read_lines(scope):
     except OSError: return []
 
 
+def parse_bool(v):
+    v = v.strip().lower()
+    return True if v in ("1", "true", "yes", "on") else False if v in ("0", "false", "no", "off") else None
+
+
 def parse(scope):
     sc, ls = {}, {k: [] for k in LISTS}
     for line in read_lines(scope):
         k, _, v = (x.strip() for x in strip(line).partition("="))
         if k in ls and v: ls[k].append(v)
-        elif k in SWITCHES: sc[k] = v.lower() not in ("0", "false", "no", "off", "")
+        elif k in SWITCHES and parse_bool(v) is not None: sc[k] = parse_bool(v)
     return sc, ls
 
 
@@ -112,6 +133,11 @@ def path_problem(p):
         if p == g or p.startswith(g + "/") or g.startswith(p + "/"):
             return "That would expose sbx's own settings or private homes."
     if p == HOME: return "That is your whole home folder. Pick a folder inside it."
+    if not parse(CURRENT[0] if CURRENT else None)[0].get("allow_sensitive", False):
+        for rel in SENSITIVE:
+            g = f"{HOME}/{rel}"
+            if p == g or p.startswith(g + "/") or g.startswith(p + "/"):
+                return f"That is or contains ~/{rel}, which holds secrets. Turn on \"Allow sharing secret folders\" first."
     if p.startswith(HOME + "/") or p.startswith(OUTSIDE): return None
     return "sbx only shares paths inside your home, on /mnt or /media, or in /tmp."
 
@@ -122,6 +148,24 @@ def tilde(p):
 
 def sbx_cmd():
     return shutil.which("sbx") or "/usr/local/bin/sbx"
+
+
+def load_schema():
+    """Ask sbx which switches and secret folders exist, so this window can't drift from the command line."""
+    global GROUPS, SWITCHES, SENSITIVE
+    try:
+        r = subprocess.run([sbx_cmd(), "schema"], capture_output=True, text=True, timeout=10)
+        sch = json.loads(r.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return
+    known = set(sch.get("switches", {}))
+    if not known: return
+    SENSITIVE = list(sch.get("sensitive", SENSITIVE))
+    groups = [(t, [row for row in rows if row[0] in known]) for t, rows in GROUPS]
+    missing = [k for k in sch["switches"] if k not in {row[0] for _, rows in groups for row in rows}]
+    if missing: groups.append(("Other", [(k, k.replace("_", " ").capitalize(), "Setting from sbx", bool(sch["switches"][k])) for k in missing]))
+    GROUPS = [(t, rows) for t, rows in groups if rows]
+    SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 
 
 # ---- window ----
@@ -203,6 +247,7 @@ class Win(Adw.ApplicationWindow):
         d.choose(self, None, done)
 
     def open(self, scope):
+        CURRENT[:] = [scope]
         self.nav.push(self.program_page(scope))
 
     # -- program page --
@@ -365,6 +410,7 @@ class App(Adw.Application):
 
 
 if __name__ == "__main__":
+    load_schema()
     argv = sys.argv[:]
     target = False                                       # sbx-gui NAME opens that program, --default the defaults
     if len(argv) > 1 and argv[1] == "--default": target = None; del argv[1]

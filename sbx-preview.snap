@@ -14,10 +14,11 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
---ro-bind /run/user/1000/wayland-0 /run/user/1000/wayland-0
+--ro-bind /run/user/1000/sbx/PID.wl /run/user/1000/wayland-0
 --dev-bind-try /dev/dri /dev/dri
 --ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
 --ro-bind-try /run/user/1000/pulse/native /run/user/1000/pulse/native
@@ -27,6 +28,10 @@ bwrap
 --tmpfs /media
 --tmpfs /srv
 --tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
 --bind /home/user/.sbx-homes/firefox /home/user
 --ro-bind-try /home/user/.local/share/fonts /home/user/.local/share/fonts
 --ro-bind-try /home/user/.fonts /home/user/.fonts
@@ -34,6 +39,12 @@ bwrap
 --ro-bind-try /home/user/.icons /home/user/.icons
 --ro-bind-try /home/user/.local/share/themes /home/user/.local/share/themes
 --ro-bind-try /home/user/.themes /home/user/.themes
+--ro-bind-try /home/user/.config/gtk-3.0/settings.ini /home/user/.config/gtk-3.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-3.0/gtk.css /home/user/.config/gtk-3.0/gtk.css
+--ro-bind-try /home/user/.config/gtk-4.0/settings.ini /home/user/.config/gtk-4.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
+--ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
+--ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
@@ -58,9 +69,11 @@ bwrap
 --chdir /home/user
 -- /usr/bin/firefox
 
-## locked down: sbx --net=none --private --hostname --portals --no-gpu --no-sound --no-wayland firefox
+## locked down: sbx --net=none --private --hostname --portals --no-gpu --no-sound --no-wayland --no-userns firefox
 bwrap
 --unshare-all
+--unshare-user
+--disable-userns
 --die-with-parent
 --new-session
 --clearenv
@@ -71,6 +84,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -81,6 +95,11 @@ bwrap
 --tmpfs /media
 --tmpfs /srv
 --tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
+--tmpfs /sys/class/net
 --tmpfs /home/user
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
@@ -89,6 +108,8 @@ bwrap
 --tmpfs /etc/sudoers.d
 --tmpfs /etc/ssl/private
 --ro-bind /dev/null /etc/ssh/ssh_host_ed25519_key
+--ro-bind-data FD /etc/hostname
+--ro-bind-data FD /etc/hosts
 --ro-bind /home/user/.config/sbx/ids/firefox /etc/machine-id
 --ro-bind /home/user/.config/sbx/ids/firefox /var/lib/dbus/machine-id
 --setenv HOME /home/user
@@ -117,10 +138,11 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
---ro-bind /run/user/1000/wayland-0 /run/user/1000/wayland-0
+--ro-bind /run/user/1000/sbx/PID.wl /run/user/1000/wayland-0
 --ro-bind-try /tmp/.X11-unix/X0 /tmp/.X11-unix/X0
 --dev-bind-try /dev/dri /dev/dri
 --ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
@@ -131,6 +153,10 @@ bwrap
 --tmpfs /media
 --tmpfs /srv
 --tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
 --bind /home/user/.sbx-homes/firefox /home/user
 --ro-bind /run/user/1000/xauth /run/user/1000/xauth
 --ro-bind-try /home/user/.local/share/fonts /home/user/.local/share/fonts
@@ -139,6 +165,12 @@ bwrap
 --ro-bind-try /home/user/.icons /home/user/.icons
 --ro-bind-try /home/user/.local/share/themes /home/user/.local/share/themes
 --ro-bind-try /home/user/.themes /home/user/.themes
+--ro-bind-try /home/user/.config/gtk-3.0/settings.ini /home/user/.config/gtk-3.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-3.0/gtk.css /home/user/.config/gtk-3.0/gtk.css
+--ro-bind-try /home/user/.config/gtk-4.0/settings.ini /home/user/.config/gtk-4.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
+--ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
+--ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
@@ -178,10 +210,11 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
---ro-bind /run/user/1000/wayland-0 /run/user/1000/wayland-0
+--ro-bind /run/user/1000/sbx/PID.wl /run/user/1000/wayland-0
 --dev-bind-try /dev/dri /dev/dri
 --ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
 --ro-bind-try /run/user/1000/pulse/native /run/user/1000/pulse/native
@@ -191,6 +224,10 @@ bwrap
 --tmpfs /media
 --tmpfs /srv
 --tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
 --bind /home/user/.sbx-homes/foo /home/user
 --ro-bind-try /home/user/.local/share/fonts /home/user/.local/share/fonts
 --ro-bind-try /home/user/.fonts /home/user/.fonts
@@ -198,6 +235,12 @@ bwrap
 --ro-bind-try /home/user/.icons /home/user/.icons
 --ro-bind-try /home/user/.local/share/themes /home/user/.local/share/themes
 --ro-bind-try /home/user/.themes /home/user/.themes
+--ro-bind-try /home/user/.config/gtk-3.0/settings.ini /home/user/.config/gtk-3.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-3.0/gtk.css /home/user/.config/gtk-3.0/gtk.css
+--ro-bind-try /home/user/.config/gtk-4.0/settings.ini /home/user/.config/gtk-4.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
+--ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
+--ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
 --ro-bind /home/user/apps/foo /home/user/apps/foo
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
@@ -222,3 +265,465 @@ bwrap
 --setenv PULSE_SERVER unix:/run/user/1000/pulse/native
 --chdir /home/user
 -- /home/user/apps/foo/bin/foo
+
+## shared folders, parent read-only: sbx --whitelist=/tmp/sbx-snapshot-fixture/a/b --read-only=/tmp/sbx-snapshot-fixture/a --whitelist=/tmp/sbx-snapshot-fixture/c --here firefox
+bwrap
+--unshare-all
+--share-net
+--die-with-parent
+--new-session
+--clearenv
+--seccomp FD
+--ro-bind / /
+--dev /dev
+--proc /proc
+--tmpfs /tmp
+--tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/systemd/resolve /run/systemd/resolve
+--perms 0700
+--dir /run/user/1000
+--ro-bind /run/user/1000/sbx/PID.wl /run/user/1000/wayland-0
+--dev-bind-try /dev/dri /dev/dri
+--ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
+--ro-bind-try /run/user/1000/pulse/native /run/user/1000/pulse/native
+--tmpfs /home
+--tmpfs /root
+--tmpfs /mnt
+--tmpfs /media
+--tmpfs /srv
+--tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
+--bind /home/user/.sbx-homes/firefox /home/user
+--ro-bind-try /home/user/.local/share/fonts /home/user/.local/share/fonts
+--ro-bind-try /home/user/.fonts /home/user/.fonts
+--ro-bind-try /home/user/.local/share/icons /home/user/.local/share/icons
+--ro-bind-try /home/user/.icons /home/user/.icons
+--ro-bind-try /home/user/.local/share/themes /home/user/.local/share/themes
+--ro-bind-try /home/user/.themes /home/user/.themes
+--ro-bind-try /home/user/.config/gtk-3.0/settings.ini /home/user/.config/gtk-3.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-3.0/gtk.css /home/user/.config/gtk-3.0/gtk.css
+--ro-bind-try /home/user/.config/gtk-4.0/settings.ini /home/user/.config/gtk-4.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
+--ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
+--ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind /tmp/sbx-snapshot-fixture/a /tmp/sbx-snapshot-fixture/a
+--bind /tmp/sbx-snapshot-fixture/c /tmp/sbx-snapshot-fixture/c
+--bind /tmp/sbx-snapshot-fixture/a/b /tmp/sbx-snapshot-fixture/a/b
+--ro-bind /dev/null /etc/shadow
+--ro-bind /dev/null /etc/shadow-
+--ro-bind /dev/null /etc/gshadow
+--ro-bind /dev/null /etc/sudoers
+--tmpfs /etc/sudoers.d
+--tmpfs /etc/ssl/private
+--ro-bind /dev/null /etc/ssh/ssh_host_ed25519_key
+--ro-bind /home/user/.config/sbx/ids/firefox /etc/machine-id
+--ro-bind /home/user/.config/sbx/ids/firefox /var/lib/dbus/machine-id
+--setenv HOME /home/user
+--setenv USER user
+--setenv LOGNAME user
+--setenv PATH /usr/local/bin:/usr/bin:/usr/sbin
+--setenv XDG_RUNTIME_DIR /run/user/1000
+--setenv SBX_ACTIVE 1
+--setenv LANG en_US.UTF-8
+--setenv TERM xterm
+--setenv XDG_CURRENT_DESKTOP GNOME
+--setenv WAYLAND_DISPLAY wayland-0
+--setenv XDG_SESSION_TYPE wayland
+--setenv PULSE_SERVER unix:/run/user/1000/pulse/native
+--chdir /tmp/sbx-snapshot-fixture/a/b
+-- /usr/bin/firefox
+
+## devices: sbx --camera --alsa --input --kvm --rocm --printing firefox
+bwrap
+--unshare-all
+--share-net
+--die-with-parent
+--new-session
+--clearenv
+--seccomp FD
+--ro-bind / /
+--dev /dev
+--proc /proc
+--tmpfs /tmp
+--tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/systemd/resolve /run/systemd/resolve
+--perms 0700
+--dir /run/user/1000
+--ro-bind /run/user/1000/sbx/PID.wl /run/user/1000/wayland-0
+--dev-bind-try /dev/dri /dev/dri
+--dev-bind-try /dev/kfd /dev/kfd
+--dev-bind /dev/video0 /dev/video0
+--dev-bind-try /dev/input /dev/input
+--dev-bind-try /dev/snd /dev/snd
+--dev-bind-try /dev/kvm /dev/kvm
+--ro-bind-try /run/cups/cups.sock /run/cups/cups.sock
+--ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
+--ro-bind-try /run/user/1000/pulse/native /run/user/1000/pulse/native
+--tmpfs /home
+--tmpfs /root
+--tmpfs /mnt
+--tmpfs /media
+--tmpfs /srv
+--tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
+--bind /home/user/.sbx-homes/firefox /home/user
+--ro-bind-try /home/user/.local/share/fonts /home/user/.local/share/fonts
+--ro-bind-try /home/user/.fonts /home/user/.fonts
+--ro-bind-try /home/user/.local/share/icons /home/user/.local/share/icons
+--ro-bind-try /home/user/.icons /home/user/.icons
+--ro-bind-try /home/user/.local/share/themes /home/user/.local/share/themes
+--ro-bind-try /home/user/.themes /home/user/.themes
+--ro-bind-try /home/user/.config/gtk-3.0/settings.ini /home/user/.config/gtk-3.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-3.0/gtk.css /home/user/.config/gtk-3.0/gtk.css
+--ro-bind-try /home/user/.config/gtk-4.0/settings.ini /home/user/.config/gtk-4.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
+--ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
+--ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind /dev/null /etc/shadow
+--ro-bind /dev/null /etc/shadow-
+--ro-bind /dev/null /etc/gshadow
+--ro-bind /dev/null /etc/sudoers
+--tmpfs /etc/sudoers.d
+--tmpfs /etc/ssl/private
+--ro-bind /dev/null /etc/ssh/ssh_host_ed25519_key
+--ro-bind /home/user/.config/sbx/ids/firefox /etc/machine-id
+--ro-bind /home/user/.config/sbx/ids/firefox /var/lib/dbus/machine-id
+--setenv HOME /home/user
+--setenv USER user
+--setenv LOGNAME user
+--setenv PATH /usr/local/bin:/usr/bin:/usr/sbin
+--setenv XDG_RUNTIME_DIR /run/user/1000
+--setenv SBX_ACTIVE 1
+--setenv LANG en_US.UTF-8
+--setenv TERM xterm
+--setenv XDG_CURRENT_DESKTOP GNOME
+--setenv WAYLAND_DISPLAY wayland-0
+--setenv XDG_SESSION_TYPE wayland
+--setenv PULSE_SERVER unix:/run/user/1000/pulse/native
+--chdir /home/user
+-- /usr/bin/firefox
+
+## environment: sbx --env=EXTRA_VAR --setenv=FOO=bar --setenv=HOME=/elsewhere --env=SECRET_TOKEN firefox
+bwrap
+--unshare-all
+--share-net
+--die-with-parent
+--new-session
+--clearenv
+--seccomp FD
+--ro-bind / /
+--dev /dev
+--proc /proc
+--tmpfs /tmp
+--tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/systemd/resolve /run/systemd/resolve
+--perms 0700
+--dir /run/user/1000
+--ro-bind /run/user/1000/sbx/PID.wl /run/user/1000/wayland-0
+--dev-bind-try /dev/dri /dev/dri
+--ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
+--ro-bind-try /run/user/1000/pulse/native /run/user/1000/pulse/native
+--tmpfs /home
+--tmpfs /root
+--tmpfs /mnt
+--tmpfs /media
+--tmpfs /srv
+--tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
+--bind /home/user/.sbx-homes/firefox /home/user
+--ro-bind-try /home/user/.local/share/fonts /home/user/.local/share/fonts
+--ro-bind-try /home/user/.fonts /home/user/.fonts
+--ro-bind-try /home/user/.local/share/icons /home/user/.local/share/icons
+--ro-bind-try /home/user/.icons /home/user/.icons
+--ro-bind-try /home/user/.local/share/themes /home/user/.local/share/themes
+--ro-bind-try /home/user/.themes /home/user/.themes
+--ro-bind-try /home/user/.config/gtk-3.0/settings.ini /home/user/.config/gtk-3.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-3.0/gtk.css /home/user/.config/gtk-3.0/gtk.css
+--ro-bind-try /home/user/.config/gtk-4.0/settings.ini /home/user/.config/gtk-4.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
+--ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
+--ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind /dev/null /etc/shadow
+--ro-bind /dev/null /etc/shadow-
+--ro-bind /dev/null /etc/gshadow
+--ro-bind /dev/null /etc/sudoers
+--tmpfs /etc/sudoers.d
+--tmpfs /etc/ssl/private
+--ro-bind /dev/null /etc/ssh/ssh_host_ed25519_key
+--ro-bind /home/user/.config/sbx/ids/firefox /etc/machine-id
+--ro-bind /home/user/.config/sbx/ids/firefox /var/lib/dbus/machine-id
+--setenv HOME /home/user
+--setenv USER user
+--setenv LOGNAME user
+--setenv PATH /usr/local/bin:/usr/bin:/usr/sbin
+--setenv XDG_RUNTIME_DIR /run/user/1000
+--setenv SBX_ACTIVE 1
+--setenv LANG en_US.UTF-8
+--setenv TERM xterm
+--setenv XDG_CURRENT_DESKTOP GNOME
+--setenv WAYLAND_DISPLAY wayland-0
+--setenv XDG_SESSION_TYPE wayland
+--setenv PULSE_SERVER unix:/run/user/1000/pulse/native
+--setenv EXTRA_VAR extra
+--setenv SECRET_TOKEN must-not-appear
+--setenv FOO bar
+--chdir /home/user
+-- /usr/bin/firefox
+
+## limits: sbx --memory=2G --tasks=512 --cpu=200% firefox
+PREFIX systemd-run --user --scope --quiet -pMemoryMax=2G -pTasksMax=512 -pCPUQuota=200% --
+bwrap
+--unshare-all
+--share-net
+--die-with-parent
+--new-session
+--clearenv
+--seccomp FD
+--ro-bind / /
+--dev /dev
+--proc /proc
+--tmpfs /tmp
+--tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/systemd/resolve /run/systemd/resolve
+--perms 0700
+--dir /run/user/1000
+--ro-bind /run/user/1000/sbx/PID.wl /run/user/1000/wayland-0
+--dev-bind-try /dev/dri /dev/dri
+--ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
+--ro-bind-try /run/user/1000/pulse/native /run/user/1000/pulse/native
+--tmpfs /home
+--tmpfs /root
+--tmpfs /mnt
+--tmpfs /media
+--tmpfs /srv
+--tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
+--bind /home/user/.sbx-homes/firefox /home/user
+--ro-bind-try /home/user/.local/share/fonts /home/user/.local/share/fonts
+--ro-bind-try /home/user/.fonts /home/user/.fonts
+--ro-bind-try /home/user/.local/share/icons /home/user/.local/share/icons
+--ro-bind-try /home/user/.icons /home/user/.icons
+--ro-bind-try /home/user/.local/share/themes /home/user/.local/share/themes
+--ro-bind-try /home/user/.themes /home/user/.themes
+--ro-bind-try /home/user/.config/gtk-3.0/settings.ini /home/user/.config/gtk-3.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-3.0/gtk.css /home/user/.config/gtk-3.0/gtk.css
+--ro-bind-try /home/user/.config/gtk-4.0/settings.ini /home/user/.config/gtk-4.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
+--ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
+--ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind /dev/null /etc/shadow
+--ro-bind /dev/null /etc/shadow-
+--ro-bind /dev/null /etc/gshadow
+--ro-bind /dev/null /etc/sudoers
+--tmpfs /etc/sudoers.d
+--tmpfs /etc/ssl/private
+--ro-bind /dev/null /etc/ssh/ssh_host_ed25519_key
+--ro-bind /home/user/.config/sbx/ids/firefox /etc/machine-id
+--ro-bind /home/user/.config/sbx/ids/firefox /var/lib/dbus/machine-id
+--setenv HOME /home/user
+--setenv USER user
+--setenv LOGNAME user
+--setenv PATH /usr/local/bin:/usr/bin:/usr/sbin
+--setenv XDG_RUNTIME_DIR /run/user/1000
+--setenv SBX_ACTIVE 1
+--setenv LANG en_US.UTF-8
+--setenv TERM xterm
+--setenv XDG_CURRENT_DESKTOP GNOME
+--setenv WAYLAND_DISPLAY wayland-0
+--setenv XDG_SESSION_TYPE wayland
+--setenv PULSE_SERVER unix:/run/user/1000/pulse/native
+--chdir /home/user
+-- /usr/bin/firefox
+
+## no theme: sbx --no-theme firefox
+bwrap
+--unshare-all
+--share-net
+--die-with-parent
+--new-session
+--clearenv
+--seccomp FD
+--ro-bind / /
+--dev /dev
+--proc /proc
+--tmpfs /tmp
+--tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/systemd/resolve /run/systemd/resolve
+--perms 0700
+--dir /run/user/1000
+--ro-bind /run/user/1000/sbx/PID.wl /run/user/1000/wayland-0
+--dev-bind-try /dev/dri /dev/dri
+--ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
+--ro-bind-try /run/user/1000/pulse/native /run/user/1000/pulse/native
+--tmpfs /home
+--tmpfs /root
+--tmpfs /mnt
+--tmpfs /media
+--tmpfs /srv
+--tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
+--bind /home/user/.sbx-homes/firefox /home/user
+--ro-bind /dev/null /etc/shadow
+--ro-bind /dev/null /etc/shadow-
+--ro-bind /dev/null /etc/gshadow
+--ro-bind /dev/null /etc/sudoers
+--tmpfs /etc/sudoers.d
+--tmpfs /etc/ssl/private
+--ro-bind /dev/null /etc/ssh/ssh_host_ed25519_key
+--ro-bind /home/user/.config/sbx/ids/firefox /etc/machine-id
+--ro-bind /home/user/.config/sbx/ids/firefox /var/lib/dbus/machine-id
+--setenv HOME /home/user
+--setenv USER user
+--setenv LOGNAME user
+--setenv PATH /usr/local/bin:/usr/bin:/usr/sbin
+--setenv XDG_RUNTIME_DIR /run/user/1000
+--setenv SBX_ACTIVE 1
+--setenv LANG en_US.UTF-8
+--setenv TERM xterm
+--setenv XDG_CURRENT_DESKTOP GNOME
+--setenv WAYLAND_DISPLAY wayland-0
+--setenv XDG_SESSION_TYPE wayland
+--setenv PULSE_SERVER unix:/run/user/1000/pulse/native
+--chdir /home/user
+-- /usr/bin/firefox
+
+## compositor without security context: sbx firefox
+bwrap
+--unshare-all
+--share-net
+--die-with-parent
+--new-session
+--clearenv
+--seccomp FD
+--ro-bind / /
+--dev /dev
+--proc /proc
+--tmpfs /tmp
+--tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/systemd/resolve /run/systemd/resolve
+--perms 0700
+--dir /run/user/1000
+--ro-bind /run/user/1000/wayland-0 /run/user/1000/wayland-0
+--dev-bind-try /dev/dri /dev/dri
+--ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
+--ro-bind-try /run/user/1000/pulse/native /run/user/1000/pulse/native
+--tmpfs /home
+--tmpfs /root
+--tmpfs /mnt
+--tmpfs /media
+--tmpfs /srv
+--tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
+--bind /home/user/.sbx-homes/firefox /home/user
+--ro-bind-try /home/user/.local/share/fonts /home/user/.local/share/fonts
+--ro-bind-try /home/user/.fonts /home/user/.fonts
+--ro-bind-try /home/user/.local/share/icons /home/user/.local/share/icons
+--ro-bind-try /home/user/.icons /home/user/.icons
+--ro-bind-try /home/user/.local/share/themes /home/user/.local/share/themes
+--ro-bind-try /home/user/.themes /home/user/.themes
+--ro-bind-try /home/user/.config/gtk-3.0/settings.ini /home/user/.config/gtk-3.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-3.0/gtk.css /home/user/.config/gtk-3.0/gtk.css
+--ro-bind-try /home/user/.config/gtk-4.0/settings.ini /home/user/.config/gtk-4.0/settings.ini
+--ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
+--ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
+--ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind /dev/null /etc/shadow
+--ro-bind /dev/null /etc/shadow-
+--ro-bind /dev/null /etc/gshadow
+--ro-bind /dev/null /etc/sudoers
+--tmpfs /etc/sudoers.d
+--tmpfs /etc/ssl/private
+--ro-bind /dev/null /etc/ssh/ssh_host_ed25519_key
+--ro-bind /home/user/.config/sbx/ids/firefox /etc/machine-id
+--ro-bind /home/user/.config/sbx/ids/firefox /var/lib/dbus/machine-id
+--setenv HOME /home/user
+--setenv USER user
+--setenv LOGNAME user
+--setenv PATH /usr/local/bin:/usr/bin:/usr/sbin
+--setenv XDG_RUNTIME_DIR /run/user/1000
+--setenv SBX_ACTIVE 1
+--setenv LANG en_US.UTF-8
+--setenv TERM xterm
+--setenv XDG_CURRENT_DESKTOP GNOME
+--setenv WAYLAND_DISPLAY wayland-0
+--setenv XDG_SESSION_TYPE wayland
+--setenv PULSE_SERVER unix:/run/user/1000/pulse/native
+--chdir /home/user
+-- /usr/bin/firefox
+
+## wayland strict, no security context: sbx --wayland-strict firefox
+bwrap
+--unshare-all
+--share-net
+--die-with-parent
+--new-session
+--clearenv
+--seccomp FD
+--ro-bind / /
+--dev /dev
+--proc /proc
+--tmpfs /tmp
+--tmpfs /run
+--ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/systemd/resolve /run/systemd/resolve
+--perms 0700
+--dir /run/user/1000
+--dev-bind-try /dev/dri /dev/dri
+--ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
+--ro-bind-try /run/user/1000/pulse/native /run/user/1000/pulse/native
+--tmpfs /home
+--tmpfs /root
+--tmpfs /mnt
+--tmpfs /media
+--tmpfs /srv
+--tmpfs /var/tmp
+--tmpfs /var/log
+--tmpfs /var/mail
+--tmpfs /var/spool/mail
+--tmpfs /sys/devices/virtual/dmi/id
+--bind /home/user/.sbx-homes/firefox /home/user
+--ro-bind /dev/null /etc/shadow
+--ro-bind /dev/null /etc/shadow-
+--ro-bind /dev/null /etc/gshadow
+--ro-bind /dev/null /etc/sudoers
+--tmpfs /etc/sudoers.d
+--tmpfs /etc/ssl/private
+--ro-bind /dev/null /etc/ssh/ssh_host_ed25519_key
+--ro-bind /home/user/.config/sbx/ids/firefox /etc/machine-id
+--ro-bind /home/user/.config/sbx/ids/firefox /var/lib/dbus/machine-id
+--setenv HOME /home/user
+--setenv USER user
+--setenv LOGNAME user
+--setenv PATH /usr/local/bin:/usr/bin:/usr/sbin
+--setenv XDG_RUNTIME_DIR /run/user/1000
+--setenv SBX_ACTIVE 1
+--setenv LANG en_US.UTF-8
+--setenv TERM xterm
+--setenv XDG_CURRENT_DESKTOP GNOME
+--setenv PULSE_SERVER unix:/run/user/1000/pulse/native
+--chdir /home/user
+-- /usr/bin/firefox

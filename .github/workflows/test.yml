@@ -1,0 +1,17 @@
+name: test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bubblewrap and helpers
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap xdg-dbus-proxy wayland-protocols linux-libc-dev python3-pyflakes
+      - name: Allow unprivileged user namespaces (Ubuntu 24.04 restricts them with AppArmor)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Doctor
+        run: python3 sbx doctor || true
+      - name: Lint
+        run: python3 -m pyflakes sbx sbx-gui sbx-selftest test_sbx.py
+      - name: Tests (the isolation tests must not be skipped on CI)
+        run: python3 test_sbx.py -v 2>&1 | tee out.txt; ! grep -q "skipped" out.txt

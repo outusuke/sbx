@@ -1,22 +1,31 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # sbx-selftest - run it INSIDE sbx and it tries to reach things the sandbox should hide. Every row should say PASS.
-#     sbx ./sbx-selftest [PATH ...]
+#     sbx ./sbx-selftest [--expect=LIST] [PATH ...]
 # Extra PATHs are files or folders that must not be visible (test_sbx.py plants canaries and passes them here).
+# --expect=LIST also checks the settings you started sbx with; LIST is comma separated, from:
+#     net0 (--net=none)   gpu0 (--no-gpu)   sound0 (--no-sound)   portals0 (no --portals)
+#     userns0 (--no-userns)   hostname (--hostname)   iouring (--allow-syscall=io_uring)
 # Exit status 1 if anything is FAIL. Run it without sbx and it should fail, which proves the checks mean something.
 import ctypes, errno, os, platform, socket, sys
 
 H = os.path.expanduser("~")
 rows, bad = [], []
+args = sys.argv[1:]
+expect = {x for a in args if a.startswith("--expect=") for x in a[9:].split(",") if x}
+paths = [a for a in args if not a.startswith("--expect=")]
+
 
 def row(ok, name, detail=""):
     rows.append(f"{'PASS' if ok else 'FAIL'}  {name:<34} {detail}")
     if not ok: bad.append(name)
 
+
 def entries(p):
     """What listing folder p shows; nothing if it is missing or unreadable (both mean hidden)."""
     try: return os.listdir(p)
     except OSError: return []
+
 
 def visible(p):
     """Why p can be seen (a string), or '' if it is hidden: missing, unreadable, or an empty folder."""
@@ -26,20 +35,21 @@ def visible(p):
     except OSError:
         return ""
 
+
 # 1. your real files must be hidden (inside sbx, ~ is the program's private home)
 for rel in (".ssh", ".gnupg", ".aws", ".config/sbx", ".sbx-homes"):
     why = visible(f"{H}/{rel}")
     row(not why, f"~/{rel} is hidden", why)
-for p in sys.argv[1:]:
+for p in paths:
     why = visible(p)
     row(not why, f"{p} is hidden", why)
 row(entries(os.path.dirname(H)) == [os.path.basename(H)], "other users' homes are hidden", str(entries(os.path.dirname(H)))[:60])
 
-# 2. system secrets
+# 2. system secrets, and things that identify this computer
 why = visible("/etc/shadow")
 row(not why, "/etc/shadow is empty or unreadable", why)
 row(not entries("/root"), "/root is empty")
-for d in ("/mnt", "/media", "/srv"):
+for d in ("/mnt", "/media", "/srv", "/var/log", "/var/mail", "/sys/devices/virtual/dmi/id"):
     row(not entries(d), f"{d} is empty")
 
 # 3. the system is read-only
@@ -47,16 +57,23 @@ for p in ("/etc/sbx-selftest", "/usr/sbx-selftest", "/opt/sbx-selftest"):
     try: open(p, "w").close(); os.unlink(p); row(False, f"{p} can't be written", "it could")
     except OSError as e: row(e.errno in (errno.EROFS, errno.EACCES, errno.EPERM), f"{p} can't be written", e.strerror)
 
-# 4. blocked system calls must answer EPERM (unfiltered they answer EINVAL, EFAULT or succeed)
-nrs = {"x86_64": {"bpf": 321, "perf_event_open": 298, "mbind": 237, "keyctl": 250},
-       "aarch64": {"bpf": 280, "perf_event_open": 241, "mbind": 235, "keyctl": 219}}.get(platform.machine())
-if nrs:
+# 4. blocked system calls must answer EPERM (unfiltered they answer EINVAL, EFAULT, EBADF or succeed).
+#    name: (x86_64 number, aarch64 number, first argument)
+CALLS = {"bpf": (321, 280, 0), "perf_event_open": (298, 241, 0), "mbind": (237, 235, 0), "keyctl": (250, 219, 0),
+         "userfaultfd": (323, 282, 1), "process_vm_readv": (310, 270, 0), "kcmp": (312, 272, 0),
+         "pidfd_getfd": (438, 438, 0), "io_uring_setup": (425, 425, 0)}
+col = {"x86_64": 0, "aarch64": 1}.get(platform.machine())
+if col is not None:
     libc = ctypes.CDLL(None, use_errno=True)
-    for name, nr in nrs.items():
+    for name, t in CALLS.items():
         ctypes.set_errno(0)
-        r = libc.syscall(nr, 0, 0, 0, 0, 0, 0)
+        r = libc.syscall(t[col], t[2], 0, 0, 0, 0, 0)
         e = ctypes.get_errno()
-        row(r == -1 and e == errno.EPERM, f"syscall {name} is blocked", "EPERM" if e == errno.EPERM else f"result {r}, errno {e}")
+        if name == "io_uring_setup" and "iouring" in expect:
+            row(not (r == -1 and e == errno.EPERM), "io_uring is allowed", f"result {r}, errno {e}")
+        else:
+            row(r == -1 and e == errno.EPERM, f"syscall {name} is blocked", "EPERM" if e == errno.EPERM else f"result {r}, errno {e}")
+        if r >= 0 and name == "userfaultfd": os.close(r)
 else:
     rows.append(f"INFO  syscalls: no list for {platform.machine()}")
 
@@ -68,8 +85,36 @@ pids = [n for n in entries("/proc") if n.isdigit()]
 row(len(pids) < 10, "own PID namespace", f"{len(pids)} processes visible")
 try: mid = open("/etc/machine-id").read().strip()
 except OSError: mid = ""
-rows.append(f"INFO  machine-id {mid}")                 # test_sbx.py compares this with the host's
+try: boot = open("/proc/sys/kernel/random/boot_id").read().strip()
+except OSError: boot = ""
+rows.append(f"INFO  machine-id {mid}")                 # test_sbx.py compares these two with the host's
+rows.append(f"INFO  boot-id {boot}")
 rows.append(f"INFO  hostname {socket.gethostname()}")
+
+# 6. what you asked for on the command line (--expect=...)
+rt = os.environ.get("XDG_RUNTIME_DIR", "")
+if "net0" in expect:
+    names = [n for _, n in socket.if_nameindex()]
+    row(names == ["lo"], "no network (only lo)", ",".join(names))
+    row(not entries("/sys/class/net"), "/sys/class/net is empty")
+if "gpu0" in expect:
+    row(not entries("/dev/dri") and not [n for n in entries("/dev") if n.startswith("nvidia")], "no graphics devices")
+if "sound0" in expect:
+    row(not any(os.path.exists(f"{rt}/{x}") for x in ("pipewire-0", "pulse/native")), "no PipeWire/PulseAudio socket")
+if "portals0" in expect:
+    row("DBUS_SESSION_BUS_ADDRESS" not in os.environ and not os.path.exists(f"{rt}/bus"), "no session bus")
+if "userns0" in expect:
+    libc = ctypes.CDLL(None, use_errno=True)
+    r = libc.unshare(0x10000000)                        # CLONE_NEWUSER; --disable-userns answers EPERM or ENOSPC
+    e = ctypes.get_errno()
+    row(r == -1 and e in (errno.EPERM, errno.ENOSPC), "user namespaces are blocked", errno.errorcode.get(e, str(e)) if r == -1 else "it worked")
+if "hostname" in expect:
+    try: etc = open("/etc/hostname").read().strip()
+    except OSError: etc = "sbx"                         # no such file on this system
+    row(socket.gethostname() == "sbx" and etc == "sbx", "hostname is sbx everywhere", f"{socket.gethostname()}, /etc/hostname: {etc}")
+    try: hosts = open("/etc/hosts").read()
+    except OSError: hosts = ""
+    row("127.0.1.1 sbx" in hosts and len(hosts.splitlines()) <= 4, "/etc/hosts is the plain one")
 
 print("sbx self-test\n" + "=" * 13 + "\n" + "\n".join(rows))
 print("\nALL PASS" if not bad else f"\n{len(bad)} FAILED: " + ", ".join(bad))
