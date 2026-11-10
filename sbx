@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # sbx - run a normal program in a bubblewrap sandbox, firejail style:
 # the whole system is visible but read-only, your real home is hidden, the program gets a private home.
-import array, errno, glob, json, os, platform, pwd, re, select, shlex, shutil, signal, socket, struct, subprocess, sys, tempfile, uuid
+import array, errno, glob, json, os, platform, pwd, re, select, shlex, shutil, signal, socket, struct, subprocess, sys, tempfile, time, uuid
 
 VERSION = "2.0"
 _pw   = pwd.getpwuid(os.getuid())
@@ -138,9 +138,9 @@ def machine_id(name, create):
     return p
 
 
-def find_program(prog):
+def find_program(prog, noexec=False):
     path = os.path.abspath(prog) if "/" in prog else shutil.which(prog)
-    if not path or not os.path.isfile(path) or not os.access(path, os.X_OK):
+    if not path or not os.path.isfile(path) or not (noexec or os.access(path, os.X_OK)):
         die(f"'{prog}' not found or not executable")
     real = os.path.realpath(path)
     if real.startswith(DRIVES):
@@ -542,7 +542,9 @@ def build(prog, args, live=False, o=None):
     """The bwrap command. live=True also creates what a real run needs (machine-id, proxy, X cookie, listening sockets...)
     and returns it in `state` so run() can clean up; preview (live=False) only prints."""
     o = o or {}
-    path, real = find_program(prog)
+    loader = o.get("loader")
+    if loader and not (os.path.isabs(loader) and os.path.isfile(loader)): die(f"--loader: '{loader}' is not a program")
+    path, real = find_program(prog, bool(loader))
     cwd = share_dir(os.getcwd()) if o.get("here") else None
     name = clean(o.get("name") or os.path.basename(path))       # the name you typed, not the file behind a link
     if o.get("name") and name != o["name"]: warn(f"--name: using '{name}' (letters, digits and . _ - only)")
@@ -685,7 +687,7 @@ def build(prog, args, live=False, o=None):
     if live: hint_args(args, cwd, [p for p, _ in shares])
     limits = [f"-p{p}={cfg[k]}" for k, p in (("memory", "MemoryMax"), ("tasks", "TasksMax"), ("cpu", "CPUQuota")) if cfg[k]]
     if limits: state["prefix"] = ["systemd-run", "--user", "--scope", "--quiet"] + limits + ["--"]
-    return name, a + ["--chdir", cwd or HOME, "--", exe] + args, state
+    return name, a + ["--chdir", cwd or HOME, "--"] + ([loader] if loader else []) + [exe] + args, state
 
 
 # ---------------------------------------------------------------- running it
@@ -752,15 +754,18 @@ FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here":
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--allow-sensitive": ("allow_sensitive", True),
          "--ignore-config": ("ignore_config", True)}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
-               "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name"}
-COMMANDS = ("preview", "show", "doctor", "clean", "desktop", "schema")
+               "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
+               "--loader": "loader"}
+COMMANDS = ("preview", "show", "doctor", "clean", "desktop", "open", "schema")
 
 USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx preview [options] PROGRAM [args]   print the command instead of running it\n"
          "sbx show [options] NAME                the settings that apply to a program, and where each comes from\n"
          "sbx doctor                             check that everything sbx needs works here\n"
          "sbx clean [--yes] NAME                 delete a program's private home and machine-id\n"
+         "sbx open FILE                          run a downloaded program with sensible defaults (for \"Open with\")\n"
          "sbx desktop NAME | --remove NAME       make a launcher (NAME.desktop) start the program through sbx\n"
+         "sbx desktop --install-opener           add \"Run in sbx\" to your file manager's Open With (--remove-opener undoes it)\n"
          "options (before the program; most also exist as a setting, e.g. net=0, x11=1):\n"
          "  --net=none    no network                   --no-wayland   hide the Wayland socket\n"
          "  --private     private home erased on exit  --x11          share the X11 socket (weaker isolation)\n"
@@ -800,7 +805,7 @@ def parse_options(a):
             if key in LIMITS:
                 if not re.fullmatch(LIMITS[key], v): die(f"{k}: '{v}' is not a valid value")
                 o[key] = v
-            elif key == "name": o[key] = v
+            elif key in ("name", "loader"): o[key] = v
             else:
                 if key == "env" and not env_name_ok(v): die(f"{k}: '{v}' is not a variable name")
                 if key == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): die(f"{k}: use NAME=VALUE")
@@ -875,6 +880,7 @@ def rewrite_desktop(text, sbx):
 
 
 def cmd_desktop(a):
+    if a in (["--install-opener"], ["--remove-opener"]): return cmd_opener(a[0] == "--install-opener")
     remove = "--remove" in a
     a = [x for x in a if x != "--remove"]
     if len(a) != 1 or a[0].startswith("-"): die("usage: sbx desktop NAME   |   sbx desktop --remove NAME   (NAME = the launcher's id, e.g. firefox or org.mozilla.firefox)")
@@ -897,6 +903,147 @@ def cmd_desktop(a):
     with open(dest, "w") as f: f.write(text)
     for n in notes: warn(n)
     print(f"wrote {tilde(dest)}: the launcher now starts the program through sbx.\nUndo with: sbx desktop --remove {ident}")
+
+
+# ---------------------------------------------------------------- opening downloaded programs
+def elf_interpreter(path):
+    """The dynamic loader an ELF program asks for (PT_INTERP), or None. Lets a file without the execute bit be run."""
+    try:
+        with open(path, "rb") as f:
+            h = f.read(64)
+            if h[:4] != b"\x7fELF" or h[5] != 1: return None                     # not ELF, or big-endian
+            if h[4] == 2: phoff, phentsize, phnum = struct.unpack_from("<QHH", h, 32)[0], *struct.unpack_from("<HH", h, 54)
+            elif h[4] == 1: phoff, phentsize, phnum = struct.unpack_from("<I", h, 28)[0], *struct.unpack_from("<HH", h, 42)
+            else: return None
+            for i in range(min(phnum, 64)):
+                f.seek(phoff + i * phentsize)
+                e = f.read(phentsize)
+                if h[4] == 2: kind, _, off, _, _, size = struct.unpack_from("<IIQQQQ", e)
+                else: kind, off, _, _, size = struct.unpack_from("<IIIII", e)
+                if kind == 3 and 0 < size < 4096:                                 # PT_INTERP
+                    f.seek(off)
+                    p = f.read(size).split(b"\0")[0].decode(errors="replace")
+                    return p if os.path.isabs(p) and os.path.isfile(p) else None
+    except (OSError, struct.error, IndexError):
+        pass
+    return None
+
+
+def generic_folders():
+    """Folders that hold all sorts of things (Downloads, Desktop...), never shared as a program's own folder."""
+    out = {HOME}
+    for n in ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "Public", "Templates"): out.add(f"{HOME}/{n}")
+    try:
+        with open(f"{os.environ.get('XDG_CONFIG_HOME') or HOME + '/.config'}/user-dirs.dirs") as f:       # translated names
+            for m in re.finditer(r'^XDG_\w+_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M): out.add(f"{HOME}/{m[1]}".rstrip("/"))
+    except OSError:
+        pass
+    return out
+
+
+def opener_folder(real):
+    """The folder a program brings along when you open it with sbx (its game data, saves...): the folder it sits in,
+    unless that is your home, a hidden folder or a general-purpose one like Downloads. None then."""
+    d = os.path.dirname(real)
+    if d in generic_folders(): return None
+    if d.startswith(HOME + "/"):
+        return None if d[len(HOME) + 1:].split("/")[0].startswith(".") else d
+    return d if d.startswith("/tmp/") else None
+
+
+def notify(title, body=""):
+    """A desktop notification (there is no terminal to print to when started from a file manager). Also printed."""
+    warn(f"{title}: {body}" if body else title)
+    ns = shutil.which("notify-send")
+    if ns:
+        try: subprocess.run([ns, "-a", "sbx", "-i", "dialog-error", title, body[:400]], timeout=5, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired): pass
+
+
+def cmd_open(a):
+    """sbx open FILE: what 'Open with' calls. A program with no settings of its own gets: its folder (read-write, for saves
+    and game data), game controllers, and the usual defaults. A program with a settings file gets exactly that file."""
+    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx open FILE")
+    f = os.path.abspath(a[0])
+    name = clean(os.path.basename(f))
+    if not os.path.isfile(f): notify(f"Can't open {name}", "no such file"); sys.exit(1)
+    flags, restore = [], None
+    if not os.access(f, os.X_OK):
+        interp = elf_interpreter(f)
+        if not interp:
+            notify(f"Can't run {name}", "it is not executable and not a dynamically linked program; run chmod +x on it"); sys.exit(1)
+        # Running it through the loader makes /proc/self/exe point at the loader, which breaks programs that read their own
+        # file (.NET single-file apps: "Failure processing application bundle"). So set the execute bit for this run only.
+        try:
+            mode = os.stat(f).st_mode
+            os.chmod(f, mode | 0o100); restore = mode
+        except OSError:
+            flags.append(f"--loader={interp}")
+    if not os.path.exists(f"{CONF}/apps/{name}.conf"):
+        flags.append("--input")
+        folder = opener_folder(os.path.realpath(f))
+        if folder:
+            os.chdir(folder); flags.append("--here")
+    me = os.path.realpath(sys.argv[0]) if os.path.isfile(sys.argv[0]) else shutil.which("sbx")
+    if not me: notify("sbx not found"); sys.exit(1)
+    err, t0 = tempfile.TemporaryFile(), time.monotonic()
+    try: rc = subprocess.run([sys.executable, me, *flags, f], stderr=err).returncode
+    finally:
+        if restore is not None:
+            try: os.chmod(f, restore)
+            except OSError: pass
+    err.seek(0)
+    text = err.read().decode(errors="replace")
+    sys.stderr.write(text)
+    if rc != 0 and time.monotonic() - t0 < 15:                      # it never really started
+        lines = [l for l in text.splitlines() if l.strip()]
+        notify(f"{name} didn't start", " ".join(l.strip() for l in lines[-3:]) or f"exit code {exit_code(rc)}")
+    sys.exit(exit_code(rc))
+
+
+OPENER_ID = "sbx-run.desktop"
+OPENER_MIMES = ("application/x-executable", "application/x-pie-executable")
+
+
+def cmd_opener(install):
+    dest = f"{HOME}/.local/share/applications/{OPENER_ID}"
+    mimeapps = f"{os.environ.get('XDG_CONFIG_HOME') or HOME + '/.config'}/mimeapps.list"
+    if install:
+        me = shutil.which("sbx") or os.path.realpath(sys.argv[0])
+        q = f'"{me}"' if " " in me else me
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "w") as f:
+            f.write("[Desktop Entry]\nType=Application\nName=Run in sbx\nComment=Run a downloaded program in the sbx sandbox\n"
+                    f"Exec={q} open %f\nMimeType={';'.join(OPENER_MIMES)};\nTerminal=false\nCategories=System;\n"
+                    "X-Sbx-Opener=true\n")
+        xm = shutil.which("xdg-mime")
+        if xm: subprocess.run([xm, "default", OPENER_ID, *OPENER_MIMES])
+        else: warn("xdg-mime not found: \"Run in sbx\" is in Open With, but not the default")
+        if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", os.path.dirname(dest)], stderr=subprocess.DEVNULL)
+        print(f"wrote {tilde(dest)}.\nProgram files now offer \"Run in sbx\" under Open With, and it is the default for files "
+              "without the execute bit. A file with the execute bit still starts directly when you double-click it.\n"
+              "Undo with: sbx desktop --remove-opener")
+        return
+    try:
+        with open(dest) as f: ours = "X-Sbx-Opener=true" in f.read()
+    except OSError: ours = None
+    if ours is False: die(f"{tilde(dest)} was not made by sbx; not removing it")
+    if ours: os.unlink(dest)
+    try:                                                                  # take our name out of the default-application lists
+        with open(mimeapps) as f: lines = f.read().splitlines()
+        out = []
+        for l in lines:
+            k, eq, v = l.partition("=")
+            if eq and OPENER_ID in v.split(";"):
+                v = ";".join(x for x in v.split(";") if x and x != OPENER_ID)
+                if not v: continue
+                l = f"{k}={v};"
+            out.append(l)
+        if out != lines:
+            with open(mimeapps, "w") as f: f.write("\n".join(out) + "\n")
+    except OSError:
+        pass
+    print("removed the \"Run in sbx\" opener" if ours is not None else "nothing to remove")
 
 
 def doctor():
@@ -960,6 +1107,7 @@ def main(argv=None):
     if cmd == "schema": print(json.dumps(schema(), indent=1)); return
     if cmd == "clean": return cmd_clean(a)
     if cmd == "desktop": return cmd_desktop(a)
+    if cmd == "open": return cmd_open(a)
     if cmd == "show": return cmd_show(a)
     opts, a = parse_options(a)
     if not a: die("usage: sbx [preview] [options] PROGRAM [args]")

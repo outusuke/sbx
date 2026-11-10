@@ -49,8 +49,10 @@ sbx preview [options] PROGRAM [args]     print the command instead of running it
 sbx show [options] NAME                  the settings that apply, and which file or flag each came from
 sbx doctor                               check bubblewrap, helpers, Wayland support, settings files
 sbx clean [--yes] NAME                   delete a private home and its machine-id
+sbx open FILE                            run a downloaded program with sensible defaults (what "Open with" calls)
 sbx desktop NAME                         make a launcher (.desktop file) start the program through sbx
 sbx desktop --remove NAME                undo that
+sbx desktop --install-opener             add "Run in sbx" to your file manager's Open With (--remove-opener undoes it)
 ```
 
 Options go before the program name. A program named like a command: `sbx -- clean`. `man sbx` has the full text.
@@ -80,6 +82,27 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | `--ignore-config` | ignore the settings files for this run |
 
 Shared paths must be inside your home (not the home itself), on `/mnt`, `/media` or `/run/media`, or in `/tmp`. `~/.config/sbx` and `~/.sbx-homes` can never be shared. A folder is mounted before what is inside it, so `whitelist=~/a/b` stays writable even with `read_only=~/a`. Shared folders that don't exist yet in the private home are created as empty mountpoints for the run and removed again afterwards if nothing was written to them.
+
+## Downloaded programs
+
+For a program you downloaded and don't want to set up by hand:
+
+```
+sbx desktop --install-opener     # once
+```
+
+Now right-click a program file (a game or any other binary) and choose **Open With → Run in sbx**; it is also the default for program files that don't have the execute bit, which is how browsers save downloads. No terminal needed. `sbx open FILE` does the same from a shell.
+
+A program with no settings file of its own (`~/.config/sbx/apps/NAME.conf`) starts with these defaults:
+
+- **Its own folder, read-write**, and it starts there. Games find their data beside the binary and can save next to it. Nothing else of your home is visible. Generic folders (your home, `Downloads`, `Desktop`, `Documents` and the other user folders, including translated names) and hidden folders are never shared this way; a file loose in `~/Downloads` gets only itself, so put a game in its own folder first.
+- **Game controllers** (`/dev/input`), plus the usual defaults: network, GPU, sound and Wayland on.
+- It runs even without the execute bit, if it is a dynamically linked ELF program (the usual case; static binaries such as many Go programs need `chmod +x`). The bit is set only while the program runs and then put back, so programs that read their own file (.NET single-file apps) work; if the file can't be changed, sbx starts it through the system loader instead.
+- If it fails right away you get a desktop notification with the reason (a program that exits with an error within 15 seconds counts as failed).
+
+If a settings file exists for that name, it is used exactly as written and none of the defaults above apply. Tighten a program by creating the file, for example `net=0`, or use `sbx-gui`.
+
+Two limits. A file that *has* the execute bit still starts directly when you double-click it; sbx can't intercept that, so use Open With or `chmod -x`. And these defaults trade isolation for convenience (the network is on, and the program's folder is writable); for something you don't trust at all, use `sbx --net=none --private FILE`.
 
 ## Settings
 
