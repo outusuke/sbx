@@ -359,6 +359,7 @@ bwrap
 --dev-bind-try /dev/kfd /dev/kfd
 --dev-bind /dev/video0 /dev/video0
 --dev-bind-try /dev/input /dev/input
+--ro-bind-try /run/udev /run/udev
 --dev-bind-try /dev/snd /dev/snd
 --dev-bind-try /dev/kvm /dev/kvm
 --ro-bind-try /run/cups/cups.sock /run/cups/cups.sock
@@ -407,6 +408,7 @@ bwrap
 --setenv XDG_CURRENT_DESKTOP GNOME
 --setenv WAYLAND_DISPLAY wayland-0
 --setenv XDG_SESSION_TYPE wayland
+--setenv CUPS_SERVER /run/cups/cups.sock
 --setenv PULSE_SERVER unix:/run/user/1000/pulse/native
 --chdir /home/user
 -- /usr/bin/firefox

@@ -34,7 +34,8 @@ GROUPS = [
         ("input", "Game controllers and input devices", "/dev/input", False),
         ("rocm", "AMD compute (ROCm)", "/dev/kfd", False),
         ("kvm", "Virtual machines", "/dev/kvm", False),
-        ("printing", "Printing", "The CUPS socket", False)]),
+        ("printing", "Printing", "The CUPS socket", False),
+        ("ssh_agent", "SSH agent", "The program can sign in as you while it runs. Far-reaching access", False)]),
     ("Desktop", [
         ("portals", "Notifications and portals", "Settings, open links, file chooser, print and a few more. Needs xdg-dbus-proxy", False),
         ("portal_screenshot", "Screenshots", "Lets the program ask the desktop for a screenshot. Needs Notifications and portals", False),
@@ -56,7 +57,7 @@ SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "userns": "user namespaces",
          "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm",
-         "printing": "printing", "allow_sensitive": "secret folders", "compat": "compat variables",
+         "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
          "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",
          "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
          "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets"}

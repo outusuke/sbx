@@ -53,7 +53,7 @@ PORTAL_EXTRA = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenC
 # Settings (key=value files) and their defaults. Lists: LISTS. Text values: LIMITS (a pattern each value must match).
 SCALARS = {"net": True, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "portals": False, "hostname": False, "userns": True, "theme": True, "camera": False,
-           "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "allow_sensitive": False,
+           "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
            "compat": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%"}
@@ -363,8 +363,10 @@ def wayland_context(display, sock_path, app_id, instance):
 def portal_rules(cfg=None):
     rules = ["--talk=org.freedesktop.Notifications", f"--see={PORTAL_NAME}"]
     extra = [i for k, i in PORTAL_EXTRA.items() if cfg and cfg.get(k)]
+    if cfg and cfg.get("camera"): extra.append("Camera")          # the Camera portal follows the camera switch
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in PORTAL_BASIC + tuple(extra)]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
+              f"--call={PORTAL_NAME}=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*",   # screencast etc. sessions
               f"--call={PORTAL_NAME}=org.freedesktop.DBus.Properties.*@/org/freedesktop/portal/desktop",
               "--broadcast=org.freedesktop.portal.*=@/org/freedesktop/portal/*"]
     return rules
@@ -654,13 +656,16 @@ def build(prog, args, live=False, o=None):
     if cfg["rocm"]: a += ["--dev-bind-try", "/dev/kfd", "/dev/kfd"]
     if cfg["camera"]:
         for p in sorted(glob.glob("/dev/video*") + glob.glob("/dev/media*")): a += ["--dev-bind", p, p]
-    if cfg["input"]: a += ["--dev-bind-try", "/dev/input", "/dev/input"]
+    if cfg["input"]: a += ["--dev-bind-try", "/dev/input", "/dev/input", "--ro-bind-try", "/run/udev", "/run/udev"]   # SDL/libinput classify devices from udev's database
     if cfg["alsa"]: a += ["--dev-bind-try", "/dev/snd", "/dev/snd"]
     if cfg["kvm"]: a += ["--dev-bind-try", "/dev/kvm", "/dev/kvm"]
-    if cfg["printing"]: a += ["--ro-bind-try", "/run/cups/cups.sock", "/run/cups/cups.sock"]
+    if cfg["printing"]: a += ["--ro-bind-try", "/run/cups/cups.sock", "/run/cups/cups.sock"]; env["CUPS_SERVER"] = "/run/cups/cups.sock"
     if cfg["sound"]:
         for x in ("pipewire-0", "pulse/native"): a += ["--ro-bind-try", f"{rt}/{x}", f"{rt}/{x}"]
         env["PULSE_SERVER"] = f"unix:{rt}/pulse/native"
+    sa = os.environ.get("SSH_AUTH_SOCK", "")
+    if cfg["ssh_agent"] and sa and os.path.exists(sa):     # the program can sign as you while it runs
+        late += ["--ro-bind", sa, sa]; env["SSH_AUTH_SOCK"] = sa
     if cfg["portals"]:
         sock = state["bus"]
         if live:
@@ -797,7 +802,7 @@ FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here":
          "--no-gpu": ("gpu", False), "--no-sound": ("sound", False), "--portals": ("portals", True),
          "--hostname": ("hostname", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
-         "--rocm": ("rocm", True), "--printing": ("printing", True), "--allow-sensitive": ("allow_sensitive", True),
+         "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--ignore-config": ("ignore_config", True),
          **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
@@ -819,7 +824,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --here        share the current folder     --no-gpu       hide /dev/dri and NVIDIA devices\n"
          "  --no-sound    hide PipeWire/PulseAudio     --portals      notifications and basic portals (xdg-dbus-proxy)\n"
          "  --hostname    hostname 'sbx' inside        --no-userns    the program can't create user namespaces\n"
-         "  --camera --alsa --input --kvm --rocm --printing     share that device or socket\n"
+         "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons and GTK settings\n"
          "  --portal-screenshot --portal-screencast --portal-location --portal-shortcuts --portal-remote-desktop\n"
          "  --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret    one more desktop portal each (needs --portals)\n"

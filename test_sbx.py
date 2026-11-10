@@ -515,6 +515,18 @@ class Units(unittest.TestCase):
         self.assertIn(".ssh", sch["sensitive"])
 
 
+class Ported(unittest.TestCase):
+    """Ideas taken from ajail: portal sessions, camera portal, ssh_agent."""
+    def test_portal_rules_and_ssh_agent(self):
+        S = load_sbx()
+        base = " ".join(S["portal_rules"]({}))
+        self.assertIn("portal.Session.*@/org/freedesktop/portal/desktop/session/*", base)
+        self.assertNotIn("portal.Camera", base)
+        self.assertIn("portal.Camera.*", " ".join(S["portal_rules"]({"camera": True})))
+        self.assertIs(S["SCALARS"]["ssh_agent"], False)
+        self.assertEqual(S["parse_options"](["--ssh-agent", "x"])[0], {"ssh_agent": True})
+
+
 class Gui(unittest.TestCase):
     """sbx-gui's settings logic, with GTK stubbed out (the window itself can't be tested here)."""
     def setUp(self):
