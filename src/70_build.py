@@ -94,9 +94,10 @@ def build(prog, args, live=False, o=None):
         if xa and os.path.isfile(xa):
             xsrc = xa
             if live and disp.startswith(":"):                  # only this display's cookie, not every cookie in the file
-                xsrc = scoped_xauth(xa, disp, tag + ".xauth") or xa
-                if xsrc != xa: state["files"].append(xsrc)
-            late += ["--ro-bind", xsrc, xa]; env["XAUTHORITY"] = xa
+                xsrc = scoped_xauth(xa, disp, tag + ".xauth")
+                if xsrc: state["files"].append(xsrc)
+                else: warn("no usable cookie for this display in XAUTHORITY; not passing the file")
+            if xsrc: late += ["--ro-bind", xsrc, xa]; env["XAUTHORITY"] = xa
     if cfg["gpu"] or cfg["rocm"]:
         a += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
     if cfg["gpu"]:

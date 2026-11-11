@@ -33,7 +33,9 @@ def cmd_clean(a):
             die("nothing deleted", 0)
 
     def unlock(fn, p, _exc):                     # programs sometimes leave read-only folders behind
-        os.chmod(os.path.dirname(p), 0o700); os.chmod(p, 0o700); fn(p)
+        os.chmod(os.path.dirname(p), 0o700)
+        if not os.path.islink(p): os.chmod(p, 0o700)         # never chmod through a link the program planted
+        fn(p)
     shutil.rmtree(real, onerror=unlock)
     try: os.unlink(mid)
     except OSError: pass
@@ -65,6 +67,7 @@ def cmd_desktop(a):
     a = [x for x in a if x != "--remove"]
     if len(a) != 1 or a[0].startswith("-"): die("usage: sbx desktop NAME   |   sbx desktop --remove NAME   (NAME = the launcher's id, e.g. firefox or org.mozilla.firefox)")
     ident = a[0][:-8] if a[0].endswith(".desktop") else a[0]
+    if not re.fullmatch(r"[A-Za-z0-9._+-]+", ident) or ident.startswith("."): die(f"'{ident}' is not a launcher id")
     mine = f"{HOME}/.local/share/applications/{ident}.desktop"
     if remove:
         try:

@@ -303,6 +303,42 @@ class Units(unittest.TestCase):
         with open(src, "wb") as f: f.write(entry(b"0", b"AAAA")[:-3])                   # truncated: use the original file
         self.assertIsNone(self.S["scoped_xauth"](src, ":0", dst))
 
+    # -- hardening follow-ups
+    def test_new_mount_api_is_blocked_and_can_be_allowed_again(self):
+        S = self.S
+        new = {"open_tree": 428, "move_mount": 429, "fsopen": 430, "fsconfig": 431, "fsmount": 432, "fspick": 433, "mount_setattr": 442}
+        for machine in ("x86_64", "aarch64"):
+            blocked = S["blocked_numbers"](machine)
+            for name, nr in new.items():
+                self.assertIn(nr, blocked, f"{name} on {machine}"); self.assertTrue(S["syscall_ok"](name), name)
+            self.assertNotIn(430, S["blocked_numbers"](machine, ("fsopen",)))
+            self.assertIn(429, S["blocked_numbers"](machine, ("fsopen",)))
+
+    def test_an_unusable_xauthority_is_not_handed_over_whole(self):
+        S = self.S
+        bad = self.write("bad.xauth", "not an xauthority file at all")
+        os.makedirs(f"{self.tmp}/run")
+        S["runtime_dir"] = lambda: f"{self.tmp}/run"
+        env = {"DISPLAY": ":0", "XAUTHORITY": bad, "WAYLAND_DISPLAY": ""}
+        with mock.patch.dict(os.environ, env):
+            _, cmd, st = S["build"]("/bin/true", [], True, {"x11": True})
+        for fd in st["fds"]: os.close(fd)
+        self.assertFalse(any(cmd[i:i + 3] == ["--ro-bind", bad, bad] for i in range(len(cmd))), "the whole file was shared")
+        self.assertNotIn("XAUTHORITY", cmd)
+        self.assertTrue(any("XAUTHORITY" in w for w in self.warned), self.warned)
+
+    def test_unknown_architecture_does_not_start_without_the_filter(self):
+        if os.geteuid() == 0: self.skipTest("run() refuses root before it gets to the architecture")
+        S, dies = self.S, []
+        def die(msg, code=1): dies.append(msg); raise SystemExit(code)
+        S["die"] = die
+        S["platform"] = types.SimpleNamespace(machine=lambda: "riscv64")
+        S["shutil"] = types.SimpleNamespace(which=lambda x: f"/usr/bin/{x}")
+        with mock.patch.dict(os.environ, {"SBX_ACTIVE": ""}):
+            os.environ.pop("SBX_ACTIVE")
+            with self.assertRaises(SystemExit): S["run"]("/bin/true", [], {})
+        self.assertEqual(len(dies), 1); self.assertIn("no system-call filter", dies[0])
+
     # -- system calls
     @staticmethod
     def run_bpf(prog, nr, arch):
@@ -883,6 +919,25 @@ class Isolation(unittest.TestCase):
         with open(mine, "w") as f: f.write("[Desktop Entry]\nExec=foo\n")                                              # not ours: leave it alone
         self.assertNotEqual(self.sbx_run("desktop", "--remove", "org.example.foo").returncode, 0); self.assertTrue(os.path.exists(mine))
         self.assertNotEqual(self.sbx_run("desktop", "nosuchthing", env=env).returncode, 0)
+
+
+    def test_clean_never_chmods_through_a_link_planted_in_the_private_home(self):
+        d = f"{self.home}/.sbx-homes/linktest"; os.makedirs(f"{d}/sub")
+        target = f"{self.T}/linktarget"
+        with open(target, "w") as f: f.write("mine\n")
+        os.chmod(target, 0o644)
+        os.symlink(target, f"{d}/sub/lnk"); os.chmod(f"{d}/sub", 0o500)         # read-only folder: removing the link fails once
+        self.assertEqual(self.sbx_run("clean", "--yes", "linktest").returncode, 0)
+        self.assertFalse(os.path.exists(d))
+        self.assertEqual(oct(os.stat(target).st_mode & 0o777), "0o644", "clean changed the mode of a file outside the private home")
+
+    def test_desktop_refuses_ids_that_are_paths(self):
+        marked = f"{self.home}/.local/share/x.desktop"; os.makedirs(os.path.dirname(marked), exist_ok=True)
+        with open(marked, "w") as f: f.write("[Desktop Entry]\nX-Sbx-Sandboxed=true\n")
+        for bad in ("../x", "a/b", ".hidden", "x*"):
+            r = self.sbx_run("desktop", "--remove", bad)
+            self.assertNotEqual(r.returncode, 0, bad); self.assertIn("not a launcher id", r.stderr, bad)
+        self.assertTrue(os.path.exists(marked), "a file outside applications/ was removed")
 
 
 if __name__ == "__main__":

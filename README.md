@@ -36,7 +36,7 @@ sbx doctor                          # checks that everything works on this machi
 | Hardware identity | `/sys/devices/virtual/dmi/id` emptied; with `net=0` also `/sys/class/net` (MAC addresses) |
 | Environment | cleared; only locale, terminal and desktop variables are kept, plus what you pass with `env=` / `setenv=` |
 | Namespaces | all unshared (PID, IPC, UTS, user, cgroup); network shared unless `net=0`; nested user namespaces blocked with `userns=0` |
-| System calls | a blocklist: `kexec_*`, `perf_event_open`, `bpf`, `syslog`, `keyctl` and friends, `mbind` and NUMA calls, `open_by_handle_at`, `io_uring_*`, `userfaultfd`, `process_vm_readv/writev`, `kcmp`, `pidfd_getfd`, and all 32-bit/x32 calls |
+| System calls | a blocklist: `kexec_*`, `perf_event_open`, `bpf`, `syslog`, `keyctl` and friends, `mbind` and NUMA calls, `open_by_handle_at`, `io_uring_*`, `userfaultfd`, `process_vm_readv/writev`, `kcmp`, `pidfd_getfd`, the new mount API (`open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`), and all 32-bit/x32 calls |
 | Wayland | through a [security context](https://wayland.app/protocols/security-context-v1) when the compositor supports it (no screen capture or input injection), otherwise the full socket with a warning |
 
 The program starts in its private home. Use full paths, or `--here` to share the current folder. If an argument names something that exists on your side but isn't visible inside, sbx says so.
@@ -79,7 +79,7 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | `--hostname` | program sees hostname `sbx`, also in `/etc/hostname` and `/etc/hosts` |
 | `--no-userns` | the program can't create user namespaces |
 | `--env=NAME` / `--setenv=NAME=VALUE` | pass a variable through / set one (`HOME`, `USER`, `LOGNAME`, `XDG_RUNTIME_DIR`, `SBX_ACTIVE` are protected) |
-| `--allow-syscall=NAME` | turn one of the extra blocked calls back on: `io_uring`, `userfaultfd`, `process_vm_readv`, `process_vm_writev`, `kcmp`, `pidfd_getfd` |
+| `--allow-syscall=NAME` | turn one of the extra blocked calls back on: `io_uring`, `userfaultfd`, `process_vm_readv`, `process_vm_writev`, `kcmp`, `pidfd_getfd`, `open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr` |
 | `--memory=2G` `--tasks=512` `--cpu=200%` | resource limits through `systemd-run --user` |
 | `--name=NAME` | use another private home, machine-id and settings name than the program's |
 | `--ignore-config` | ignore the settings files for this run |
@@ -160,6 +160,7 @@ sbx --net=none --no-userns ./sbx-selftest --expect=net0,userns0   # also check w
 - 32-bit programs (Wine, Steam, old games) fail because 32-bit system calls are blocked.
 - `--new-session` is on, so terminal programs have no `/dev/tty` and no job control. Prompts that read from the terminal directly (`ssh`, `sudo`, `git` passwords) won't work.
 - Sharing a single file read-write can break programs that save by renaming over it. Share the folder instead.
+- A read-write share (`--here`, `whitelist=`) lets the program plant files that later run outside the sandbox: git hooks, Makefiles, `.envrc`, scripts. Share only what it needs, and prefer `read_only=` where you can.
 - Each program name has one private home, so `sbx python3 a.py` and `sbx python3 b.py` share it; use `--name` to separate them.
 - Programs on another drive (`/mnt`, `/media`, `/run/media`) can't be started; copy them elsewhere first.
 - Not for root; `sbx` refuses to run as root or inside another `sbx` sandbox.

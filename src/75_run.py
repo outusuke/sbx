@@ -54,7 +54,7 @@ def run(prog, args, opts):
     if os.geteuid() == 0: die("refusing to run as root")
     if os.environ.get("SBX_ACTIVE"): die("already inside an sbx sandbox")
     if not shutil.which("bwrap"): die(f"bubblewrap missing: {install_hint('bubblewrap')}")
-    if platform.machine() not in ARCHES: warn(f"no system-call filter for {platform.machine()}; running without it")
+    if platform.machine() not in ARCHES: die(f"no system-call filter for {platform.machine()}; not starting without it")
     sweep_stale()
     os.makedirs(HOMES, mode=0o700, exist_ok=True)
     restore = None

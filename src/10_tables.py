@@ -12,7 +12,9 @@ BASE_SYSCALLS = {
     "open_by_handle_at": (304, 265), "name_to_handle_at": (303, 264)}
 EXTRA_SYSCALLS = {
     "userfaultfd": (323, 282), "process_vm_readv": (310, 270), "process_vm_writev": (311, 271), "kcmp": (312, 272),
-    "pidfd_getfd": (438, 438), "io_uring_setup": (425, 425), "io_uring_enter": (426, 426), "io_uring_register": (427, 427)}
+    "pidfd_getfd": (438, 438), "io_uring_setup": (425, 425), "io_uring_enter": (426, 426), "io_uring_register": (427, 427),
+    "open_tree": (428, 428), "move_mount": (429, 429), "fsopen": (430, 430), "fsconfig": (431, 431), "fsmount": (432, 432),
+    "fspick": (433, 433), "mount_setattr": (442, 442)}
 IO_URING = ("io_uring_setup", "io_uring_enter", "io_uring_register")
 ARCHES = {"x86_64": (0xC000003E, 0), "aarch64": (0xC00000B7, 1)}        # machine: (audit arch, column in the tables above)
 

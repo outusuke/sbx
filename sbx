@@ -24,7 +24,9 @@ BASE_SYSCALLS = {
     "open_by_handle_at": (304, 265), "name_to_handle_at": (303, 264)}
 EXTRA_SYSCALLS = {
     "userfaultfd": (323, 282), "process_vm_readv": (310, 270), "process_vm_writev": (311, 271), "kcmp": (312, 272),
-    "pidfd_getfd": (438, 438), "io_uring_setup": (425, 425), "io_uring_enter": (426, 426), "io_uring_register": (427, 427)}
+    "pidfd_getfd": (438, 438), "io_uring_setup": (425, 425), "io_uring_enter": (426, 426), "io_uring_register": (427, 427),
+    "open_tree": (428, 428), "move_mount": (429, 429), "fsopen": (430, 430), "fsconfig": (431, 431), "fsmount": (432, 432),
+    "fspick": (433, 433), "mount_setattr": (442, 442)}
 IO_URING = ("io_uring_setup", "io_uring_enter", "io_uring_register")
 ARCHES = {"x86_64": (0xC000003E, 0), "aarch64": (0xC00000B7, 1)}        # machine: (audit arch, column in the tables above)
 
@@ -676,9 +678,10 @@ def build(prog, args, live=False, o=None):
         if xa and os.path.isfile(xa):
             xsrc = xa
             if live and disp.startswith(":"):                  # only this display's cookie, not every cookie in the file
-                xsrc = scoped_xauth(xa, disp, tag + ".xauth") or xa
-                if xsrc != xa: state["files"].append(xsrc)
-            late += ["--ro-bind", xsrc, xa]; env["XAUTHORITY"] = xa
+                xsrc = scoped_xauth(xa, disp, tag + ".xauth")
+                if xsrc: state["files"].append(xsrc)
+                else: warn("no usable cookie for this display in XAUTHORITY; not passing the file")
+            if xsrc: late += ["--ro-bind", xsrc, xa]; env["XAUTHORITY"] = xa
     if cfg["gpu"] or cfg["rocm"]:
         a += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
     if cfg["gpu"]:
@@ -797,7 +800,7 @@ def run(prog, args, opts):
     if os.geteuid() == 0: die("refusing to run as root")
     if os.environ.get("SBX_ACTIVE"): die("already inside an sbx sandbox")
     if not shutil.which("bwrap"): die(f"bubblewrap missing: {install_hint('bubblewrap')}")
-    if platform.machine() not in ARCHES: warn(f"no system-call filter for {platform.machine()}; running without it")
+    if platform.machine() not in ARCHES: die(f"no system-call filter for {platform.machine()}; not starting without it")
     sweep_stale()
     os.makedirs(HOMES, mode=0o700, exist_ok=True)
     restore = None
@@ -933,7 +936,9 @@ def cmd_clean(a):
             die("nothing deleted", 0)
 
     def unlock(fn, p, _exc):                     # programs sometimes leave read-only folders behind
-        os.chmod(os.path.dirname(p), 0o700); os.chmod(p, 0o700); fn(p)
+        os.chmod(os.path.dirname(p), 0o700)
+        if not os.path.islink(p): os.chmod(p, 0o700)         # never chmod through a link the program planted
+        fn(p)
     shutil.rmtree(real, onerror=unlock)
     try: os.unlink(mid)
     except OSError: pass
@@ -965,6 +970,7 @@ def cmd_desktop(a):
     a = [x for x in a if x != "--remove"]
     if len(a) != 1 or a[0].startswith("-"): die("usage: sbx desktop NAME   |   sbx desktop --remove NAME   (NAME = the launcher's id, e.g. firefox or org.mozilla.firefox)")
     ident = a[0][:-8] if a[0].endswith(".desktop") else a[0]
+    if not re.fullmatch(r"[A-Za-z0-9._+-]+", ident) or ident.startswith("."): die(f"'{ident}' is not a launcher id")
     mine = f"{HOME}/.local/share/applications/{ident}.desktop"
     if remove:
         try:
