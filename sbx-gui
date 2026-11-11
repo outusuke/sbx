@@ -37,16 +37,16 @@ GROUPS = [
         ("printing", "Printing", "The CUPS socket", False),
         ("ssh_agent", "SSH agent", "The program can sign in as you while it runs. Far-reaching access", False)]),
     ("Desktop", [
-        ("portals", "Notifications and portals", "Settings, open links, file chooser, print and a few more. Needs xdg-dbus-proxy", False),
-        ("portal_screenshot", "Screenshots", "Lets the program ask the desktop for a screenshot. Needs Notifications and portals", False),
-        ("portal_screencast", "Screen sharing", "Lets the program ask to share your screen or a window (Discord, Teams, Slack). Needs Notifications and portals", False),
-        ("portal_location", "Location", "Lets the program ask the desktop where you are. Needs Notifications and portals", False),
-        ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window. Needs Notifications and portals", False),
-        ("portal_wallpaper", "Wallpaper", "Lets the program ask to change your desktop wallpaper. Needs Notifications and portals", False),
-        ("portal_launcher", "Create launchers", "Lets the program ask to add its own entries to your app menu. Needs Notifications and portals", False),
-        ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access. Needs Notifications and portals", False),
-        ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access. Needs Notifications and portals", False),
-        ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access. Needs Notifications and portals", False)]),
+        ("portals", "Notifications, links and file chooser", "Lets the program show notifications, open links, pick files and print through your desktop. Needs xdg-dbus-proxy", False),
+        ("portal_screenshot", "Screenshots", "Lets the program ask the desktop for a screenshot. Works only when “Notifications, links and file chooser” is on", False),
+        ("portal_screencast", "Screen sharing", "Lets the program ask to share your screen or a window (Discord, Teams, Slack). Works only when “Notifications, links and file chooser” is on", False),
+        ("portal_location", "Location", "Lets the program ask the desktop where you are. Works only when “Notifications, links and file chooser” is on", False),
+        ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window. Works only when “Notifications, links and file chooser” is on", False),
+        ("portal_wallpaper", "Wallpaper", "Lets the program ask to change your desktop wallpaper. Works only when “Notifications, links and file chooser” is on", False),
+        ("portal_launcher", "Create launchers", "Lets the program ask to add its own entries to your app menu. Works only when “Notifications, links and file chooser” is on", False),
+        ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access. Works only when “Notifications, links and file chooser” is on", False),
+        ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access. Works only when “Notifications, links and file chooser” is on", False),
+        ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access. Works only when “Notifications, links and file chooser” is on", False)]),
     ("Privacy and safety", [
         ("private", "Private home erased on exit", "Nothing the program saves in its home is kept", False),
         ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),
@@ -130,6 +130,13 @@ def app_names():
     try: n |= {f for f in os.listdir(HOMES) if os.path.isdir(f"{HOMES}/{f}")}
     except OSError: pass
     return sorted(x for x in n if NAME_RE.match(x))
+
+
+def portals_on(scope):
+    """Is the portals switch on for this program (its own setting, else the default settings, else off)?"""
+    sc = parse(scope)[0]
+    if "portals" in sc or scope is None: return sc.get("portals", SWITCHES["portals"][2])
+    return parse(None)[0].get("portals", SWITCHES["portals"][2])
 
 
 def summary(scope):
@@ -331,9 +338,10 @@ class Win(Adw.ApplicationWindow):
     # -- program page --
     def program_page(self, scope):
         page = Adw.PreferencesPage()
+        page_rows = []
         for title, rows in GROUPS:
             g = Adw.PreferencesGroup(title=title)
-            for key, t, s, _d in rows: g.add(self.switch_row(scope, key))
+            for key, t, s, _d in rows: g.add(self.switch_row(scope, key, page_rows))
             page.add(g)
         for grp in self.folders_group(scope): page.add(grp)
         if scope is not None:
@@ -362,7 +370,8 @@ class Win(Adw.ApplicationWindow):
         page.add(dg)
         return self.page("Default settings" if scope is None else scope, page)
 
-    def switch_row(self, scope, key):
+    def switch_row(self, scope, key, page_rows=None):
+        """page_rows: the refresh functions of every switch on this page, so a switch others depend on can update them."""
         title, sub, default = SWITCHES[key]
         row = Adw.SwitchRow(title=title, use_markup=False)
         undo = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
@@ -379,11 +388,19 @@ class Win(Adw.ApplicationWindow):
             busy[0] = False
             row.set_subtitle(sub)                                  # an overridden switch shows the undo button; no note on the rest
             undo.set_visible(scope is not None and own)
+            undo.set_tooltip_text("Back to the default: " + ("on" if dsc.get(key, default) else "off"))
+            if key.startswith("portal_"):                          # the extra portals do nothing until portals itself is on
+                row.set_sensitive(portals_on(scope))
+
+        def changed():
+            show()
+            for refresh in page_rows or (): refresh()
 
         def toggled(*_):
-            if not busy[0]: set_key(scope, key, row.get_active()); show()
+            if not busy[0]: set_key(scope, key, row.get_active()); changed()
         row.connect("notify::active", toggled)
-        undo.connect("clicked", lambda *_: (set_key(scope, key, None), show()))
+        undo.connect("clicked", lambda *_: (set_key(scope, key, None), changed()))
+        if page_rows is not None and (key == "portals" or key.startswith("portal_")): page_rows.append(show)
         show()
         return row
 
