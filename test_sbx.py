@@ -593,6 +593,159 @@ class Ported(unittest.TestCase):
         self.assertIs(S["SCALARS"]["ssh_agent"], False)
         self.assertEqual(S["parse_options"](["--ssh-agent", "x"])[0], {"ssh_agent": True})
 
+    def test_tray_rules_are_narrow_and_work_without_portals(self):
+        S = load_sbx()
+        r = S["tray_rules"]()
+        self.assertIn("--talk=org.kde.StatusNotifierWatcher", r)
+        self.assertIn("--own=org.kde.StatusNotifierItem-2-1", r)
+        self.assertIn("--own=org.mpris.MediaPlayer2.*", r)
+        self.assertTrue(all(x.startswith(("--talk=org.kde.StatusNotifierWatcher", "--own=org.kde.StatusNotifierItem-", "--own=org.mpris."))
+                            for x in r), "the tray rules name something besides the tray and media keys")
+        self.assertIs(S["SCALARS"]["tray"], False)                                       # off unless asked for
+        self.assertEqual(S["parse_options"](["--tray", "x"])[0], {"tray": True})
+        self.assertEqual(S["bus_rules"]({"portals": False, "tray": False}), [])
+        only = S["bus_rules"]({"portals": False, "tray": True})
+        self.assertIn("--own=org.mpris.MediaPlayer2.*", only)
+        self.assertNotIn("--talk=org.freedesktop.Notifications", only)                  # the tray alone doesn't open the portals
+        both = S["bus_rules"]({"portals": True, "tray": True})
+        self.assertIn("--talk=org.freedesktop.Notifications", both); self.assertIn("--own=org.mpris.MediaPlayer2.*", both)
+        self.assertEqual(S["bus_rules"](), S["portal_rules"]())                          # unchanged for callers that pass nothing
+        rt = S["runtime_dir"]()
+        _, args, _ = S["build"]("/bin/true", [], False, {"tray": True, "ignore_config": True})
+        self.assertIn(f"{rt}/bus", args); self.assertIn("DBUS_SESSION_BUS_ADDRESS", args)
+        _, args, _ = S["build"]("/bin/true", [], False, {"ignore_config": True})
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", args)
+
+
+class Hostile(unittest.TestCase):
+    """Awkward and hostile input: odd program names, links that point at protected folders, malformed settings files, a build
+    that is out of date. (Like ajail's hostile tests, but for what sbx reads: names, paths and settings.)"""
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="sbx-hostile-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home = f"{self.tmp}/home"
+        os.makedirs(self.home)
+        self.S = load_sbx()
+        self.S.update(HOME=self.home, CONF=f"{self.home}/.config/sbx", HOMES=f"{self.home}/.sbx-homes")
+        self.warned = []
+        self.S["warn"] = self.warned.append
+
+    def test_whatever_a_program_is_called_its_name_is_a_safe_word(self):
+        ok = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+        for raw in ("firefox", "a b", "x\ny", "../../etc/passwd", "--net=none", ".hidden", "-rf", "é.ü", "a" * 300, "\x1b]52;c;x\x07", "", "...", "名前",
+                    "tab\there", "semi;colon", "$(id)", "`id`", "a/b/c"):
+            name = self.S["clean"](os.path.basename(raw))
+            self.assertRegex(name, ok.pattern, repr(raw))
+            self.assertTrue(ok.fullmatch(name), repr(raw))
+
+    def test_a_link_cannot_be_used_to_share_a_protected_folder(self):
+        for d in (".ssh", ".config/sbx", ".sbx-homes", ".gnupg"): os.makedirs(f"{self.home}/{d}")
+        os.makedirs(f"{self.home}/Docs")
+        sp = self.S["share_path"]
+        quiet = contextlib.redirect_stderr(io.StringIO())
+        for i, target in enumerate((".ssh", ".config/sbx", ".sbx-homes", ".gnupg", "Docs/../.ssh", "/etc", "/")):
+            link = f"{self.home}/Docs/link{i}"
+            os.symlink(target if target.startswith("/") else f"{self.home}/{target}", link)
+            for cli in (True, False):
+                with quiet:
+                    try: got = sp(link, cli)
+                    except SystemExit: got = None
+                self.assertIsNone(got, f"{link} -> {target} was accepted (cli={cli})")
+        os.symlink(f"{self.home}/Docs", f"{self.home}/gooddocs")                      # a link to something fine still works
+        self.assertEqual(sp(f"{self.home}/gooddocs", True), f"{self.home}/Docs")
+
+    def test_a_malformed_settings_file_changes_nothing_it_should_not(self):
+        p = f"{self.home}/odd.conf"
+        with open(p, "wb") as f:
+            f.write(b"net=0\r\ngpu=0\x00\nsound=1 \t\n" + b"x11=" + b"1" * 1_000_000 + b"\n" + b"\xff\xfe=1\nportals=1\nportals=0\n")
+        with contextlib.redirect_stderr(io.StringIO()):
+            sc, ls, lim = self.S["parse_conf"](p)
+        self.assertIs(sc["net"], False)                                                # CRLF is fine
+        self.assertNotIn("gpu", sc)                                                    # a NUL makes the value meaningless: ignored, not guessed
+        self.assertIs(sc["sound"], True)
+        self.assertNotIn("x11", sc)                                                    # a million-digit value is not a 1
+        self.assertIs(sc["portals"], False)                                            # the last line wins
+        self.assertEqual((ls["whitelist"], lim), ([], {}))
+        os.mkdir(f"{self.home}/dir.conf")                                              # a folder or a missing file is just empty
+        self.assertEqual(self.S["parse_conf"](f"{self.home}/dir.conf")[0], {})
+        self.assertEqual(self.S["parse_conf"](f"{self.home}/nothing.conf")[0], {})
+
+    def test_the_installable_file_is_exactly_what_src_builds(self):
+        r = subprocess.run([sys.executable, f"{HERE}/build.py", "--check"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+
+class Logging(unittest.TestCase):
+    """The launch log: private, capped, free of control characters, and only written during a run."""
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="sbx-log-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        with mock.patch.dict(os.environ, {"SBX_HOME": self.tmp}): self.S = load_sbx()
+
+    def lines(self):
+        with open(self.S["LOG"]) as f: return f.read().splitlines()
+
+    def test_log_is_private_one_line_per_entry_and_capped(self):
+        S = self.S
+        self.assertTrue(S["LOG"].startswith(self.tmp))
+        S["log"]("hello \x1b]52;c;evil\x07\nforged [x] line", "app")
+        out = self.lines()
+        self.assertEqual(len(out), 1); self.assertIn("[app] hello ]52;c;evil forged [x] line", out[0]); self.assertNotIn("\x1b", out[0])
+        self.assertEqual(os.stat(S["LOG"]).st_mode & 0o777, 0o600); self.assertEqual(os.stat(S["STATE"]).st_mode & 0o777, 0o700)
+        with open(S["LOG"], "a") as f: f.write(("y" * 99 + "\n") * (S["LOG_MAX"] // 100 + 10))
+        S["log"]("after trim", "app")
+        out = self.lines()
+        self.assertLessEqual(len(out), S["LOG_KEEP"] + 1); self.assertIn("after trim", out[-1])
+
+    def test_log_does_not_follow_a_link(self):
+        S = self.S
+        os.makedirs(S["STATE"], exist_ok=True)
+        target = f"{self.tmp}/elsewhere"
+        open(target, "w").close()
+        os.symlink(target, S["LOG"])
+        S["log"]("must not land there", "app")
+        self.assertEqual(os.path.getsize(target), 0)
+
+    def test_warnings_and_errors_are_logged_only_during_a_run(self):
+        S = self.S
+        with contextlib.redirect_stderr(io.StringIO()):
+            S["warn"]("not in a run")
+            self.assertFalse(os.path.exists(S["LOG"]))
+            S["LOG_NAME"][0] = "app"
+            S["warn"]("careful")
+            with self.assertRaises(SystemExit): S["die"]("it broke")
+        self.assertEqual([l.split("] ", 1)[-1] for l in self.lines()], ["[app] WARNING careful", "[app] ERROR it broke"])
+
+    def test_stderr_goes_to_the_log_and_to_stderr_without_control_characters(self):
+        S = self.S
+        r, w = os.pipe()
+        os.write(w, b"first\nsecond \x1b[31mred\x1b[0m\n\xff bad utf8\nno newline at the end"); os.close(w)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err): S["tee_stderr"](r, "app")
+        os.close(r)
+        self.assertEqual(self.lines(), ["[app] first", "[app] second [31mred[0m", "[app] � bad utf8", "[app] no newline at the end"])
+        self.assertNotIn("\x1b", err.getvalue()); self.assertIn("first", err.getvalue())
+
+    def test_one_run_cannot_fill_the_log(self):
+        S = self.S
+        S["LOG_RUN_MAX"] = 200
+        r, w = os.pipe()
+        os.write(w, b"0123456789\n" * 100); os.close(w)
+        with contextlib.redirect_stderr(io.StringIO()): S["tee_stderr"](r, "app")
+        os.close(r)
+        out = self.lines()
+        self.assertLess(len(out), 30); self.assertEqual(out[-1], "[app] (more output not logged)")
+
+    def test_failure_notification_without_actions_is_a_plain_popup(self):
+        S = self.S
+        with mock.patch("shutil.which", return_value=None), mock.patch("subprocess.run") as run:
+            S["notify_failure"]("app"); run.assert_not_called()                        # no notify-send: nothing happens
+        with mock.patch("shutil.which", side_effect=lambda x: "/usr/bin/notify-send" if x == "notify-send" else None), \
+             mock.patch("subprocess.run", return_value=types.SimpleNamespace(stdout="no actions")) as run:
+            S["notify_failure"]("app")
+        sent = run.call_args_list[-1].args[0]
+        self.assertIn("critical", sent); self.assertTrue(any("app stopped" in x for x in sent))
+
 
 class Gui(unittest.TestCase):
     """sbx-gui's settings logic, with GTK stubbed out (the window itself can't be tested here)."""
@@ -640,6 +793,25 @@ class Gui(unittest.TestCase):
             row = G["Adw"].SwitchRow.return_value; row.set_subtitle.reset_mock()
             G["Win"].switch_row(mock.MagicMock(), scope, key)
             row.set_subtitle.assert_called_with(G["SWITCHES"][key][1])
+
+    def test_log_page_reads_the_same_file_sbx_writes_and_filters_by_program(self):
+        G, S = self.G, self.S
+        self.assertEqual(G["LOG"], f"{self.tmp}/.local/state/sbx/sbx.log")
+        self.assertEqual(G["LOG"], S["LOG"].replace(S["HOME"], G["HOME"]))              # same place as sbx's LOG
+        self.assertEqual(G["log_tail"](), "No launches logged yet.")
+        os.makedirs(os.path.dirname(G["LOG"]), exist_ok=True)
+        with open(G["LOG"], "w") as f: f.write("[t] [a] START\n[b] error from b\n[t] [a] EXIT code=1\n")
+        self.assertEqual(G["log_tail"]("a").splitlines(), ["[t] [a] START", "[t] [a] EXIT code=1"])
+        self.assertEqual(len(G["log_tail"]().splitlines()), 3)
+        self.assertEqual(G["log_tail"]("zzz"), "Nothing logged yet.")
+        self.assertEqual(len(G["log_tail"](n=1).splitlines()), 1)
+        win = mock.MagicMock()
+        real = G["subprocess"]
+        G["subprocess"] = types.SimpleNamespace(run=lambda *a, **k: types.SimpleNamespace(stdout="OK  fine", stderr=""),
+                                                TimeoutExpired=Exception, SubprocessError=Exception)
+        try: G["Win"].open_trouble(win, "a")
+        finally: G["subprocess"] = real
+        win.nav.push.assert_called_once()
 
     def test_every_sbx_switch_has_wording_and_the_same_default(self):
         self.assertEqual(set(self.G["SWITCHES"]), set(self.S["SCALARS"]), "sbx-gui and sbx list different switches")

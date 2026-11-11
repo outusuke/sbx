@@ -20,7 +20,7 @@ def parse_conf(path):
     reported and skipped, so a typo like net=maybe doesn't silently mean something else."""
     sc, ls, lim = {}, {k: [] for k in LISTS}, {}
     try:
-        with open(path) as f: lines = f.read().splitlines()
+        with open(path, errors="replace") as f: lines = f.read().splitlines()      # a stray byte must not crash sbx
     except OSError:
         return sc, ls, lim
     for n, line in enumerate(lines, 1):

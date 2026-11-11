@@ -2,11 +2,14 @@
 #| Layer rule: this fragment may use names from lower-numbered fragments (and its own) only; build.py enforces it.
 
 def die(msg, code=1):
-    print(f"sbx: {msg}", file=sys.stderr); sys.exit(code)
+    print(f"sbx: {msg}", file=sys.stderr)
+    if LOG_NAME[0]: log(f"ERROR {msg}", LOG_NAME[0])         # a start from the app menu has no terminal; the log is where it shows
+    sys.exit(code)
 
 
 def warn(msg):
     print(f"sbx: {msg}", file=sys.stderr)
+    if LOG_NAME[0]: log(f"WARNING {msg}", LOG_NAME[0])
 
 
 def clean(n):

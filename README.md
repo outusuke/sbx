@@ -21,6 +21,8 @@ sudo install -Dm644 completions/sbx.bash /usr/local/share/bash-completion/comple
 sbx doctor                          # checks that everything works on this machine
 ```
 
+Completion for zsh (`completions/_sbx`, into a folder on your `$fpath`, then `compinit`) and fish (`completions/sbx.fish`, into `~/.config/fish/completions/`) is also there; the comment at the top of each file says how.
+
 `sbx doctor` also explains the usual surprise on Ubuntu 24.04+, where AppArmor blocks the user namespaces bubblewrap needs.
 
 ## What the program sees
@@ -71,6 +73,7 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | `--no-gpu` | hide `/dev/dri` and NVIDIA devices |
 | `--no-sound` | hide PipeWire/PulseAudio (this includes the microphone) |
 | `--camera` `--alsa` `--input` `--kvm` `--rocm` `--printing` | share `/dev/video*` (and the Camera portal), `/dev/snd`, `/dev/input` (plus `/run/udev`, so controllers are recognised), `/dev/kvm`, `/dev/kfd`, the CUPS socket |
+| `--tray` | let the program show a tray icon and answer media keys, through `xdg-dbus-proxy`. Works without `--portals`; only the tray and media-key names are allowed on the bus |
 | `--ssh-agent` | share your SSH agent socket; the program can sign as you while it runs |
 | `--no-theme` | don't show your fonts, icons and GTK/fontconfig settings |
 | `--compat` | pass through the graphics and toolkit variables that are set (`WGPU_*`, `ICED_BACKEND`, `MESA_*`, `RADV_*`, `VK_ICD_FILENAMES`, `SDL_VIDEODRIVER`, `QT_QPA_PLATFORM`, `GDK_BACKEND`...). Tokens, keys and everything else stay out |
@@ -126,7 +129,7 @@ setenv=GTK_THEME=Adwaita:dark
 memory=2G
 ```
 
-Switches (all `0`/`1`), with defaults: `net=1`, `wayland=1`, `wayland_strict=0`, `x11=0`, `gpu=1`, `sound=1`, `portals=0`, `private=0`, `hostname=0`, `userns=1`, `theme=1`, `camera=0`, `alsa=0`, `input=0`, `kvm=0`, `rocm=0`, `printing=0`, `ssh_agent=0`, `allow_sensitive=0`, `compat=0`, and the extra portals `portal_screenshot`, `portal_screencast`, `portal_location`, `portal_shortcuts`, `portal_wallpaper`, `portal_launcher`, `portal_remote_desktop`, `portal_input_capture`, `portal_secret` (all `0`, and only used when `portals=1`). Anything else (`net=maybe`) is reported with its file and line number and ignored, instead of silently counting as on or off.
+Switches (all `0`/`1`), with defaults: `net=1`, `wayland=1`, `wayland_strict=0`, `x11=0`, `gpu=1`, `sound=1`, `portals=0`, `private=0`, `hostname=0`, `userns=1`, `theme=1`, `camera=0`, `alsa=0`, `input=0`, `kvm=0`, `rocm=0`, `printing=0`, `ssh_agent=0`, `allow_sensitive=0`, `compat=0`, `tray=0`, and the extra portals `portal_screenshot`, `portal_screencast`, `portal_location`, `portal_shortcuts`, `portal_wallpaper`, `portal_launcher`, `portal_remote_desktop`, `portal_input_capture`, `portal_secret` (all `0`, and only used when `portals=1`). Anything else (`net=maybe`) is reported with its file and line number and ignored, instead of silently counting as on or off.
 
 Lists that add up across the two files: `whitelist`, `read_only`, `env`, `setenv`, `allow_syscall`. Limits: `memory`, `tasks`, `cpu`; an empty value in a program's file cancels the default's. Command-line flags beat the files. Flags can only change a setting in the direction shown in the table above (for example, there is no flag to turn the network back on); `--ignore-config` starts from the built-in defaults.
 
@@ -147,6 +150,12 @@ sbx --net=none --no-userns ./sbx-selftest --expect=net0,userns0   # also check w
 `test_sbx.py` has three parts. The **snapshot** (`sbx-preview.snap`) holds the exact `bwrap` command for a number of option sets; when a change to `sbx` alters the mount list the test fails with a diff. Review it, then `UPDATE_SNAPSHOTS=1 python3 test_sbx.py` and commit the new snapshot. The **unit tests** cover settings parsing and precedence, path rules, mount ordering, the syscall filter (run through a small BPF interpreter, with numbers checked against the kernel headers when present), the Wayland client (against a fake compositor) and launcher rewriting. The **isolation tests** run real sandboxes against canary files planted in a temporary home: they check every flag, the exit status, cleanup of mountpoints, `clean`, `desktop` and more, and need bubblewrap. A negative control checks that the self-test fails without the sandbox.
 
 `sbx-selftest` tries to read `~/.ssh`, the real `~/.config/sbx` and `~/.sbx-homes`, `/etc/shadow` and `/root`, writes to the system, and calls blocked system calls; each must fail. Pass extra paths to check that they are hidden too.
+
+**When a program won't start.** Every run is logged to `~/.local/state/sbx/sbx.log` (owner-only, trimmed when it passes 1 MB): the start with the switches that were on, warnings and errors, and the exit code. When sbx has no terminal (started from the app menu, a file manager or `sbx-gui`), what the program prints to stderr goes into the log as well, without control characters and at most 2 MB per run. A program that exits with an error within 10 seconds also raises a notification (needs `notify-send`); where the notification supports buttons, clicking it opens `sbx-gui --log NAME`. In `sbx-gui` the terminal button in the header, or **Show log** on a program's page, opens the same page: the checks of `sbx doctor` and the recent log.
+
+## Development
+
+`sbx` and `sbx-gui` are generated: edit the fragments in `src/` and `src/gui/` (one layer per file, joined in number order), then run `python3 build.py` and commit the result. `python3 build.py --check` fails if either file is out of date or a fragment uses a name from a higher layer; CI runs it.
 
 ## Limits
 

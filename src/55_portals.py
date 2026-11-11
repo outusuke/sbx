@@ -14,16 +14,28 @@ def portal_rules(cfg=None):
     return rules
 
 
+def tray_rules():
+    """Show a tray icon (StatusNotifierItem) and answer media keys (MPRIS). Nothing else on the bus."""
+    return ["--talk=org.kde.StatusNotifierWatcher"] + [
+        f"--own=org.kde.StatusNotifierItem-{p}-{i}" for p in TRAY_PIDS for i in TRAY_IDS] + ["--own=org.mpris.MediaPlayer2.*"]
+
+
+def bus_rules(cfg=None):
+    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the tray rules."""
+    rules = portal_rules(cfg) if cfg is None or cfg.get("portals") else []
+    return rules + (tray_rules() if cfg and cfg.get("tray") else [])
+
+
 def start_proxy(sock, cfg=None):
-    """Start xdg-dbus-proxy with the portal rules. Returns (process, pipe) or None (a warning says why)."""
+    """Start xdg-dbus-proxy with the portal and tray rules. Returns (process, pipe) or None (a warning says why)."""
     px = shutil.which("xdg-dbus-proxy")
     if not px:
-        warn(f"xdg-dbus-proxy missing, so portals are off: {install_hint('xdg-dbus-proxy')}")
+        warn(f"xdg-dbus-proxy missing, so portals and the tray are off: {install_hint('xdg-dbus-proxy')}")
         return None
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={runtime_dir()}/bus"
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
     r, w = os.pipe()
-    proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + portal_rules(cfg), pass_fds=[w],
+    proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + bus_rules(cfg), pass_fds=[w],
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     os.close(w)
     ok = False
@@ -31,7 +43,7 @@ def start_proxy(sock, cfg=None):
     except OSError: pass
     if ok: return proc, r
     stop_proxy((proc, r), sock)
-    warn("could not start xdg-dbus-proxy; running without portals")
+    warn("could not start xdg-dbus-proxy; running without portals or tray")
     return None
 
 

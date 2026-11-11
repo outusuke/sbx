@@ -1,0 +1,40 @@
+#compdef sbx
+# zsh completion for sbx. SPDX-License-Identifier: GPL-3.0-or-later
+# Install: put this file as _sbx in a folder on your $fpath, for example ~/.zfunc, then run: compinit
+_sbx_apps()  { local -a a; a=(${(f)"$(ls ~/.config/sbx/apps 2>/dev/null | sed 's/\.conf$//')"}); (( $#a )) && compadd -a a }
+_sbx_homes() { local -a a; a=(${(f)"$(ls ~/.sbx-homes 2>/dev/null)"}); (( $#a )) && compadd -a a }
+
+_sbx() {
+    local -a cmds opts
+    cmds=(preview show doctor clean desktop open schema)
+    opts=(--net=none --private --here --no-wayland --wayland-strict --x11 --no-gpu --no-sound --portals --tray --hostname
+          --no-userns --no-theme --camera --alsa --input --kvm --rocm --printing --ssh-agent --allow-sensitive --compat
+          --ignore-config --rebind --portal-screenshot --portal-screencast --portal-location --portal-shortcuts
+          --portal-remote-desktop --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret
+          --whitelist= --read-only= --env= --setenv= --allow-syscall= --memory= --tasks= --cpu= --name=)
+    local i word
+    # the first word that isn't an option is the command or the program
+    for (( i = 2; i < CURRENT; i++ )); do
+        word=$words[i]
+        case $word in
+            --) _command_names -e; return ;;
+            -*) ;;
+            preview) ;;                                   # options and the program follow
+            show) (( CURRENT == i + 1 )) && _sbx_apps; return ;;
+            clean) (( CURRENT == i + 1 )) && _sbx_homes; return ;;
+            doctor|schema) return ;;
+            desktop) compadd -- --install-opener --remove-opener --remove; return ;;
+            *) _files; return ;;                          # the program's own arguments
+        esac
+    done
+    if compset -P '--allow-syscall='; then
+        compadd io_uring userfaultfd process_vm_readv process_vm_writev kcmp pidfd_getfd
+    elif compset -P '--whitelist=' || compset -P '--read-only='; then
+        _files
+    elif [[ $PREFIX == -* ]]; then
+        compadd -S '' -a opts
+    else
+        _alternative 'commands:command:compadd -a cmds' 'programs:program:_command_names -e'
+    fi
+}
+_sbx "$@"

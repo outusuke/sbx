@@ -42,11 +42,16 @@ PORTAL_EXTRA = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenC
                 "portal_shortcuts": "GlobalShortcuts", "portal_remote_desktop": "RemoteDesktop",
                 "portal_input_capture": "InputCapture", "portal_wallpaper": "Wallpaper",
                 "portal_launcher": "DynamicLauncher", "portal_secret": "Secret"}
+# Tray icon (tray=1). The proxy can only name a bus name exactly or with a "*" at the end after a dot, so the names an app
+# may own are listed: org.kde.StatusNotifierItem-PID-ID. The PID is the one inside the sandbox (it has its own PID
+# namespace), so it is small. An app whose main process has a higher PID gets no tray icon; the range can be raised here.
+TRAY_PIDS = range(2, 65)
+TRAY_IDS = range(1, 4)
 # Settings (key=value files) and their defaults. Lists: LISTS. Text values: LIMITS (a pattern each value must match).
 SCALARS = {"net": True, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "portals": False, "hostname": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, **{k: False for k in PORTAL_EXTRA}}
+           "compat": False, "tray": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%"}
 # Folders in your home that hold secrets. Sharing one (or a folder around one) needs allow_sensitive=1 / --allow-sensitive.

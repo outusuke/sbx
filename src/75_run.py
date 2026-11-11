@@ -50,9 +50,39 @@ def undo_exec_bit(prog, mode):
         except OSError: pass
 
 
+def tee_stderr(fd, name):
+    """Copy a program's stderr to our own stderr and to the log, minus control characters, at most LOG_RUN_MAX bytes per run.
+    Chunks, not lines, so a prompt without a newline shows at once."""
+    lf = open_log()
+    n, pend = 0, ""                               # pend: the unfinished line, kept short so a flood without newlines can't fill memory
+    dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    try:
+        while True:
+            data = os.read(fd, 4096)
+            text = CTRL.sub("", dec.decode(data, final=not data))
+            try: sys.stderr.write(text); sys.stderr.flush()
+            except Exception: pass
+            lines = (pend + text).split("\n"); pend = lines.pop()
+            lines = [x + "\n" for x in lines]
+            while len(pend) > LOG_LINE_MAX: lines.append(pend[:LOG_LINE_MAX] + "\n"); pend = pend[LOG_LINE_MAX:]
+            if not data and pend: lines.append(pend + "\n"); pend = ""
+            for line in lines:
+                if lf and n < LOG_RUN_MAX:
+                    n += len(line)
+                    lf.write(f"[{name}] {line}")
+                    if n >= LOG_RUN_MAX: lf.write(f"[{name}] (more output not logged)\n")
+                    lf.flush()
+            if not data: break
+    except Exception:
+        pass
+    finally:
+        if lf: lf.close()
+
+
 def run(prog, args, opts):
     if os.geteuid() == 0: die("refusing to run as root")
     if os.environ.get("SBX_ACTIVE"): die("already inside an sbx sandbox")
+    LOG_NAME[0] = clean(opts.get("name") or os.path.basename(prog))      # same name build() will use; from here on warnings and errors are logged too
     if not shutil.which("bwrap"): die(f"bubblewrap missing: {install_hint('bubblewrap')}")
     if platform.machine() not in ARCHES: die(f"no system-call filter for {platform.machine()}; not starting without it")
     sweep_stale()
@@ -69,10 +99,22 @@ def run(prog, args, opts):
     if st["prefix"] and not shutil.which("systemd-run"):
         teardown(st); undo_exec_bit(prog, restore); die(f"memory/tasks/cpu limits need systemd-run: {install_hint('systemd')}")
     os.makedirs(f"{HOMES}/{name}", mode=0o700, exist_ok=True)
+    cfg, _ = effective(name, opts)
+    log("START allow=[" + ",".join(k for k in SCALARS if cfg[k]) + "]", name)
+    start, stopped = time.time(), [False]
+    piped = not sys.stderr.isatty()               # started from the app menu or a file manager: no terminal, so the log keeps stderr
     try:
-        p = subprocess.Popen(st["prefix"] + cmd, pass_fds=st["fds"])
-        for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, lambda *_: p.terminate())
+        p = subprocess.Popen(st["prefix"] + cmd, pass_fds=st["fds"], stderr=subprocess.PIPE if piped else None)
+
+        def stop(*_):
+            stopped[0] = True; p.terminate()
+        for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, stop)
+        t = threading.Thread(target=tee_stderr, args=(p.stderr.fileno(), name), daemon=True) if piped else None
+        if t: t.start()
         rc = p.wait()
+        if t: t.join(2)
     finally:
         teardown(st); undo_exec_bit(prog, restore)
+    log(f"EXIT code={exit_code(rc)}", name)
+    if rc != 0 and not stopped[0] and time.time() - start < 10: notify_failure(name)
     sys.exit(exit_code(rc))

@@ -116,14 +116,14 @@ def build(prog, args, live=False, o=None):
     sa = os.environ.get("SSH_AUTH_SOCK", "")
     if cfg["ssh_agent"] and sa and os.path.exists(sa):     # the program can sign as you while it runs
         late += ["--ro-bind", sa, sa]; env["SSH_AUTH_SOCK"] = sa
-    if cfg["portals"]:
+    if cfg["portals"] or cfg["tray"]:
         sock = state["bus"]
         if live:
             state["proxy"] = start_proxy(sock, cfg)
             if not state["proxy"]: sock = None
         if sock:
             a += ["--ro-bind", sock, f"{rt}/bus"]; env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
-    elif live and any(cfg[k] for k in PORTAL_EXTRA):
+    if live and not cfg["portals"] and any(cfg[k] for k in PORTAL_EXTRA):
         warn("portal_* settings need portals=1; ignored")
     # Hide the real home and other users: empty the folder that holds your home, then put the private home in its place.
     parent = os.path.dirname(HOME)
