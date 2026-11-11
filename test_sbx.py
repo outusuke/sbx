@@ -610,6 +610,21 @@ class Gui(unittest.TestCase):
         self.G = ns
         self.S = load_sbx()
 
+    def test_a_program_page_says_where_its_inherited_folders_come_from(self):
+        G = self.G
+        os.makedirs(G["APPS"], exist_ok=True)
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("whitelist=~/Shared\n")
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("read_only=~/Mine\n")
+        adw = G["Adw"]; adw.ActionRow.reset_mock()
+        win = mock.MagicMock()
+        G["Win"].folders_group(win, "app")
+        rows = {c.kwargs.get("title"): c.kwargs for c in adw.ActionRow.call_args_list}
+        self.assertIn("every program", rows["~/Shared"]["subtitle"]); self.assertIn("Tap to change", rows["~/Shared"]["subtitle"])
+        self.assertTrue(rows["~/Shared"]["activatable"])
+        self.assertNotIn("activatable", rows["~/Mine"])                                  # its own folder keeps the access menu
+        G["Win"].open_defaults(win)
+        self.assertEqual(G["CURRENT"], [None]); win.nav.replace.assert_called_once()
+
     def test_every_sbx_switch_has_wording_and_the_same_default(self):
         self.assertEqual(set(self.G["SWITCHES"]), set(self.S["SCALARS"]), "sbx-gui and sbx list different switches")
         for k, (_, _, default) in self.G["SWITCHES"].items(): self.assertEqual(default, self.S["SCALARS"][k], k)

@@ -413,7 +413,8 @@ class Win(Adw.ApplicationWindow):
     def folders_group(self, scope):
         """One list of shared folders and files. Each row has its own access choice: read and write, read only, or not shared."""
         g = Adw.PreferencesGroup(title="Shared folders and files",
-                                 description="Everything not listed here is read-only or hidden from the program.")
+                                 description="Everything not listed here is read-only or hidden from the program."
+                                 + ("" if scope is None else " Folders from the default settings are shared with every program; tap one to change it there."))
         rows = []
         MODES = (("whitelist", "Read and write"), ("read_only", "Read only"))
 
@@ -423,7 +424,10 @@ class Win(Adw.ApplicationWindow):
             if scope is not None:
                 for key, label in MODES:
                     for v in parse(None)[1][key]:
-                        r = Adw.ActionRow(title=v, subtitle=f"From default settings: {label.lower()}", use_markup=False)
+                        r = Adw.ActionRow(title=v, subtitle=f"Default settings, for every program: {label.lower()}. Tap to change it there.",
+                                          activatable=True, use_markup=False)
+                        r.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+                        r.connect("activated", lambda *_: self.open_defaults())
                         g.add(r); rows.append(r)
             for key, _label in MODES:
                 for v in parse(scope)[1][key]:
@@ -500,6 +504,10 @@ class Win(Adw.ApplicationWindow):
         lab = Gtk.Label(label=(r.stdout or r.stderr).strip(), wrap=True, selectable=True, xalign=0, css_classes=["monospace"])
         sw = Gtk.ScrolledWindow(min_content_height=220, min_content_width=420, child=lab)
         self.alert("Command", "", sw)
+
+    def open_defaults(self):
+        CURRENT[:] = [None]
+        self.nav.replace([self.main, self.program_page(None)])            # like reset(): no stale copy of this page to come back to
 
     def reset(self, scope):
         save(scope, [])
