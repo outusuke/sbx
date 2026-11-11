@@ -76,7 +76,8 @@ def strip(line):
 
 
 def read_lines(scope):
-    try: return open(path_for(scope)).read().splitlines()
+    try:
+        with open(path_for(scope)) as f: return f.read().splitlines()
     except OSError: return []
 
 
@@ -211,11 +212,24 @@ def set_menu_entry(on):
         subprocess.run(["update-desktop-database", os.path.dirname(MENU_DESKTOP)], stderr=subprocess.DEVNULL, timeout=10)
 
 
+def our_launchers(name):
+    """Ids of the launchers `sbx desktop` made for NAME in ~/.local/share/applications. The id is the original file's name,
+    so it can be org.mozilla.firefox for a program called firefox."""
+    d = f"{HOME}/.local/share/applications"
+    try: files = sorted(os.listdir(d))
+    except OSError: return []
+    out = []
+    for f in files:
+        if not f.endswith(".desktop") or not (f == name + ".desktop" or f.endswith("." + name + ".desktop")): continue
+        try:
+            with open(f"{d}/{f}") as fh:
+                if "X-Sbx-Sandboxed=true" in fh.read(): out.append(f[:-8])
+        except OSError: pass
+    return out
+
+
 def launcher_is_ours(name):
-    """True if ~/.local/share/applications/NAME.desktop was made by `sbx desktop`."""
-    try:
-        with open(f"{HOME}/.local/share/applications/{name}.desktop") as f: return "X-Sbx-Sandboxed=true" in f.read()
-    except OSError: return False
+    return bool(our_launchers(name))
 
 
 def sbx_cmd():
@@ -268,7 +282,7 @@ class Win(Adw.ApplicationWindow):
 
     def ask(self, heading, body, label, then):
         d = Adw.AlertDialog(heading=heading, body=body)
-        d.add_responses("cancel", "Cancel", "go", label)
+        d.add_response("cancel", "Cancel"); d.add_response("go", label)
         d.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE)
         d.set_close_response("cancel")
         d.choose(self, None, lambda dlg, res: dlg.choose_finish(res) == "go" and then())
@@ -319,7 +333,7 @@ class Win(Adw.ApplicationWindow):
         entry = Gtk.Entry(placeholder_text="firefox", activates_default=True)
         d = Adw.AlertDialog(heading="Add a program", body="The name you type to start it, for example firefox.")
         d.set_extra_child(entry)
-        d.add_responses("cancel", "Cancel", "add", "Add")
+        d.add_response("cancel", "Cancel"); d.add_response("add", "Add")
         d.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
         d.set_default_response("add"); d.set_close_response("cancel")
 
@@ -367,6 +381,12 @@ class Win(Adw.ApplicationWindow):
             tr.connect("activated", lambda *_: self.ask("Move private home to Trash?", "Everything this program saved is moved to the Trash and can be restored from there.",
                                                         "Move to Trash", lambda: self.trash_home(scope, tr)))
             dg.add(tr)
+        if scope is not None:
+            rm = Adw.ActionRow(title="Remove program", subtitle="Forgets its settings, app menu entry and private home", activatable=True, use_markup=False)
+            rm.add_css_class("error")
+            rm.connect("activated", lambda *_: self.ask(f"Remove {scope}?", "Its settings and app menu entry are deleted. Its private home, if any, is moved to the Trash and can be restored from there. "
+                                                        "The program itself is not uninstalled.", "Remove", lambda: self.remove_program(scope)))
+            dg.add(rm)
         page.add(dg)
         return self.page("Default settings" if scope is None else scope, page)
 
@@ -416,7 +436,7 @@ class Win(Adw.ApplicationWindow):
         def toggled(*_):
             if busy[0]: return
             want = row.get_active()
-            try: r = subprocess.run([sbx_cmd(), "desktop"] + ([] if want else ["--remove"]) + [scope], capture_output=True, text=True, timeout=15)
+            try: r = self.change_launchers(scope, want)
             except (OSError, subprocess.TimeoutExpired) as e:
                 set_active(not want); return self.alert("Couldn't run sbx", str(e))
             if r.returncode != 0:
@@ -426,6 +446,15 @@ class Win(Adw.ApplicationWindow):
         set_active(launcher_is_ours(scope))
         row.connect("notify::active", toggled)
         return row
+
+    def change_launchers(self, scope, want):
+        """Make the launcher for NAME (want) or remove every one `sbx desktop` made for it. Returns the failing run, else the last one."""
+        if want: return subprocess.run([sbx_cmd(), "desktop", scope], capture_output=True, text=True, timeout=15)
+        r = subprocess.CompletedProcess([], 0, "", "")
+        for ident in our_launchers(scope) or [scope]:
+            r = subprocess.run([sbx_cmd(), "desktop", "--remove", ident], capture_output=True, text=True, timeout=15)
+            if r.returncode != 0: break
+        return r
 
     def folders_group(self, scope):
         """One list of shared folders and files. Each row has its own access choice: read and write, read only, or not shared."""
@@ -534,6 +563,26 @@ class Win(Adw.ApplicationWindow):
     def reset(self, scope):
         save(scope, [])
         self.nav.replace([self.main, self.program_page(scope)])
+
+    def remove_program(self, name):
+        home = f"{HOMES}/{name}"
+        if os.path.isdir(home):                                           # first: if this fails, nothing else has been touched
+            try: Gio.File.new_for_path(home).trash(None)
+            except GLib.Error as e: return self.alert("Couldn't move its private home to the Trash", e.message)
+        problems = []
+        if our_launchers(name):
+            try:
+                r = self.change_launchers(name, False)
+                if r.returncode != 0: problems.append((r.stderr or r.stdout).strip()[-300:] or "the app menu entry stayed")
+            except (OSError, subprocess.TimeoutExpired) as e: problems.append(str(e))
+        try: os.unlink(path_for(name))
+        except FileNotFoundError: pass
+        except OSError as e: problems.append(str(e))
+        CURRENT[:] = [None]
+        self.nav.replace([self.main])
+        self.fill_apps()
+        if problems: self.alert(f"{name} removed, with a problem", "\n".join(problems))
+        else: self.toasts.add_toast(Adw.Toast(title=f"Removed {name}"))
 
     def trash_home(self, name, row):
         try: Gio.File.new_for_path(f"{HOMES}/{name}").trash(None)
