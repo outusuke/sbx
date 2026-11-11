@@ -610,20 +610,36 @@ class Gui(unittest.TestCase):
         self.G = ns
         self.S = load_sbx()
 
-    def test_a_program_page_says_where_its_inherited_folders_come_from(self):
+    def test_inherited_folders_get_their_own_group_instead_of_a_note_on_every_row(self):
         G = self.G
         os.makedirs(G["APPS"], exist_ok=True)
-        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("whitelist=~/Shared\n")
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("whitelist=~/Shared\nread_only=~/Docs\n")
         with open(f"{G['APPS']}/app.conf", "w") as f: f.write("read_only=~/Mine\n")
-        adw = G["Adw"]; adw.ActionRow.reset_mock()
+        adw = G["Adw"]; adw.ActionRow.reset_mock(); adw.PreferencesGroup.reset_mock()
         win = mock.MagicMock()
-        G["Win"].folders_group(win, "app")
+        groups = G["Win"].folders_group(win, "app")
+        self.assertEqual(len(groups), 2)
+        titles = [c.kwargs.get("title") for c in adw.PreferencesGroup.call_args_list]
+        self.assertEqual(titles, ["Shared folders and files", "Shared with all programs"])
         rows = {c.kwargs.get("title"): c.kwargs for c in adw.ActionRow.call_args_list}
-        self.assertIn("every program", rows["~/Shared"]["subtitle"]); self.assertIn("Tap to change", rows["~/Shared"]["subtitle"])
+        self.assertEqual(rows["~/Shared"]["subtitle"], "Read and write"); self.assertEqual(rows["~/Docs"]["subtitle"], "Read only")
         self.assertTrue(rows["~/Shared"]["activatable"])
         self.assertNotIn("activatable", rows["~/Mine"])                                  # its own folder keeps the access menu
+        self.assertFalse(any("default" in str(r.get("subtitle", "")).lower() for r in rows.values()), "the note is repeated on rows")
+        groups[1].set_visible.assert_called_with(True)
+        self.assertEqual(len(G["Win"].folders_group(win, None)), 1)                      # the Default page has no such group
         G["Win"].open_defaults(win)
         self.assertEqual(G["CURRENT"], [None]); win.nav.replace.assert_called_once()
+
+    def test_switch_rows_do_not_carry_a_default_note(self):
+        G = self.G
+        os.makedirs(G["APPS"], exist_ok=True)
+        key = next(iter(G["SWITCHES"]))
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write(f"{key}=1\n")
+        for scope in ("app", "other", None):                                             # overridden, inherited, the default page itself
+            row = G["Adw"].SwitchRow.return_value; row.set_subtitle.reset_mock()
+            G["Win"].switch_row(mock.MagicMock(), scope, key)
+            row.set_subtitle.assert_called_with(G["SWITCHES"][key][1])
 
     def test_every_sbx_switch_has_wording_and_the_same_default(self):
         self.assertEqual(set(self.G["SWITCHES"]), set(self.S["SCALARS"]), "sbx-gui and sbx list different switches")

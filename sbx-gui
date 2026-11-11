@@ -335,7 +335,7 @@ class Win(Adw.ApplicationWindow):
             g = Adw.PreferencesGroup(title=title)
             for key, t, s, _d in rows: g.add(self.switch_row(scope, key))
             page.add(g)
-        page.add(self.folders_group(scope))
+        for grp in self.folders_group(scope): page.add(grp)
         if scope is not None:
             rg = Adw.PreferencesGroup(title="Run")
             run = Adw.ActionRow(title=f"Run {scope}", subtitle="Starts it with these settings", activatable=True, use_markup=False)
@@ -377,7 +377,7 @@ class Win(Adw.ApplicationWindow):
             busy[0] = True
             row.set_active(sc[key] if own else dsc.get(key, default))
             busy[0] = False
-            row.set_subtitle(sub + ("  ·  from default settings" if scope is not None and not own else ""))
+            row.set_subtitle(sub)                                  # an overridden switch shows the undo button; no note on the rest
             undo.set_visible(scope is not None and own)
 
         def toggled(*_):
@@ -413,22 +413,27 @@ class Win(Adw.ApplicationWindow):
     def folders_group(self, scope):
         """One list of shared folders and files. Each row has its own access choice: read and write, read only, or not shared."""
         g = Adw.PreferencesGroup(title="Shared folders and files",
-                                 description="Everything not listed here is read-only or hidden from the program."
-                                 + ("" if scope is None else " Folders from the default settings are shared with every program; tap one to change it there."))
+                                 description="Everything not listed here is read-only or hidden from the program.")
+        inherited = Adw.PreferencesGroup(title="Shared with all programs",
+                                         description="Set in Default settings. Tap one to change it there.")
+        inherited.set_visible(False)
+        inh_rows = []
         rows = []
         MODES = (("whitelist", "Read and write"), ("read_only", "Read only"))
 
         def refill():
             for r in rows: g.remove(r)
             rows.clear()
+            for r in inh_rows: inherited.remove(r)
+            inh_rows.clear()
             if scope is not None:
                 for key, label in MODES:
                     for v in parse(None)[1][key]:
-                        r = Adw.ActionRow(title=v, subtitle=f"Default settings, for every program: {label.lower()}. Tap to change it there.",
-                                          activatable=True, use_markup=False)
+                        r = Adw.ActionRow(title=v, subtitle=label, activatable=True, use_markup=False)
                         r.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
                         r.connect("activated", lambda *_: self.open_defaults())
-                        g.add(r); rows.append(r)
+                        inherited.add(r); inh_rows.append(r)
+                inherited.set_visible(bool(inh_rows))
             for key, _label in MODES:
                 for v in parse(scope)[1][key]:
                     r = Adw.ActionRow(title=v, use_markup=False)
@@ -466,7 +471,7 @@ class Win(Adw.ApplicationWindow):
             box.append(b)
         g.set_header_suffix(box)
         refill()
-        return g
+        return [g, inherited] if scope is not None else [g]
 
     # -- actions --
     def run_program(self, name):
