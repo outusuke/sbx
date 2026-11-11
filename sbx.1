@@ -1,0 +1,296 @@
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.TH SBX 1 "" "sbx 2.0" "User Commands"
+.SH NAME
+sbx \- run a program in a bubblewrap sandbox
+.SH SYNOPSIS
+.B sbx
+[\fIoptions\fR] \fIPROGRAM\fR [\fIargs\fR]
+.br
+.B sbx preview
+[\fIoptions\fR] \fIPROGRAM\fR [\fIargs\fR]
+.br
+.B sbx show
+[\fIoptions\fR] \fINAME\fR
+.br
+.B sbx doctor
+.br
+.B sbx clean
+[\fB\-\-yes\fR] \fINAME\fR
+.br
+.B sbx open
+\fIFILE\fR
+.br
+.B sbx desktop
+\fINAME\fR | \fB\-\-remove\fR \fINAME\fR | \fB\-\-install\-opener\fR | \fB\-\-remove\-opener\fR
+.SH DESCRIPTION
+.B sbx
+starts a program inside a
+.BR bwrap (1)
+sandbox. The program sees the system read\-only, an empty private home instead of yours, a fresh
+.I /tmp
+and
+.IR /run ,
+a cleared environment and a blocklist of system calls. What it may see beyond that is set with options and
+settings files. Options go before the program name.
+.PP
+The program starts in its private home,
+.IR ~/.sbx\-homes/NAME ,
+where NAME is the program's name (or the value of
+.BR \-\-name ).
+Use full paths, or
+.B \-\-here
+to share the current folder. If an argument names something that exists on your side but is not visible
+inside, sbx says so.
+.PP
+A program named like a command is run with
+.BR "sbx \-\- clean" .
+.SH COMMANDS
+.TP
+.B sbx [options] PROGRAM [args]
+Run the program in the sandbox. Its exit status is the program's (128 plus the signal number if a signal
+ended it).
+.TP
+.B sbx preview [options] PROGRAM [args]
+Print the bwrap command instead of running it.
+.TP
+.B sbx show [options] NAME
+Print the settings that apply to a program and which file or flag each one came from.
+.TP
+.B sbx doctor
+Check bubblewrap, the helpers (xdg\-dbus\-proxy, notify\-send, systemd\-run), Wayland support and the
+settings files.
+.TP
+.B sbx clean [\-\-yes] NAME
+Delete a program's private home and its machine\-id.
+.TP
+.B sbx open FILE
+Run a downloaded program with sensible defaults. This is what "Open with" calls; see
+.BR "DOWNLOADED PROGRAMS" .
+.TP
+.B sbx desktop NAME
+Make a launcher (a
+.I .desktop
+file) start the program through sbx.
+.B \-\-remove
+undoes that.
+.TP
+.B sbx desktop \-\-install\-opener
+Add "Run in sbx" to the file manager's Open With.
+.B \-\-remove\-opener
+undoes it.
+.TP
+.B sbx schema
+Print the switches and limits that exist, as JSON. sbx\-gui reads this.
+.SH OPTIONS
+Most options also exist as a setting (for example
+.B \-\-net=none
+is
+.BR net=0 ).
+Flags can only change a setting in the direction shown here; there is no flag to turn the network back on.
+.B \-\-ignore\-config
+starts from the built\-in defaults.
+.TP
+.B \-\-net=none
+No network. Only this also closes abstract Unix sockets.
+.TP
+.B \-\-private
+The private home is erased on exit.
+.TP
+.B \-\-here
+Share the current folder, read\-write. Not your whole home and not hidden folders.
+.TP
+.BI \-\-whitelist= PATH
+Share a file or folder, read\-write. Can be repeated.
+.TP
+.BI \-\-read\-only= PATH
+Share a file or folder, read\-only. Can be repeated.
+.TP
+.B \-\-allow\-sensitive
+Allow sharing ~/.ssh, ~/.gnupg, ~/.aws, browser profiles and other secret folders. They are refused otherwise.
+.TP
+.B \-\-no\-wayland
+Hide the Wayland socket.
+.TP
+.B \-\-wayland\-strict
+No Wayland at all if the compositor cannot restrict it.
+.TP
+.B \-\-x11
+Share the X11 socket. Weaker isolation.
+.TP
+.B \-\-no\-gpu
+Hide /dev/dri and the NVIDIA devices.
+.TP
+.B \-\-no\-sound
+Hide PipeWire and PulseAudio, which includes the microphone.
+.TP
+.BR \-\-camera ", " \-\-alsa ", " \-\-input ", " \-\-kvm ", " \-\-rocm ", " \-\-printing
+Share /dev/video* (and the Camera portal), /dev/snd, /dev/input (and /run/udev, so controllers are
+recognised), /dev/kvm, /dev/kfd, or the CUPS socket.
+.TP
+.B \-\-tray
+Let the program show a tray icon and answer media keys, through xdg\-dbus\-proxy. Works without
+.BR \-\-portals ;
+only the tray and media\-key names are allowed on the bus.
+.TP
+.B \-\-ssh\-agent
+Share your SSH agent socket. The program can sign as you while it runs.
+.TP
+.B \-\-no\-theme
+Do not show your fonts, icons and GTK and fontconfig settings.
+.TP
+.B \-\-compat
+Pass through the graphics and toolkit variables that are set (WGPU_*, ICED_BACKEND, MESA_*, RADV_*,
+VK_ICD_FILENAMES, SDL_VIDEODRIVER, QT_QPA_PLATFORM, GDK_BACKEND and similar). Tokens, keys and everything else
+stay out.
+.TP
+.B \-\-portals
+Allow notifications and the basic desktop portals (open links, file chooser, print, settings, trash, e\-mail and a
+few more) through xdg\-dbus\-proxy.
+.TP
+.BR \-\-portal\- \fIWHAT\fR
+One more desktop portal each, WHAT being screenshot, screencast, location, shortcuts, wallpaper, launcher,
+remote\-desktop, input\-capture or secret (settings: portal_screenshot=1 and so on). They need
+.BR \-\-portals .
+.TP
+.B \-\-hostname
+The program sees the hostname "sbx", also in /etc/hostname and /etc/hosts.
+.TP
+.B \-\-no\-userns
+The program cannot create user namespaces. Programs that build their own sandbox (Chromium, Electron, Flatpak,
+nested bubblewrap) need them.
+.TP
+.BI \-\-env= NAME
+Pass a variable through.
+.TP
+.BI \-\-setenv= NAME = VALUE
+Set a variable. HOME, USER, LOGNAME, XDG_RUNTIME_DIR and SBX_ACTIVE are protected.
+.TP
+.BI \-\-allow\-syscall= NAME
+Turn one of the extra blocked system calls back on: io_uring, userfaultfd, process_vm_readv, process_vm_writev,
+kcmp, pidfd_getfd, open_tree, move_mount, fsopen, fsconfig, fsmount, fspick, mount_setattr.
+.TP
+.BR \-\-memory=2G ", " \-\-tasks=512 ", " \-\-cpu=200%
+Resource limits, through
+.BR "systemd\-run \-\-user" .
+.TP
+.BI \-\-name= NAME
+Use another private home, machine\-id and settings name than the program's.
+.TP
+.B \-\-ignore\-config
+Ignore the settings files for this run.
+.TP
+.B \-\-rebind
+Accept that this file is the same program as the one that first used its name.
+.PP
+Shared paths must be inside your home (not the home itself), on /mnt, /media or /run/media, or in /tmp.
+~/.config/sbx and ~/.sbx\-homes can never be shared. A folder is mounted before what is inside it, so a read\-write
+share inside a read\-only one stays writable.
+.SH SETTINGS
+Plain
+.IB key = value
+files; # starts a comment.
+.I ~/.config/sbx/default.conf
+applies to every program;
+.I ~/.config/sbx/apps/NAME.conf
+applies to one program and overrides the default. For example:
+.PP
+.RS
+.nf
+net=0
+gpu=0
+portals=1
+whitelist=~/Projects
+read_only=~/.gitconfig
+env=HTTPS_PROXY
+setenv=GTK_THEME=Adwaita:dark
+memory=2G
+.fi
+.RE
+.PP
+Switches take 0 or 1. Defaults: net=1, wayland=1, wayland_strict=0, x11=0, gpu=1, sound=1, portals=0, private=0,
+hostname=0, userns=1, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
+allow_sensitive=0, compat=0, tray=0, and the extra portals portal_screenshot, portal_screencast, portal_location,
+portal_shortcuts, portal_wallpaper, portal_launcher, portal_remote_desktop, portal_input_capture and
+portal_secret (all 0, and only used when portals=1). Anything else, such as net=maybe, is reported with its file
+and line number and ignored.
+.PP
+Lists that add up across the two files: whitelist, read_only, env, setenv, allow_syscall. Limits: memory, tasks,
+cpu; an empty value in a program's file cancels the default's. Command\-line flags beat the files.
+.PP
+.B sbx show
+prints the result of all this.
+.BR sbx\-gui
+edits the same files: run
+.BR sbx\-gui ,
+.B sbx\-gui NAME
+or
+.BR "sbx\-gui \-\-default" .
+.SH DOWNLOADED PROGRAMS
+After
+.B sbx desktop \-\-install\-opener
+a program file can be started from the file manager with Open With, Run in sbx, or from a shell with
+.BR "sbx open FILE" .
+A program with no settings file of its own starts with these defaults: its own folder, read\-write, and it starts
+there (generic folders such as your home, Downloads, Desktop and Documents, and hidden folders, are never shared
+this way); game controllers (/dev/input); and the usual network, GPU, sound and Wayland. It runs even without the
+execute bit if it is a dynamically linked ELF program: the bit is set only while it runs and then put back. If a
+settings file exists for that name, it is used exactly as written and none of these defaults apply.
+.PP
+A file that has the execute bit still starts directly when double\-clicked; sbx cannot intercept that. These
+defaults trade isolation for convenience; for something you do not trust at all use
+.BR "sbx \-\-net=none \-\-private FILE" .
+.SH TROUBLESHOOTING
+.B sbx doctor
+checks that everything sbx needs works on this machine. Every run is also logged to
+.IR ~/.local/state/sbx/sbx.log
+(readable only by you, trimmed when it passes 1 MB): the start, the switches that were on, warnings, errors and
+the exit code. When sbx has no terminal (started from the app menu, a file manager or sbx\-gui), what the program
+prints to stderr goes into the log too, without control characters and at most 2 MB per run. A program that
+exits with an error within 10 seconds also raises a desktop notification, if
+.BR notify\-send (1)
+is installed; where notifications support buttons, clicking it runs
+.BR "sbx\-gui \-\-log NAME" .
+That page, and the terminal button in sbx\-gui's header, show the checks of
+.B sbx doctor
+and the recent log.
+.SH FILES
+.TP
+.I ~/.config/sbx/default.conf
+Settings for every program.
+.TP
+.I ~/.config/sbx/apps/NAME.conf
+Settings for one program; they override the default.
+.TP
+.I ~/.config/sbx/origins/NAME
+The file that first ran under NAME. A different file under the same name is refused; use
+.B \-\-name
+or
+.BR \-\-rebind .
+.TP
+.I ~/.config/sbx/ids/NAME
+The machine\-id of NAME.
+.TP
+.I ~/.sbx\-homes/NAME
+The private home of NAME.
+.TP
+.I ~/.local/state/sbx/sbx.log
+The launch log.
+.SH EXIT STATUS
+The program's own status, or 128 plus the signal number if a signal ended it. sbx itself exits with 1 when it
+cannot start the program (bad option, unreadable path, missing bubblewrap).
+.SH LIMITS
+32\-bit programs fail because 32\-bit system calls are blocked. Terminal programs have no /dev/tty and no job
+control (\fB\-\-new\-session\fR is on), so prompts that read the terminal directly, such as ssh, sudo and git
+passwords, do not work. A read\-write share lets the program plant files that later run outside the sandbox (git
+hooks, Makefiles, scripts): share only what it needs and prefer read\-only. Each program name has one private
+home; use
+.B \-\-name
+to separate two uses. Programs on another drive (/mnt, /media, /run/media) cannot be started; copy them
+elsewhere first. sbx refuses to run as root or inside another sbx sandbox.
+.SH SEE ALSO
+.BR bwrap (1),
+.BR xdg\-dbus\-proxy (1),
+.BR systemd\-run (1),
+.BR notify\-send (1)
+.SH LICENSE
+GPL\-3.0\-or\-later.

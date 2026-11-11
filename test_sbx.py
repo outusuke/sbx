@@ -670,6 +670,17 @@ class Hostile(unittest.TestCase):
         self.assertEqual(self.S["parse_conf"](f"{self.home}/dir.conf")[0], {})
         self.assertEqual(self.S["parse_conf"](f"{self.home}/nothing.conf")[0], {})
 
+    def test_every_file_the_readme_installs_exists(self):
+        with open(f"{HERE}/README.md") as f: text = f.read()
+        wanted = []
+        for line in text.splitlines():
+            if line.lstrip().startswith("sudo install"):
+                wanted += [w for w in line.split("#")[0].split()[2:] if not w.startswith(("-", "/")) and "/" not in w.lstrip("./")[:0]
+                           and re.fullmatch(r"[\w./-]+", w) and not w.startswith("/")]
+        self.assertTrue(wanted, "found no install lines in the README")
+        missing = [w for w in wanted if not os.path.exists(f"{HERE}/{w}")]
+        self.assertEqual(missing, [], "the README installs files that are not in the repo")
+
     def test_the_installable_file_is_exactly_what_src_builds(self):
         r = subprocess.run([sys.executable, f"{HERE}/build.py", "--check"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

@@ -116,5 +116,5 @@ def run(prog, args, opts):
     finally:
         teardown(st); undo_exec_bit(prog, restore)
     log(f"EXIT code={exit_code(rc)}", name)
-    if rc != 0 and not stopped[0] and time.time() - start < 10: notify_failure(name)
+    if rc != 0 and not stopped[0] and time.time() - start < 10 and not os.environ.get("SBX_NO_POPUP"): notify_failure(name)
     sys.exit(exit_code(rc))

@@ -139,7 +139,7 @@ def cmd_open(a):
     me = os.path.realpath(sys.argv[0]) if os.path.isfile(sys.argv[0]) else shutil.which("sbx")
     if not me: notify("sbx not found"); sys.exit(1)
     err, t0 = tempfile.TemporaryFile(), time.monotonic()
-    rc = subprocess.run([sys.executable, me, *flags, f], stderr=err).returncode
+    rc = subprocess.run([sys.executable, me, *flags, f], stderr=err, env={**os.environ, "SBX_NO_POPUP": "1"}).returncode   # we show the popup, with the reason
     err.seek(0)
     text = err.read().decode(errors="replace")
     sys.stderr.write(text)
