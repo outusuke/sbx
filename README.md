@@ -39,6 +39,7 @@ Completion for zsh (`completions/_sbx`, into a folder on your `$fpath`, then `co
 | Environment | cleared; only locale, terminal and desktop variables are kept, plus what you pass with `env=` / `setenv=` |
 | Namespaces | all unshared (PID, IPC, UTS, user, cgroup); network shared unless `net=0`; nested user namespaces blocked with `userns=0` |
 | System calls | a blocklist: `kexec_*`, `perf_event_open`, `bpf`, `syslog`, `keyctl` and friends, `mbind` and NUMA calls, `open_by_handle_at`, `io_uring_*`, `userfaultfd`, `process_vm_readv/writev`, `kcmp`, `pidfd_getfd`, the new mount API (`open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`), and all 32-bit/x32 calls |
+| Desktop look (`theme=1`) | your fonts, icons and GTK/fontconfig settings, read-only. Your title-bar button layout (so GNOME's minimize and maximize buttons show up) and cursor theme and size live in dconf, which the sandbox can't read, so sbx reads them on your side and hands over only those settings as a small GSettings key file (the program gets `GSETTINGS_BACKEND=keyfile`). Every value is checked first, and nothing else from dconf is shared. `--no-theme` turns all of this off |
 | Wayland | through a [security context](https://wayland.app/protocols/security-context-v1) when the compositor supports it (no screen capture or input injection), otherwise the full socket with a warning |
 
 The program starts in its private home. Use full paths, or `--here` to share the current folder. If an argument names something that exists on your side but isn't visible inside, sbx says so.
@@ -75,7 +76,7 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | `--camera` `--alsa` `--input` `--kvm` `--rocm` `--printing` | share `/dev/video*` (and the Camera portal), `/dev/snd`, `/dev/input` (plus `/run/udev`, so controllers are recognised), `/dev/kvm`, `/dev/kfd`, the CUPS socket |
 | `--tray` | let the program show a tray icon and answer media keys, through `xdg-dbus-proxy`. Works without `--portals`; only the tray and media-key names are allowed on the bus |
 | `--ssh-agent` | share your SSH agent socket; the program can sign as you while it runs |
-| `--no-theme` | don't show your fonts, icons and GTK/fontconfig settings |
+| `--no-theme` | don't show your fonts, icons and GTK/fontconfig settings, and don't pass on your title-bar button layout and cursor theme (see below) |
 | `--compat` | pass through the graphics and toolkit variables that are set (`WGPU_*`, `ICED_BACKEND`, `MESA_*`, `RADV_*`, `VK_ICD_FILENAMES`, `SDL_VIDEODRIVER`, `QT_QPA_PLATFORM`, `GDK_BACKEND`...). Tokens, keys and everything else stay out |
 | `--portals` | allow notifications and basic desktop portals via `xdg-dbus-proxy` |
 | `--portal-screenshot` `--portal-screencast` `--portal-location` `--portal-shortcuts` `--portal-wallpaper` `--portal-launcher` `--portal-remote-desktop` `--portal-input-capture` `--portal-secret` | one more desktop portal each (needs `--portals`). Settings: `portal_screenshot=1` and so on |

@@ -138,6 +138,11 @@ def build(prog, args, live=False, o=None):
     for i in range(0, len(late), 3): mount(late[i], late[i + 1], late[i + 2])
     if gui and cfg["theme"]:
         for rel in THEME: mount("--ro-bind-try", f"{HOME}/{rel}")
+        gs = gsettings_keyfile(tag + ".gsettings", live)          # button layout and cursor from dconf, which the program can't read
+        if gs:
+            mount("--ro-bind", gs, f"{HOME}/.config/glib-2.0/settings/keyfile")
+            env["GSETTINGS_BACKEND"] = "keyfile"
+            if live: state["files"].append(gs)
     for p, mode in shares: mount("--bind" if mode == "rw" else "--ro-bind", p)      # --here, whitelist=, read_only=, the program itself
     for p in SECRETS + [x for g in SECRET_GLOBS for x in glob.glob(g)]:
         if os.path.isdir(p): a += ["--tmpfs", p]

@@ -82,3 +82,90 @@ def scoped_xauth(src, disp, dst):
     except OSError:
         return None
     return dst
+
+
+# ---------------------------------------------------------------- desktop settings the sandbox can't read
+# The title-bar button layout (minimize, maximize, close) and the cursor theme and size live in dconf, which a sandboxed GTK
+# program can't reach: it falls back to GTK's own defaults (no minimize/maximize button on GNOME, a different cursor).
+# sbx runs outside the sandbox, so it reads them here and gives the program only these settings, as a GSettings key file
+# (GTK reads them from GSettings, and that beats a settings.ini). The program is pointed at it with GSETTINGS_BACKEND=keyfile.
+# Nothing is hardcoded: if no desktop setting is found, nothing is shared. Every value is checked before it goes in the file.
+LAYOUT_KEYS = (("org.gnome.desktop.wm.preferences", "button-layout"),     # GNOME (stored in dconf)
+               ("org.cinnamon.muffin", "button-layout"),
+               ("org.mate.Marco.general", "button-layout"))
+LAYOUT_RE = re.compile(r"[a-z,:_]{0,64}")       # only button names, commas and the colon; anything else is ignored
+CURSOR_SCHEMA = "org.gnome.desktop.interface"
+CURSOR_THEME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._+-]{0,63}")    # a folder name: no '/', no quotes, no leading dot
+CURSOR_SIZE_RE = re.compile(r"[0-9]{1,3}")
+CURSOR_SIZE_MAX = 256
+
+
+def gsettings_get(schema, key):
+    """The raw gsettings value as text, or None (no gsettings, no such key, error, timeout)."""
+    gs = shutil.which("gsettings")
+    if not gs: return None
+    try: r = subprocess.run([gs, "get", schema, key], capture_output=True, text=True, timeout=3)
+    except Exception: return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def gsettings_string(raw):
+    """The text of a plain gsettings string 'like this', else None. No escapes, no other quote style."""
+    if raw is None or len(raw) < 2 or raw[0] != "'" or raw[-1] != "'": return None
+    return raw[1:-1]
+
+
+def gtk_ini_layout():
+    """gtk-decoration-layout from your own GTK settings.ini, or None."""
+    for ver in ("gtk-4.0", "gtk-3.0"):
+        try:
+            with open(f"{HOME}/.config/{ver}/settings.ini") as f:
+                for ln in f:
+                    k, _, v = ln.partition("=")
+                    if k.strip() == "gtk-decoration-layout" and LAYOUT_RE.fullmatch(v.strip()): return v.strip()
+        except (OSError, UnicodeDecodeError):
+            pass
+    return None
+
+
+def host_button_layout():
+    """The button layout from the desktop settings (gsettings/dconf), else from your own GTK settings.ini, else None."""
+    for schema, key in LAYOUT_KEYS:
+        v = gsettings_get(schema, key)
+        v = v.strip("'\"") if v is not None else None
+        if v is not None and LAYOUT_RE.fullmatch(v): return v
+    return gtk_ini_layout()
+
+
+def host_cursor():
+    """(theme, size) of the host's cursor from gsettings; None for whatever is missing or doesn't pass the checks.
+    Size 0 means 'default' and counts as unset."""
+    theme = gsettings_string(gsettings_get(CURSOR_SCHEMA, "cursor-theme"))
+    if theme is not None and not CURSOR_THEME_RE.fullmatch(theme): theme = None
+    size = gsettings_get(CURSOR_SCHEMA, "cursor-size")
+    if size is not None and CURSOR_SIZE_RE.fullmatch(size) and 0 < int(size) <= CURSOR_SIZE_MAX: size = int(size)
+    else: size = None
+    return theme, size
+
+
+def gsettings_keyfile_text():
+    """Text of the key file: just the host's button layout and cursor theme/size. None if there is nothing to share.
+    Always written under GNOME's schemas, which are the ones GTK reads, whichever desktop the values came from."""
+    out = []
+    layout = host_button_layout()
+    if layout is not None: out.append(f"[org/gnome/desktop/wm/preferences]\nbutton-layout='{layout}'\n")
+    theme, size = host_cursor()
+    cur = ([f"cursor-theme='{theme}'\n"] if theme is not None else []) + ([f"cursor-size={size}\n"] if size is not None else [])
+    if cur: out.append("[org/gnome/desktop/interface]\n" + "".join(cur))
+    return "\n".join(out) or None
+
+
+def gsettings_keyfile(dst, live):
+    """The key file for this run at dst (written only when live), or None when there is nothing to share."""
+    text = gsettings_keyfile_text()
+    if text is None: return None
+    if live:
+        os.makedirs(os.path.dirname(dst), mode=0o700, exist_ok=True)
+        fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as f: f.write(text)
+    return dst

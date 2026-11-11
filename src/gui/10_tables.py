@@ -9,7 +9,7 @@ GROUPS = [
         ("wayland", "Wayland", "Lets graphical programs open a window", True),
         ("wayland_strict", "Wayland only if restricted", "No Wayland at all when the compositor can't limit what the program may do", False),
         ("x11", "X11", "Weaker isolation than Wayland", False),
-        ("theme", "Your fonts, icons and GTK settings", "Shown read-only so the program looks like your desktop", True),
+        ("theme", "Your fonts, icons and GTK settings", "Shown read-only so the program looks like your desktop, with your window buttons (minimize, maximize) and cursor", True),
         ("compat", "Graphics and toolkit variables", "Passes WGPU_*, MESA_*, SDL_*, QT_QPA_* and similar if set. Never tokens or other variables", False)]),
     ("Devices", [
         ("gpu", "Graphics card", "/dev/dri and NVIDIA devices", True),

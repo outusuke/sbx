@@ -52,6 +52,8 @@ SCENARIOS = [                                   # (title, program, flags, overri
     ("environment", "firefox", ["--env=EXTRA_VAR", "--setenv=FOO=bar", "--setenv=HOME=/elsewhere", "--env=SECRET_TOKEN"], {}),
     ("limits", "firefox", ["--memory=2G", "--tasks=512", "--cpu=200%"], {}),
     ("no theme", "firefox", ["--no-theme"], {}),
+    ("desktop settings the program can't read", "firefox", [],
+     {"gsettings_keyfile_text": lambda: "[org/gnome/desktop/wm/preferences]\nbutton-layout=':minimize,maximize,close'\n"}),
     ("compositor without security context", "firefox", [], NO_SECURITY_CONTEXT),
     ("wayland strict, no security context", "firefox", ["--wayland-strict"], NO_SECURITY_CONTEXT),
 ]
@@ -75,6 +77,7 @@ def fake_preview(prog, flags, patch=None):
     S["wl_supported"] = lambda p: True
     S["resolv_dirs"] = lambda: ["/run/systemd/resolve"]
     S["glob"] = types.SimpleNamespace(glob=lambda pat: FAKE_GLOBS.get(pat, []))
+    S["gsettings_keyfile_text"] = lambda: None                  # whatever desktop settings this machine has must not change the snapshot
     S.update(patch or {})
     opts, _ = S["parse_options"](flags)
     env = {"LANG": "en_US.UTF-8", "TERM": "xterm", "XDG_CURRENT_DESKTOP": "GNOME", "WAYLAND_DISPLAY": "wayland-0",
@@ -684,6 +687,76 @@ class Hostile(unittest.TestCase):
     def test_the_installable_file_is_exactly_what_src_builds(self):
         r = subprocess.run([sys.executable, f"{HERE}/build.py", "--check"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+
+class DesktopSettings(unittest.TestCase):
+    """The title-bar buttons and cursor reach a GTK program as a read-only key file; nothing else from dconf does."""
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="sbx-gs-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.S = load_sbx()
+        self.S["HOME"] = self.tmp
+
+    def host(self, values):
+        """Pretend gsettings knows these (schema, key) -> raw text; everything else is missing."""
+        self.S["gsettings_get"] = lambda schema, key: values.get((schema, key))
+
+    def text(self): return self.S["gsettings_keyfile_text"]()
+
+    def test_layout_and_cursor_become_a_key_file(self):
+        self.host({("org.gnome.desktop.wm.preferences", "button-layout"): "'appmenu:minimize,maximize,close'",
+                   ("org.gnome.desktop.interface", "cursor-theme"): "'Adwaita'", ("org.gnome.desktop.interface", "cursor-size"): "32"})
+        self.assertEqual(self.text(), "[org/gnome/desktop/wm/preferences]\nbutton-layout='appmenu:minimize,maximize,close'\n\n"
+                                      "[org/gnome/desktop/interface]\ncursor-theme='Adwaita'\ncursor-size=32\n")
+
+    def test_nothing_found_means_nothing_shared(self):
+        self.host({}); self.assertIsNone(self.text())
+        self.host({("org.gnome.desktop.interface", "cursor-size"): "0"}); self.assertIsNone(self.text())       # 0 means 'default'
+
+    def test_hostile_values_are_dropped_not_written(self):
+        for bad in ("'x'\n[evil]\nkey='v'", "'a;b'", "'" + "a" * 65 + "'", "'close\\''"):
+            self.host({("org.gnome.desktop.wm.preferences", "button-layout"): bad}); self.assertIsNone(self.text(), bad)
+        for theme in ("'../../etc'", "'.hidden'", "'a\\'b'", "'" + "a" * 65 + "'", "Adwaita", "''"):
+            self.host({("org.gnome.desktop.interface", "cursor-theme"): theme}); self.assertIsNone(self.text(), theme)
+        for size in ("-1", "99999", "12a", "999"):
+            self.host({("org.gnome.desktop.interface", "cursor-size"): size}); self.assertIsNone(self.text(), size)
+
+    def test_other_desktops_and_the_gtk_ini_are_used_but_written_under_gnomes_schema(self):
+        self.host({("org.cinnamon.muffin", "button-layout"): "'menu:close'"})
+        self.assertEqual(self.text(), "[org/gnome/desktop/wm/preferences]\nbutton-layout='menu:close'\n")
+        self.host({})
+        os.makedirs(f"{self.tmp}/.config/gtk-3.0")
+        with open(f"{self.tmp}/.config/gtk-3.0/settings.ini", "w") as f: f.write("[Settings]\ngtk-decoration-layout=:minimize,maximize,close\n")
+        self.assertEqual(self.text(), "[org/gnome/desktop/wm/preferences]\nbutton-layout=':minimize,maximize,close'\n")
+
+    def test_only_the_wanted_keys_are_ever_asked_for(self):
+        asked = []
+        self.S["gsettings_get"] = lambda schema, key: asked.append((schema, key))
+        self.text()
+        self.assertTrue(all(k in ("button-layout", "cursor-theme", "cursor-size") for _, k in asked), asked)
+
+    def test_the_file_is_private_written_only_when_live_and_swept_when_stale(self):
+        self.host({("org.gnome.desktop.wm.preferences", "button-layout"): "':close'"})
+        dst = f"{self.tmp}/run/sbx/PID.gsettings"
+        self.assertEqual(self.S["gsettings_keyfile"](dst, False), dst); self.assertFalse(os.path.exists(dst))      # preview writes nothing
+        self.assertEqual(self.S["gsettings_keyfile"](dst, True), dst)
+        self.assertEqual(os.stat(dst).st_mode & 0o777, 0o600); self.assertEqual(os.stat(os.path.dirname(dst)).st_mode & 0o777, 0o700)
+        self.host({}); self.assertIsNone(self.S["gsettings_keyfile"](dst, True))
+        self.S["runtime_dir"] = lambda: f"{self.tmp}/run"
+        os.rename(dst, f"{self.tmp}/run/sbx/4194303.gsettings")
+        self.S["sweep_stale"]()
+        self.assertFalse(os.path.exists(f"{self.tmp}/run/sbx/4194303.gsettings"))
+
+    def test_the_program_gets_the_file_and_the_backend_only_with_a_window_and_theme(self):
+        text = {"gsettings_keyfile_text": lambda: "[org/gnome/desktop/wm/preferences]\nbutton-layout=':close'\n"}
+        dst = "/home/user/.config/glib-2.0/settings/keyfile"
+        _, args = fake_preview("firefox", [], text)
+        i = args.index(dst); self.assertEqual(args[i - 2], "--ro-bind"); self.assertEqual(args[i - 1], "/run/user/1000/sbx/PID.gsettings")
+        j = args.index("GSETTINGS_BACKEND"); self.assertEqual(args[j + 1], "keyfile")
+        for flags in (["--no-theme"], ["--no-wayland"]):                            # no theme, or nothing that draws a window
+            _, args = fake_preview("firefox", flags, text); self.assertNotIn(dst, args, flags); self.assertNotIn("GSETTINGS_BACKEND", args, flags)
+        _, args = fake_preview("firefox", [], {})                                    # nothing found on this machine
+        self.assertNotIn(dst, args); self.assertNotIn("GSETTINGS_BACKEND", args)
 
 
 class Logging(unittest.TestCase):
