@@ -75,6 +75,7 @@ PORTAL_NAME = "org.freedesktop.portal.Desktop"
 PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Background", "Account",
                 "Email", "Trash", "NetworkMonitor", "ProxyResolver", "GameMode", "MemoryMonitor",
                 "PowerProfileMonitor", "Realtime")
+SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # a program name run from here may move between them
 NIX_LINKS = ("/run/current-system", "/run/booted-system", "/run/opengl-driver", "/run/opengl-driver-32")   # NixOS and Guix
 
 
@@ -585,6 +586,24 @@ def hint_args(args, here, shared):
         if said == 3: break
 
 
+def check_origin(name, real, rebind=False):
+    """A program name owns settings (apps/NAME.conf) and a private home. Remember which file first used the name, and
+    refuse when a different file shows up under it, so a download called `firefox` can't inherit what firefox was given.
+    Moves between system folders (updates) are fine. rebind=True accepts the new file."""
+    p = f"{CONF}/origins/{name}"
+    try:
+        with open(p) as f: old = f.read().strip()
+    except OSError:
+        old = None
+    if old == real: return
+    system = lambda x: x.startswith(SYSTEM_PROGRAMS)
+    if old is not None and not rebind and not (system(old) and system(real)):
+        die(f"'{name}' was first run from {tilde(old)}, now it is {tilde(real)}. They would share the settings and private home of '{name}'.\n"
+            f"      Another program: use --name=OTHER for a separate home. The same program, moved: use --rebind.")
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w") as f: f.write(real + "\n")
+
+
 # ---------------------------------------------------------------- the bwrap command
 def build(prog, args, live=False, o=None):
     """The bwrap command. live=True also creates what a real run needs (machine-id, proxy, X cookie, listening sockets...)
@@ -596,6 +615,7 @@ def build(prog, args, live=False, o=None):
     cwd = share_dir(os.getcwd()) if o.get("here") else None
     name = clean(o.get("name") or os.path.basename(path))       # the name you typed, not the file behind a link
     if o.get("name") and name != o["name"]: warn(f"--name: using '{name}' (letters, digits and . _ - only)")
+    if live: check_origin(name, real, o.get("rebind", False))
     cfg, src = effective(name, o)
     ok = cfg["allow_sensitive"]
     rw = [p for p in [share_path(x, False, ok) for x in cfg["whitelist"]] + [share_path(x, True, ok) for x in o.get("whitelist", [])] if p]
@@ -831,7 +851,7 @@ FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here":
          "--hostname": ("hostname", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
-         "--compat": ("compat", True), "--ignore-config": ("ignore_config", True),
+         "--compat": ("compat", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
          **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
@@ -866,11 +886,13 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --memory=2G --tasks=512 --cpu=200%   limits (systemd-run --user)\n"
          "  --name=NAME            use another private home and settings name than the program's\n"
          "  --ignore-config        ignore the settings files for this run\n"
+         "  --rebind               this file is the same program as before, just moved (see below)\n"
          "notes: the program starts in its private home, so use full paths or --here for files.\n"
          "  Flags only turn things off (or on, for the extras); settings files set the rest.\n"
          "  net=1 also shares abstract Unix sockets (some X servers); only net=0 closes that.\n"
          "  32-bit programs are blocked by the syscall filter. Terminal programs lose /dev/tty (--new-session).\n"
          "  A program named like a command (clean, show...): sbx -- clean\n"
+         "  A name belongs to the file that first used it; a different file under that name is refused (--name=OTHER or --rebind).\n"
          "settings: ~/.config/sbx/default.conf and ~/.config/sbx/apps/NAME.conf with lines like\n"
          "  net=0   gpu=0   portals=1   whitelist=~/Projects   read_only=~/.gitconfig   env=HTTPS_PROXY   memory=2G")
 
@@ -940,8 +962,9 @@ def cmd_clean(a):
         if not os.path.islink(p): os.chmod(p, 0o700)         # never chmod through a link the program planted
         fn(p)
     shutil.rmtree(real, onerror=unlock)
-    try: os.unlink(mid)
-    except OSError: pass
+    for gone in (mid, f"{CONF}/origins/{name}"):
+        try: os.unlink(gone)
+        except OSError: pass
     print(f"removed {tilde(home)} and its machine-id")
 
 
@@ -1137,6 +1160,12 @@ def doctor():
                "" if wl_supported(wp) else "the compositor has no wp_security_context_v1: programs get full Wayland access (wayland_strict=1 turns Wayland off instead)")
     else: row("INFO", "no Wayland socket (not on a Wayland session)")
     row("INFO", f"X11 display {os.environ['DISPLAY']}" if os.environ.get("DISPLAY") else "no X11 display")
+    try:
+        with open("/proc/net/unix") as f: abstract_x = any("@/tmp/.X11-unix/" in l for l in f)
+    except OSError:
+        abstract_x = False
+    if abstract_x: row("WARN", "an X server listens on an abstract socket",
+                       "with net=1 (the default) a sandboxed program can reach it even with x11=0; only net=0 closes that")
     rt = runtime_dir()
     row("INFO", "sound: " + (", ".join(x for x in ("pipewire-0", "pulse/native") if os.path.exists(f"{rt}/{x}")) or "no PipeWire/PulseAudio socket"))
     row("INFO", "graphics: " + ("/dev/dri present" if os.path.isdir("/dev/dri") else "no /dev/dri"))

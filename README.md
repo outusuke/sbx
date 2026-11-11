@@ -83,6 +83,7 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | `--memory=2G` `--tasks=512` `--cpu=200%` | resource limits through `systemd-run --user` |
 | `--name=NAME` | use another private home, machine-id and settings name than the program's |
 | `--ignore-config` | ignore the settings files for this run |
+| `--rebind` | accept that this file is the same program as the one that first used its name (see the last point under Limits) |
 
 Shared paths must be inside your home (not the home itself), on `/mnt`, `/media` or `/run/media`, or in `/tmp`. `~/.config/sbx` and `~/.sbx-homes` can never be shared. A folder is mounted before what is inside it, so `whitelist=~/a/b` stays writable even with `read_only=~/a`. Shared folders that don't exist yet in the private home are created as empty mountpoints for the run and removed again afterwards if nothing was written to them.
 
@@ -162,6 +163,7 @@ sbx --net=none --no-userns ./sbx-selftest --expect=net0,userns0   # also check w
 - Sharing a single file read-write can break programs that save by renaming over it. Share the folder instead.
 - A read-write share (`--here`, `whitelist=`) lets the program plant files that later run outside the sandbox: git hooks, Makefiles, `.envrc`, scripts. Share only what it needs, and prefer `read_only=` where you can.
 - Each program name has one private home, so `sbx python3 a.py` and `sbx python3 b.py` share it; use `--name` to separate them.
+- A program name is tied to the file that first ran under it (recorded in `~/.config/sbx/origins/NAME`). A different file under the same name is refused, so a download called `firefox` can't pick up firefox's settings and private home. Moves between system folders (`/usr`, `/opt`, `/snap`, ...) are fine; for a program you moved yourself use `--rebind`, for a different one `--name=OTHER`. The first run after upgrading records whatever is there now.
 - Programs on another drive (`/mnt`, `/media`, `/run/media`) can't be started; copy them elsewhere first.
 - Not for root; `sbx` refuses to run as root or inside another `sbx` sandbox.
 

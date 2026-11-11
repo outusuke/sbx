@@ -8,7 +8,7 @@ FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here":
          "--hostname": ("hostname", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
-         "--compat": ("compat", True), "--ignore-config": ("ignore_config", True),
+         "--compat": ("compat", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
          **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
@@ -43,11 +43,13 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --memory=2G --tasks=512 --cpu=200%   limits (systemd-run --user)\n"
          "  --name=NAME            use another private home and settings name than the program's\n"
          "  --ignore-config        ignore the settings files for this run\n"
+         "  --rebind               this file is the same program as before, just moved (see below)\n"
          "notes: the program starts in its private home, so use full paths or --here for files.\n"
          "  Flags only turn things off (or on, for the extras); settings files set the rest.\n"
          "  net=1 also shares abstract Unix sockets (some X servers); only net=0 closes that.\n"
          "  32-bit programs are blocked by the syscall filter. Terminal programs lose /dev/tty (--new-session).\n"
          "  A program named like a command (clean, show...): sbx -- clean\n"
+         "  A name belongs to the file that first used it; a different file under that name is refused (--name=OTHER or --rebind).\n"
          "settings: ~/.config/sbx/default.conf and ~/.config/sbx/apps/NAME.conf with lines like\n"
          "  net=0   gpu=0   portals=1   whitelist=~/Projects   read_only=~/.gitconfig   env=HTTPS_PROXY   memory=2G")
 

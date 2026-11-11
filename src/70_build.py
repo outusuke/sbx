@@ -12,6 +12,7 @@ def build(prog, args, live=False, o=None):
     cwd = share_dir(os.getcwd()) if o.get("here") else None
     name = clean(o.get("name") or os.path.basename(path))       # the name you typed, not the file behind a link
     if o.get("name") and name != o["name"]: warn(f"--name: using '{name}' (letters, digits and . _ - only)")
+    if live: check_origin(name, real, o.get("rebind", False))
     cfg, src = effective(name, o)
     ok = cfg["allow_sensitive"]
     rw = [p for p in [share_path(x, False, ok) for x in cfg["whitelist"]] + [share_path(x, True, ok) for x in o.get("whitelist", [])] if p]

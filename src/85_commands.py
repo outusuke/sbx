@@ -37,8 +37,9 @@ def cmd_clean(a):
         if not os.path.islink(p): os.chmod(p, 0o700)         # never chmod through a link the program planted
         fn(p)
     shutil.rmtree(real, onerror=unlock)
-    try: os.unlink(mid)
-    except OSError: pass
+    for gone in (mid, f"{CONF}/origins/{name}"):
+        try: os.unlink(gone)
+        except OSError: pass
     print(f"removed {tilde(home)} and its machine-id")
 
 
@@ -234,6 +235,12 @@ def doctor():
                "" if wl_supported(wp) else "the compositor has no wp_security_context_v1: programs get full Wayland access (wayland_strict=1 turns Wayland off instead)")
     else: row("INFO", "no Wayland socket (not on a Wayland session)")
     row("INFO", f"X11 display {os.environ['DISPLAY']}" if os.environ.get("DISPLAY") else "no X11 display")
+    try:
+        with open("/proc/net/unix") as f: abstract_x = any("@/tmp/.X11-unix/" in l for l in f)
+    except OSError:
+        abstract_x = False
+    if abstract_x: row("WARN", "an X server listens on an abstract socket",
+                       "with net=1 (the default) a sandboxed program can reach it even with x11=0; only net=0 closes that")
     rt = runtime_dir()
     row("INFO", "sound: " + (", ".join(x for x in ("pipewire-0", "pulse/native") if os.path.exists(f"{rt}/{x}")) or "no PipeWire/PulseAudio socket"))
     row("INFO", "graphics: " + ("/dev/dri present" if os.path.isdir("/dev/dri") else "no /dev/dri"))

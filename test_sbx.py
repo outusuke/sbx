@@ -339,6 +339,37 @@ class Units(unittest.TestCase):
             with self.assertRaises(SystemExit): S["run"]("/bin/true", [], {})
         self.assertEqual(len(dies), 1); self.assertIn("no system-call filter", dies[0])
 
+    def test_doctor_warns_about_an_abstract_x_socket(self):
+        S = self.S
+        real_open = open
+        def fake(p, *a, **k):
+            if p == "/proc/net/unix": return io.StringIO("Num RefCount Protocol Flags Type St Inode Path\n0: 2 0 10000 1 1 5 @/tmp/.X11-unix/X0\n")
+            return real_open(p, *a, **k)
+        S["open"] = fake
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["doctor"]()
+        self.assertRegex(out.getvalue(), r"WARN\s+an X server listens on an abstract socket")
+        S["open"] = lambda p, *a, **k: io.StringIO("Num\n") if p == "/proc/net/unix" else real_open(p, *a, **k)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["doctor"]()
+        self.assertNotIn("abstract socket", out.getvalue())
+
+    def test_a_name_belongs_to_the_file_that_first_used_it(self):
+        S, dies = self.S, []
+        def die(msg, code=1): dies.append(msg); raise SystemExit(code)
+        S["die"] = die
+        check = S["check_origin"]
+        home = f"{self.home}/apps/foo/bin/foo"
+        check("foo", home)                                                     # first use: recorded
+        check("foo", home)                                                     # same file: fine
+        with self.assertRaises(SystemExit): check("foo", "/tmp/evil/foo")      # another file under the same name
+        self.assertIn("first run from", dies[-1])
+        with open(f"{S['CONF']}/origins/foo") as f: self.assertEqual(f.read().strip(), home)   # the record did not move
+        check("foo", "/tmp/evil/foo", rebind=True)                             # explicitly accepted
+        with open(f"{S['CONF']}/origins/foo") as f: self.assertEqual(f.read().strip(), "/tmp/evil/foo")
+        check("ls", "/usr/bin/ls"); check("ls", "/opt/coreutils/bin/ls")       # moving between system folders is not a new program
+        with self.assertRaises(SystemExit): check("ls", "/tmp/evil/ls")        # but a system program's name is not free for anyone
+
     # -- system calls
     @staticmethod
     def run_bpf(prog, nr, arch):
@@ -938,6 +969,24 @@ class Isolation(unittest.TestCase):
             r = self.sbx_run("desktop", "--remove", bad)
             self.assertNotEqual(r.returncode, 0, bad); self.assertIn("not a launcher id", r.stderr, bad)
         self.assertTrue(os.path.exists(marked), "a file outside applications/ was removed")
+
+
+    def test_a_download_named_like_a_configured_program_is_refused(self):
+        os.makedirs(f"{self.home}/.config/sbx/apps", exist_ok=True)
+        with open(f"{self.home}/.config/sbx/apps/pinned.conf", "w") as f: f.write("net=1\n")
+        good, evil = f"{self.home}/good/pinned", f"{self.home}/evil/pinned"
+        for p in (good, evil):
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f: f.write("#!/bin/sh\necho ran-$0\n")
+            os.chmod(p, 0o755)
+        env = {"PATH": "/usr/local/bin:/usr/bin:/bin"}
+        r = self.sbx_run(good, env=env); self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("ran-", r.stdout)
+        r = self.sbx_run(evil, env=env)
+        self.assertNotEqual(r.returncode, 0); self.assertIn("first run from", r.stderr); self.assertNotIn("ran-", r.stdout)
+        self.assertEqual(self.sbx_run("--name=pinned-other", evil, env=env).returncode, 0)      # a separate name works
+        self.assertEqual(self.sbx_run("--rebind", evil, env=env).returncode, 0)                 # so does saying it is the same program
+        self.assertEqual(self.sbx_run("clean", "--yes", "pinned").returncode, 0)                # clean forgets the record
+        self.assertFalse(os.path.exists(f"{self.home}/.config/sbx/origins/pinned"))
 
 
 if __name__ == "__main__":
