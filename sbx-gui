@@ -102,7 +102,7 @@ def save(scope, lines):
 
 
 def key_of(line):
-    m = re.match(r"\s*([A-Za-z_]+)\s*=", line)
+    m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", line)       # digits too: x11
     return m.group(1) if m else None
 
 
