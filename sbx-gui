@@ -713,7 +713,8 @@ class Win(Adw.ApplicationWindow):
         # A transient user service has the systemd user manager as parent instead (its output goes to the journal).
         sr = shutil.which("systemd-run")
         if sr:
-            cmd = [sr, "--user", "--collect", "--quiet", "--same-dir", f"--unit=sbx-{name}-{os.getpid()}"]
+            cmd = [sr, "--user", "--collect", "--quiet", "--same-dir", f"--unit=sbx-{name}-{os.getpid()}",
+                   f"--property=SyslogIdentifier={name}"]
             for k in ("WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
                       "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE",
                       "LANG", "LANGUAGE", "LC_ALL", "TZ", "PATH"):
