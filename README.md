@@ -9,6 +9,8 @@ sbx --net=none --here python3 script.py
 
 `sbx-gui` is an optional GTK4/libadwaita editor for the same settings files.
 
+![sbx window](docs/screenshot.png)
+
 ## Install
 
 Requires Linux, Python 3.8+ and `bubblewrap` (0.8+ for `userns=0`). For the GUI: GTK 4, libadwaita 1.5+ and PyGObject. For `portals`: `xdg-dbus-proxy`. For memory/task/CPU limits: `systemd-run` (systemd).
