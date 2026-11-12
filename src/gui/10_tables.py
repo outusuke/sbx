@@ -71,4 +71,18 @@ LOG_HINTS = [
     (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
      "camera", True, "Allow the camera", "The program tried to open a camera.", {}),
 ]
+# Log page colors: the first pattern that matches a line's text picks its kind (see log_line_parts).
+LOG_KINDS = [
+    (r"^EXIT code=0\b", "exit_ok"),
+    (r"^EXIT code=", "exit_err"),
+    (r"^START\b", "info"),
+    (r"^WARNING\b|\bwarning\b", "warn"),
+    (r"^ALSA lib\b", "dim"),
+    (r"\bpanicked\b|\bfatal\b|\berror\b|\bfailed\b|\bcannot\b|\bdenied\b|not permitted|^Caused by|^note: ", "err"),
+]
+LOG_COLORS = {      # kind -> (light theme, dark theme); readable on both
+    "ts": ("#77767b", "#9a9996"), "name": ("#613583", "#dc8add"), "dim": ("#77767b", "#9a9996"),
+    "info": ("#1c71d8", "#99c1f1"), "warn": ("#9c5a00", "#f8e45c"), "err": ("#c01c28", "#ff7b63"),
+    "exit_ok": ("#1a7f4b", "#8ff0a4"), "exit_err": ("#c01c28", "#ff7b63"),
+}
 CURRENT = []                                              # the scope (None or a name) of the page being shown

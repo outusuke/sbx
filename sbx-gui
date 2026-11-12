@@ -89,6 +89,20 @@ LOG_HINTS = [
     (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
      "camera", True, "Allow the camera", "The program tried to open a camera.", {}),
 ]
+# Log page colors: the first pattern that matches a line's text picks its kind (see log_line_parts).
+LOG_KINDS = [
+    (r"^EXIT code=0\b", "exit_ok"),
+    (r"^EXIT code=", "exit_err"),
+    (r"^START\b", "info"),
+    (r"^WARNING\b|\bwarning\b", "warn"),
+    (r"^ALSA lib\b", "dim"),
+    (r"\bpanicked\b|\bfatal\b|\berror\b|\bfailed\b|\bcannot\b|\bdenied\b|not permitted|^Caused by|^note: ", "err"),
+]
+LOG_COLORS = {      # kind -> (light theme, dark theme); readable on both
+    "ts": ("#77767b", "#9a9996"), "name": ("#613583", "#dc8add"), "dim": ("#77767b", "#9a9996"),
+    "info": ("#1c71d8", "#99c1f1"), "warn": ("#9c5a00", "#f8e45c"), "err": ("#c01c28", "#ff7b63"),
+    "exit_ok": ("#1a7f4b", "#8ff0a4"), "exit_err": ("#c01c28", "#ff7b63"),
+}
 CURRENT = []                                              # the scope (None or a name) of the page being shown
 
 
@@ -183,6 +197,17 @@ def log_lines(scope=None):
     except OSError:
         return []
     return [l for l in lines if f"[{scope}] " in l] if scope else lines
+
+
+LOG_LINE_RE = re.compile(r"^(\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\] )?(\[[^\]]+\] )?(.*)$", re.S)
+
+
+def log_line_parts(line):
+    """One log line as (timestamp, "[name] ", text, kind). Timestamp and name may be empty (a program's own output has no
+    timestamp); kind is a key of LOG_COLORS or "" for plain text."""
+    ts, name, text = LOG_LINE_RE.match(line).groups()
+    kind = next((k for pat, k in LOG_KINDS if re.search(pat, text, re.I)), "")
+    return ts or "", name or "", text, kind
 
 
 def effective_switches(scope):
@@ -449,6 +474,29 @@ class Win(Adw.ApplicationWindow):
                           left_margin=8, right_margin=8, top_margin=8, bottom_margin=8)
         lg.add(Gtk.ScrolledWindow(min_content_height=320, child=tv, css_classes=["card"]))
         page.add(lg)
+        buf = tv.get_buffer()
+        tags = {k: buf.create_tag(k) for k in LOG_COLORS}
+        for k in ("info", "exit_ok", "exit_err"): tags[k].set_property("weight", 700)
+
+        def paint(*_):
+            dark = 1 if Adw.StyleManager.get_default().get_dark() else 0
+            for k, t in tags.items():
+                rgba = Gdk.RGBA()
+                rgba.parse(LOG_COLORS[k][dark])
+                t.set_property("foreground-rgba", rgba)
+        paint()
+        Adw.StyleManager.get_default().connect("notify::dark", paint)
+
+        def show_log():
+            lines = log_lines(scope)[-200:]
+            buf.set_text("")
+            if not lines:
+                buf.set_text("Nothing logged yet." if os.path.exists(LOG) else "No launches logged yet.")
+                return
+            for i, line in enumerate(lines):
+                ts, name, text, kind = log_line_parts(line)
+                for chunk, tag in ((ts, "ts"), (name, "name"), (text + ("\n" if i < len(lines) - 1 else ""), kind)):
+                    if chunk: buf.insert_with_tags(buf.get_end_iter(), chunk, tags[tag]) if tag else buf.insert(buf.get_end_iter(), chunk)
 
         def refresh(*_):
             try:
@@ -457,7 +505,7 @@ class Win(Adw.ApplicationWindow):
             except (OSError, subprocess.TimeoutExpired) as e:
                 out = f"Couldn't run sbx doctor: {e}"
             hl.set_text(out or "No output. Is sbx installed?")
-            tv.get_buffer().set_text(log_tail(scope))
+            show_log()
             show_hints()
         rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
         rb.connect("clicked", refresh)

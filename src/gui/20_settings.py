@@ -94,6 +94,17 @@ def log_lines(scope=None):
     return [l for l in lines if f"[{scope}] " in l] if scope else lines
 
 
+LOG_LINE_RE = re.compile(r"^(\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\] )?(\[[^\]]+\] )?(.*)$", re.S)
+
+
+def log_line_parts(line):
+    """One log line as (timestamp, "[name] ", text, kind). Timestamp and name may be empty (a program's own output has no
+    timestamp); kind is a key of LOG_COLORS or "" for plain text."""
+    ts, name, text = LOG_LINE_RE.match(line).groups()
+    kind = next((k for pat, k in LOG_KINDS if re.search(pat, text, re.I)), "")
+    return ts or "", name or "", text, kind
+
+
 def effective_switches(scope):
     """The switch values a program runs with: built-in defaults, then default.conf, then the program's own file."""
     v = {k: d for k, (_, _, d) in SWITCHES.items()}

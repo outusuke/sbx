@@ -104,6 +104,29 @@ class Win(Adw.ApplicationWindow):
                           left_margin=8, right_margin=8, top_margin=8, bottom_margin=8)
         lg.add(Gtk.ScrolledWindow(min_content_height=320, child=tv, css_classes=["card"]))
         page.add(lg)
+        buf = tv.get_buffer()
+        tags = {k: buf.create_tag(k) for k in LOG_COLORS}
+        for k in ("info", "exit_ok", "exit_err"): tags[k].set_property("weight", 700)
+
+        def paint(*_):
+            dark = 1 if Adw.StyleManager.get_default().get_dark() else 0
+            for k, t in tags.items():
+                rgba = Gdk.RGBA()
+                rgba.parse(LOG_COLORS[k][dark])
+                t.set_property("foreground-rgba", rgba)
+        paint()
+        Adw.StyleManager.get_default().connect("notify::dark", paint)
+
+        def show_log():
+            lines = log_lines(scope)[-200:]
+            buf.set_text("")
+            if not lines:
+                buf.set_text("Nothing logged yet." if os.path.exists(LOG) else "No launches logged yet.")
+                return
+            for i, line in enumerate(lines):
+                ts, name, text, kind = log_line_parts(line)
+                for chunk, tag in ((ts, "ts"), (name, "name"), (text + ("\n" if i < len(lines) - 1 else ""), kind)):
+                    if chunk: buf.insert_with_tags(buf.get_end_iter(), chunk, tags[tag]) if tag else buf.insert(buf.get_end_iter(), chunk)
 
         def refresh(*_):
             try:
@@ -112,7 +135,7 @@ class Win(Adw.ApplicationWindow):
             except (OSError, subprocess.TimeoutExpired) as e:
                 out = f"Couldn't run sbx doctor: {e}"
             hl.set_text(out or "No output. Is sbx installed?")
-            tv.get_buffer().set_text(log_tail(scope))
+            show_log()
             show_hints()
         rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
         rb.connect("clicked", refresh)

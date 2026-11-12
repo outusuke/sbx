@@ -909,6 +909,19 @@ class Gui(unittest.TestCase):
         finally: G["subprocess"] = real
         win.nav.push.assert_called_once()
 
+    def test_log_lines_are_split_and_classified_for_color(self):
+        parts, ts = self.G["log_line_parts"], "[2026-11-11 20:39:24] "
+        self.assertEqual(parts(ts + "[app] START allow=[net]"), (ts, "[app] ", "START allow=[net]", "info"))
+        self.assertEqual(parts("[app] thread 'main' panicked at x.rs:1:2:")[::3], ("", "err"))      # no timestamp on a program's own output
+        self.assertEqual(parts(ts + "[app] EXIT code=0")[3], "exit_ok")
+        self.assertEqual(parts(ts + "[app] EXIT code=101")[3], "exit_err")
+        self.assertEqual(parts("[app] ALSA lib pcm.c:1:(f) [error.core] cannot find card '0'")[3], "dim")      # noise, not an error
+        self.assertEqual(parts("[app] MESA-EGL: warning: failed to get driver name")[3], "warn")
+        self.assertEqual(parts("[app] MESA: error: ZINK: failed to choose pdev")[3], "err")
+        self.assertEqual(parts("[app] hello")[2:], ("hello", ""))
+        for odd in ("", "[", "[]", ts):
+            parts(odd)                                                    # must never raise
+
     # -- troubleshooting hints: which log lines suggest which setting (pure logic, no window) --
     START = "[2026-11-11 20:00:00] [app] START allow=[net,sound,gpu]"
 
