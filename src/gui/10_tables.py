@@ -70,6 +70,11 @@ LOG_HINTS = [
      "net", True, "Allow the network", "The program tried to use the network.", {}),
     (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
      "camera", True, "Allow the camera", "The program tried to open a camera.", {}),
+    # A guess, last so any specific X11 message above wins: a crash right after start, with nothing in the log saying why
+    # (installers often send stderr to /dev/null). A GUI that only speaks X11 dies like this.
+    (r"aborted \(core dumped\)|\] EXIT code=134\b",
+     "x11", True, "Try X11 (a guess)",
+     "The program crashed right after starting and left no reason in the log. It may be a GUI that needs X11. This weakens isolation, so use it only for this program.", {}),
 ]
 # Log page colors: the first pattern that matches a line's text picks its kind (see log_line_parts).
 LOG_KINDS = [

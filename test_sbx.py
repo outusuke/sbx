@@ -946,6 +946,12 @@ class Gui(unittest.TestCase):
         self.assertEqual(self.hint_keys(gl, gpu=False, gpu_render_only=True), [("gpu", True)])           # render-only means nothing without graphics
         self.assertEqual(self.hint_keys(run("cannot open /dev/video0"), camera=False), [("camera", True)])
         self.assertEqual(self.hint_keys(run("Error: cannot open display: :0")), [("x11", True)])
+        crash = run("./setup_linux.sh: line 21:  1116 Aborted                    (core dumped) ./setup_linux 2> /dev/null", code=134)
+        self.assertEqual(self.hint_keys(crash, x11=False), [("x11", True)])                  # no message in the log: a guess
+        self.assertEqual(self.hint_keys(crash, x11=True), [])
+        self.assertEqual(self.hint_keys(run("something", code=134), x11=False), [("x11", True)])
+        self.assertEqual(self.hint_keys(run("Aborted (core dumped)", code=0), x11=False), [])   # only for a failed run
+        self.assertEqual(len(self.G["log_hints"](run("Error: cannot open display: :0", "Aborted (core dumped)", code=134), {"x11": False})), 1)
         self.assertEqual(self.hint_keys(run("Failed to connect to Wayland display"), wayland=False), [("wayland", True), ("x11", True)])
         self.assertEqual(self.hint_keys(run("Failed to connect to Wayland display")), [("x11", True)])    # Wayland is on already
         self.assertEqual(self.hint_keys(run("libEGL warning: a", "MESA: error: b", "failed to open /dev/dri/x"), gpu=False), [("gpu", True)])   # once
