@@ -73,6 +73,31 @@ class Win(Adw.ApplicationWindow):
         hl = Gtk.Label(xalign=0, wrap=True, selectable=True, margin_top=6, margin_bottom=6, css_classes=["monospace"])
         hg.add(hl)
         page.add(hg)
+        sg = Adw.PreferencesGroup(title="Suggestions", description="Based on this program's last run, which ended with an error. "
+                                  "Nothing changes until you press the button; it applies the next time the program starts.")
+        sg.set_visible(False)
+        sug_rows = []
+        page.add(sg)
+
+        def show_hints():
+            for r in sug_rows: sg.remove(r)
+            sug_rows.clear()
+            hints = log_hints(log_lines(scope), effective_switches(scope)) if scope else []
+            for key, want, title, why in hints:
+                row = Adw.ActionRow(title=title, subtitle=why, use_markup=False)
+                btn = Gtk.Button(label="Turn on" if want else "Turn off", valign=Gtk.Align.CENTER)
+
+                def apply(_b, key=key, want=want):
+                    try:
+                        set_key(scope, key, want)
+                        self.toasts.add_toast(Adw.Toast(title="Saved. It applies the next time the program starts."))
+                    except OSError as e:
+                        self.toasts.add_toast(Adw.Toast(title=f"Could not save: {e.strerror or e}"))
+                    show_hints()
+                btn.connect("clicked", apply)
+                row.add_suffix(btn)
+                sg.add(row); sug_rows.append(row)
+            sg.set_visible(bool(hints))
         lg = Adw.PreferencesGroup(title="Recent activity" + (f" · {scope}" if scope else ""),
                                   description="Starts, exits, warnings, and what programs print when they have no terminal. Paste this when asking for help.")
         tv = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR,
@@ -88,6 +113,7 @@ class Win(Adw.ApplicationWindow):
                 out = f"Couldn't run sbx doctor: {e}"
             hl.set_text(out or "No output. Is sbx installed?")
             tv.get_buffer().set_text(log_tail(scope))
+            show_hints()
         rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
         rb.connect("clicked", refresh)
         refresh()

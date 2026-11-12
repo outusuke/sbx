@@ -85,6 +85,56 @@ def log_tail(scope=None, n=200):
     return "\n".join(lines[-n:]) or "Nothing logged yet."
 
 
+def log_lines(scope=None):
+    """The lines of sbx's launch log (only one program's when scope is given); [] if there is no log."""
+    try:
+        with open(LOG, errors="replace") as f: lines = f.read().splitlines()
+    except OSError:
+        return []
+    return [l for l in lines if f"[{scope}] " in l] if scope else lines
+
+
+def effective_switches(scope):
+    """The switch values a program runs with: built-in defaults, then default.conf, then the program's own file."""
+    v = {k: d for k, (_, _, d) in SWITCHES.items()}
+    v.update(parse(None)[0])
+    if scope is not None: v.update(parse(scope)[0])
+    return v
+
+
+def last_run(lines):
+    """(lines of the most recent run, its exit code or None). A run starts at a START line and ends at an EXIT line."""
+    start = 0
+    for i in range(len(lines) - 1, -1, -1):
+        if "] START allow=[" in lines[i]:
+            start = i + 1
+            break
+    run_lines = lines[start:]
+    code = None
+    for ln in reversed(run_lines):
+        m = re.search(r"\] EXIT code=(-?\d+)", ln)
+        if m:
+            code = int(m.group(1))
+            break
+    return run_lines, code
+
+
+def log_hints(lines, current):
+    """Suggestions for a program, as [(setting, wanted value, title, why)]. Only for a last run that ended with an error;
+    LINES are that program's log lines, CURRENT its effective switches (see effective_switches)."""
+    run_lines, code = last_run(lines)
+    if code in (None, 0): return []
+    text = "\n".join(run_lines[-300:])[-200_000:]
+    out, seen = [], set()
+    for pat, key, want, title, why, needs in LOG_HINTS:
+        if key in seen or current.get(key) == want: continue
+        if any(current.get(k) != v for k, v in needs.items()): continue
+        if re.search(pat, text, re.I):
+            out.append((key, want, title, why))
+            seen.add(key)
+    return out
+
+
 def summary(scope):
     sc, ls = parse(scope)
     parts = [f"{SHORT[k]} {'on' if sc[k] else 'off'}" for k in SWITCHES if k in sc]

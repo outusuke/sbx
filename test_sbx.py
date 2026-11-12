@@ -897,6 +897,70 @@ class Gui(unittest.TestCase):
         finally: G["subprocess"] = real
         win.nav.push.assert_called_once()
 
+    # -- troubleshooting hints: which log lines suggest which setting (pure logic, no window) --
+    START = "[2026-11-11 20:00:00] [app] START allow=[net,sound,gpu]"
+
+    def run_log(self, *body, code=1):
+        return [self.START] + [f"[app] {b}" for b in body] + ([f"[2026-11-11 20:00:05] [app] EXIT code={code}"] if code is not None else [])
+
+    def hint_keys(self, lines, **current):
+        G = self.G
+        cur = {k: d for k, (_, _, d) in G["SWITCHES"].items()}
+        cur.update(current)
+        return [(k, w) for k, w, *_ in G["log_hints"](lines, cur)]
+
+    def test_hints_follow_the_error_and_the_current_setting(self):
+        run = self.run_log
+        self.assertEqual(self.hint_keys(run("FATAL: No usable sandbox! Update your kernel"), userns=False), [("userns", True)])
+        self.assertEqual(self.hint_keys(run("FATAL: No usable sandbox!"), userns=True), [])               # already on: nothing to suggest
+        self.assertEqual(self.hint_keys(run("libEGL warning: failed to open /dev/dri/renderD128"), gpu=False), [("gpu", True)])
+        self.assertEqual(self.hint_keys(run("curl: (6) Temporary failure in name resolution"), net=False), [("net", True)])
+        self.assertEqual(self.hint_keys(run("cannot open /dev/video0"), camera=False), [("camera", True)])
+        self.assertEqual(self.hint_keys(run("Error: cannot open display: :0")), [("x11", True)])
+        self.assertEqual(self.hint_keys(run("Failed to connect to Wayland display"), wayland=False), [("wayland", True), ("x11", True)])
+        self.assertEqual(self.hint_keys(run("Failed to connect to Wayland display")), [("x11", True)])    # Wayland is on already
+        self.assertEqual(self.hint_keys(run("libEGL warning: a", "MESA: error: b", "failed to open /dev/dri/x"), gpu=False), [("gpu", True)])   # once
+        self.assertEqual(self.hint_keys(run("Segmentation fault (core dumped)"), userns=False, gpu=False, net=False), [])
+
+    def test_hints_only_for_the_last_run_and_only_when_it_failed(self):
+        run = self.run_log
+        self.assertEqual(self.hint_keys(run("libEGL warning: x", code=0), gpu=False), [])
+        self.assertEqual(self.hint_keys(run("No usable sandbox!", code=None), userns=False), [])           # still running
+        self.assertEqual(self.hint_keys([], userns=False), [])
+        old, new = run("No usable sandbox!"), run("all fine now")
+        self.assertEqual(self.hint_keys(old + new, userns=False), [])
+        self.assertEqual(self.hint_keys(new + old, userns=False), [("userns", True)])
+        big = run(*(["x" * 5000] * 2000) + ["No usable sandbox!"])
+        self.assertEqual(self.hint_keys(big, userns=False), [("userns", True)])
+
+    def test_every_hint_names_a_real_switch(self):
+        G = self.G
+        for pat, key, want, title, why, needs in G["LOG_HINTS"]:
+            re.compile(pat)
+            self.assertIn(key, self.S["SCALARS"]); self.assertIsInstance(want, bool); self.assertTrue(title and why)
+            for k in needs: self.assertIn(k, self.S["SCALARS"])
+
+    def test_effective_switches_layers_defaults_then_default_conf_then_the_program(self):
+        G = self.G
+        os.makedirs(G["APPS"], exist_ok=True)
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("net=0\nx11=1\n")
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("x11=0\ncamera=1\n")
+        e = G["effective_switches"]("app")
+        self.assertEqual((e["net"], e["x11"], e["camera"], e["sound"]), (False, False, True, True))
+        self.assertEqual(G["effective_switches"](None)["x11"], True)
+        self.assertEqual(G["effective_switches"]("other")["x11"], True)
+
+    def test_log_lines_are_one_programs_or_all(self):
+        G = self.G
+        self.assertEqual(G["log_lines"](), [])
+        os.makedirs(os.path.dirname(G["LOG"]), exist_ok=True)
+        with open(G["LOG"], "w") as f: f.write("[t] [a] START allow=[]\n[b] x\n[t] [a] EXIT code=1\n")
+        self.assertEqual(len(G["log_lines"]()), 3); self.assertEqual(len(G["log_lines"]("a")), 2); self.assertEqual(G["log_lines"]("zz"), [])
+        os.makedirs(G["APPS"], exist_ok=True)
+        with open(G["LOG"], "w") as f: f.write("[t] [app] START allow=[net]\n[app] FATAL: No usable sandbox!\n[t] [app] EXIT code=1\n")
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("userns=0\n")
+        self.assertEqual([k for k, *_ in G["log_hints"](G["log_lines"]("app"), G["effective_switches"]("app"))], ["userns"])
+
     def test_every_sbx_switch_has_wording_and_the_same_default(self):
         self.assertEqual(set(self.G["SWITCHES"]), set(self.S["SCALARS"]), "sbx-gui and sbx list different switches")
         for k, (_, _, default) in self.G["SWITCHES"].items(): self.assertEqual(default, self.S["SCALARS"][k], k)

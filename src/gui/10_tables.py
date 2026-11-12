@@ -49,4 +49,22 @@ SHORT = {"net": "network", "wayland": "Wayland", "wayland_strict": "strict Wayla
          "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 LISTS = ("whitelist", "read_only")
+# Troubleshooting hints: a pattern in a failed run's log -> the one setting that usually fixes it. Each entry is
+# (pattern, setting, wanted value, title, why, only while these hold). A hint is shown only if the setting is not already as wanted.
+# Nothing is ever changed without a click.
+LOG_HINTS = [
+    (r"no usable sandbox|suid sandbox|setuid sandbox|failed to move to a new (user )?namespace|clone.{0,40}operation not permitted",
+     "userns", True, "Allow the program's own sandbox",
+     "The program tried to create its own sandbox and could not. Chromium, Electron and Flatpak programs need this.", {}),
+    (r"libegl warning|mesa: error|/dev/dri|failed to create (an )?(egl|gl)|no (suitable|available|compatible) (gpu|vulkan|adapter)",
+     "gpu", True, "Turn on the graphics card", "The program could not find a graphics device.", {}),
+    (r"failed to connect to (the )?wayland|wayland.{0,30}(connection|display).{0,30}(fail|refused)",
+     "wayland", True, "Turn on Wayland", "The program looked for Wayland, which is off. Better than X11 where it works.", {}),
+    (r"cannot open display|could not connect to display|unable to open display|platform plugin .?xcb|failed to connect to (the )?wayland",
+     "x11", True, "Turn on X11", "The program looks for X11. This weakens isolation, so use it only for this program.", {}),
+    (r"temporary failure in name resolution|name or service not known|network is unreachable",
+     "net", True, "Allow the network", "The program tried to use the network.", {}),
+    (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
+     "camera", True, "Allow the camera", "The program tried to open a camera.", {}),
+]
 CURRENT = []                                              # the scope (None or a name) of the page being shown
