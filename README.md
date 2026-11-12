@@ -100,7 +100,7 @@ For a program you downloaded and don't want to set up by hand:
 sbx desktop --install-opener     # once
 ```
 
-Now right-click a program file (a game or any other binary) and choose **Open With → Run in sbx**; it is also the default for program files that don't have the execute bit, which is how browsers save downloads. No terminal needed. `sbx open FILE` does the same from a shell.
+Now right-click a program file (a game or any other binary) and choose **Open With → Run in sbx**; it is also the default for program files that don't have the execute bit, which is how browsers save downloads. Shell scripts (`.sh`, such as self-extracting installers) get it under Open With too, but double-clicking one still opens your editor or runs it directly. No terminal needed. `sbx open FILE` does the same from a shell.
 
 A program with no settings file of its own (`~/.config/sbx/apps/NAME.conf`) starts with these defaults:
 

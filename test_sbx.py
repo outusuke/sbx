@@ -550,7 +550,8 @@ class Units(unittest.TestCase):
         with open(dest) as f: text = f.read()
         for must in ("Name=Run in sbx", "Exec=", " open %f", "application/x-executable;application/x-pie-executable;", "Terminal=false", "X-Sbx-Opener=true"):
             self.assertIn(must, text)
-        with open(log) as f: self.assertIn("default sbx-run.desktop application/x-executable application/x-pie-executable", f.read())
+        self.assertIn("application/x-shellscript;", text)                                                   # offered under Open With...
+        with open(log) as f: self.assertEqual(f.read().strip(), "default sbx-run.desktop application/x-executable application/x-pie-executable")   # ...but never made the default for .sh
         with open(f"{cfg}/mimeapps.list", "a") as f: f.write("application/x-executable=sbx-run.desktop;other.desktop;\n")
         with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(out): S["cmd_opener"](False)
         self.assertFalse(os.path.exists(dest))

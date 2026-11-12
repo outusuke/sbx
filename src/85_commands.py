@@ -150,7 +150,8 @@ def cmd_open(a):
 
 
 OPENER_ID = "sbx-run.desktop"
-OPENER_MIMES = ("application/x-executable", "application/x-pie-executable")
+OPENER_MIMES = ("application/x-executable", "application/x-pie-executable")      # offered, and the default for files without the execute bit
+OPENER_LISTED = ("application/x-shellscript",)                                    # only offered under Open With (self-extracting installers); your text editor stays the default
 
 
 def cmd_opener(install):
@@ -162,13 +163,13 @@ def cmd_opener(install):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, "w") as f:
             f.write("[Desktop Entry]\nType=Application\nName=Run in sbx\nComment=Run a downloaded program in the sbx sandbox\n"
-                    f"Exec={q} open %f\nMimeType={';'.join(OPENER_MIMES)};\nTerminal=false\nCategories=System;\n"
+                    f"Exec={q} open %f\nMimeType={';'.join(OPENER_MIMES + OPENER_LISTED)};\nTerminal=false\nCategories=System;\n"
                     "X-Sbx-Opener=true\n")
         xm = shutil.which("xdg-mime")
         if xm: subprocess.run([xm, "default", OPENER_ID, *OPENER_MIMES])
         else: warn("xdg-mime not found: \"Run in sbx\" is in Open With, but not the default")
         if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", os.path.dirname(dest)], stderr=subprocess.DEVNULL)
-        print(f"wrote {tilde(dest)}.\nProgram files now offer \"Run in sbx\" under Open With, and it is the default for files "
+        print(f"wrote {tilde(dest)}.\nProgram files and shell scripts now offer \"Run in sbx\" under Open With, and it is the default for program files "
               "without the execute bit. A file with the execute bit still starts directly when you double-click it.\n"
               "Undo with: sbx desktop --remove-opener")
         return
