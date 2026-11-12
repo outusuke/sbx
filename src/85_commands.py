@@ -121,6 +121,16 @@ def notify(title, body=""):
         except (OSError, subprocess.TimeoutExpired): pass
 
 
+def failure_reason(text, rc):
+    """The last few lines the program printed, as one line for a notification. Progress meters (\\r, 45%) are collapsed and
+    sbx's own notices ("sbx: ...") are left out, so they don't pass for the reason; they stay when nothing else was printed."""
+    segs = [re.sub(r"^(\s*\d+%)+\s*", "", x).strip() for x in re.split(r"[\r\n\x08]+", text)]
+    segs = [x for x in segs if x]
+    segs = [x for x in segs if not x.startswith("sbx:")] or segs
+    segs = [x for i, x in enumerate(segs) if i == 0 or x != segs[i - 1]]      # a repeated line says nothing new
+    return " ".join(segs[-3:]) or f"exit code {exit_code(rc)}"
+
+
 def cmd_open(a):
     """sbx open FILE: what 'Open with' calls. A program with no settings of its own gets: its folder (read-write, for saves
     and game data), game controllers, and the usual defaults. A program with a settings file gets exactly that file."""
@@ -144,8 +154,9 @@ def cmd_open(a):
     text = err.read().decode(errors="replace")
     sys.stderr.write(text)
     if rc != 0 and time.monotonic() - t0 < 15:                      # it never really started
-        lines = [l for l in text.splitlines() if l.strip()]
-        notify(f"{name} didn't start", " ".join(l.strip() for l in lines[-3:]) or f"exit code {exit_code(rc)}")
+        why = failure_reason(text, rc)
+        warn(f"{name} didn't start: {why}")
+        notify_failure(name, why)                                  # clicking it opens the log, like a start from the menu
     sys.exit(exit_code(rc))
 
 

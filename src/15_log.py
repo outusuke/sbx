@@ -41,17 +41,19 @@ def log(msg, name=None):
 
 
 # ---------------------------------------------------------------- notification
-def notify_failure(name):
-    """A critical notification that the program stopped right after starting. Where notify-send can do actions, clicking it
-    opens sbx-gui on this program's log. The waiting for the click happens in a detached child, so sbx can exit at once."""
+def notify_failure(name, reason=""):
+    """A critical notification that the program stopped right after starting, with the REASON when there is one. Where
+    notify-send can do actions, clicking it opens sbx-gui on this program's log. The waiting for the click happens in a
+    detached child, so sbx can exit at once."""
     ns = shutil.which("notify-send")
     if not ns: return
-    msg = f"{name} stopped right after starting. Click to open the log."
+    why = f" {reason[:300]}" if reason else ""
+    msg = f"{name} stopped right after starting.{why} Click to open the log."
     gui = shutil.which("sbx-gui") or os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "sbx-gui")
     try: actions = "--action" in subprocess.run([ns, "--help"], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError): actions = False
     if not actions or not os.access(gui, os.X_OK):
-        try: subprocess.run([ns, "-u", "critical", "-a", "sbx", "sbx", f"{name} stopped right after starting. See the log in sbx-gui."], timeout=5, stdin=subprocess.DEVNULL)
+        try: subprocess.run([ns, "-u", "critical", "-a", "sbx", "sbx", f"{name} stopped right after starting.{why} See the log in sbx-gui."], timeout=5, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError): pass
         return
     try:

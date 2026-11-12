@@ -833,6 +833,22 @@ class Logging(unittest.TestCase):
         out = self.lines()
         self.assertLess(len(out), 30); self.assertEqual(out[-1], "[app] (more output not logged)")
 
+    def test_failure_reason_skips_progress_meters_and_sbx_notices(self):
+        S = self.S
+        text = ("Uncompressing Lucas\nsbx: the compositor has no security-context support\n     0%     1%    99%  100%   MD5 checksums are OK.\r"
+                "     0%     1%  100%  ./setup_linux.sh: line 21:  1116 Aborted (core dumped) ./setup_linux 2> /dev/null\n")
+        why = S["failure_reason"](text, 134)
+        self.assertEqual(why, "Uncompressing Lucas MD5 checksums are OK. ./setup_linux.sh: line 21:  1116 Aborted (core dumped) ./setup_linux 2> /dev/null")
+        self.assertEqual(S["failure_reason"]("sbx: bubblewrap missing\n", 1), "sbx: bubblewrap missing")      # nothing else: keep it
+        self.assertEqual(S["failure_reason"]("", 3), "exit code 3")
+
+    def test_failure_notification_carries_the_reason(self):
+        S = self.S
+        with mock.patch("shutil.which", side_effect=lambda x: "/usr/bin/notify-send" if x == "notify-send" else None), \
+             mock.patch("subprocess.run", return_value=types.SimpleNamespace(stdout="no actions")) as run:
+            S["notify_failure"]("app", "it aborted")
+        self.assertTrue(any("app stopped right after starting. it aborted" in x for x in run.call_args_list[-1].args[0]))
+
     def test_failure_notification_without_actions_is_a_plain_popup(self):
         S = self.S
         with mock.patch("shutil.which", return_value=None), mock.patch("subprocess.run") as run:

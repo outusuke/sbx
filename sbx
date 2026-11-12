@@ -124,17 +124,19 @@ def log(msg, name=None):
 
 
 # ---------------------------------------------------------------- notification
-def notify_failure(name):
-    """A critical notification that the program stopped right after starting. Where notify-send can do actions, clicking it
-    opens sbx-gui on this program's log. The waiting for the click happens in a detached child, so sbx can exit at once."""
+def notify_failure(name, reason=""):
+    """A critical notification that the program stopped right after starting, with the REASON when there is one. Where
+    notify-send can do actions, clicking it opens sbx-gui on this program's log. The waiting for the click happens in a
+    detached child, so sbx can exit at once."""
     ns = shutil.which("notify-send")
     if not ns: return
-    msg = f"{name} stopped right after starting. Click to open the log."
+    why = f" {reason[:300]}" if reason else ""
+    msg = f"{name} stopped right after starting.{why} Click to open the log."
     gui = shutil.which("sbx-gui") or os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "sbx-gui")
     try: actions = "--action" in subprocess.run([ns, "--help"], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError): actions = False
     if not actions or not os.access(gui, os.X_OK):
-        try: subprocess.run([ns, "-u", "critical", "-a", "sbx", "sbx", f"{name} stopped right after starting. See the log in sbx-gui."], timeout=5, stdin=subprocess.DEVNULL)
+        try: subprocess.run([ns, "-u", "critical", "-a", "sbx", "sbx", f"{name} stopped right after starting.{why} See the log in sbx-gui."], timeout=5, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError): pass
         return
     try:
@@ -1275,6 +1277,16 @@ def notify(title, body=""):
         except (OSError, subprocess.TimeoutExpired): pass
 
 
+def failure_reason(text, rc):
+    """The last few lines the program printed, as one line for a notification. Progress meters (\\r, 45%) are collapsed and
+    sbx's own notices ("sbx: ...") are left out, so they don't pass for the reason; they stay when nothing else was printed."""
+    segs = [re.sub(r"^(\s*\d+%)+\s*", "", x).strip() for x in re.split(r"[\r\n\x08]+", text)]
+    segs = [x for x in segs if x]
+    segs = [x for x in segs if not x.startswith("sbx:")] or segs
+    segs = [x for i, x in enumerate(segs) if i == 0 or x != segs[i - 1]]      # a repeated line says nothing new
+    return " ".join(segs[-3:]) or f"exit code {exit_code(rc)}"
+
+
 def cmd_open(a):
     """sbx open FILE: what 'Open with' calls. A program with no settings of its own gets: its folder (read-write, for saves
     and game data), game controllers, and the usual defaults. A program with a settings file gets exactly that file."""
@@ -1298,8 +1310,9 @@ def cmd_open(a):
     text = err.read().decode(errors="replace")
     sys.stderr.write(text)
     if rc != 0 and time.monotonic() - t0 < 15:                      # it never really started
-        lines = [l for l in text.splitlines() if l.strip()]
-        notify(f"{name} didn't start", " ".join(l.strip() for l in lines[-3:]) or f"exit code {exit_code(rc)}")
+        why = failure_reason(text, rc)
+        warn(f"{name} didn't start: {why}")
+        notify_failure(name, why)                                  # clicking it opens the log, like a start from the menu
     sys.exit(exit_code(rc))
 
 
