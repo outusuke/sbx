@@ -31,6 +31,7 @@ GROUPS = [
         ("compat", "Graphics and toolkit variables", "Passes WGPU_*, MESA_*, SDL_*, QT_QPA_* and similar if set. Never tokens or other variables", False)]),
     ("Devices", [
         ("gpu", "Graphics card", "/dev/dri and NVIDIA devices", True),
+        ("gpu_render_only", "Graphics: render only", "Of /dev/dri, share only the render nodes that programs draw with, not the card nodes that can drive the display. Does not limit NVIDIA devices. Only matters while “Graphics card” (or ROCm) is on", False),
         ("sound", "Sound", "PipeWire and PulseAudio, which includes the microphone", True),
         ("alsa", "ALSA sound devices", "/dev/snd, for programs that don't use PipeWire or PulseAudio", False),
         ("camera", "Camera", "/dev/video*", False),
@@ -58,7 +59,7 @@ GROUPS = [
         ("allow_sensitive", "Allow sharing secret folders", "Lets you share ~/.ssh, ~/.gnupg and similar. Only if you really mean it", False)]),
 ]
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
-SHORT = {"net": "network", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics",
+SHORT = {"net": "network", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "userns": "user namespaces",
          "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm",
          "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
@@ -76,6 +77,9 @@ LOG_HINTS = [
      "The program tried to create its own sandbox and could not. Chromium, Electron and Flatpak programs need this.", {}),
     (r"libegl warning|mesa: error|/dev/dri|failed to create (an )?(egl|gl)|no (suitable|available|compatible) (gpu|vulkan|adapter)",
      "gpu", True, "Turn on the graphics card", "The program could not find a graphics device.", {}),
+    (r"libegl warning|mesa: error|/dev/dri|failed to create (an )?(egl|gl)|no (suitable|available|compatible) (gpu|vulkan|adapter)",
+     "gpu_render_only", False, "Turn off \"Graphics: render only\"",
+     "The program may need a graphics device that this mode hides.", {"gpu": True}),
     (r"failed to connect to (the )?wayland|wayland.{0,30}(connection|display).{0,30}(fail|refused)",
      "wayland", True, "Turn on Wayland", "The program looked for Wayland, which is off. Better than X11 where it works.", {}),
     (r"cannot open display|could not connect to display|unable to open display|platform plugin .?xcb|failed to connect to (the )?wayland",

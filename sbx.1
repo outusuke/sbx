@@ -120,6 +120,10 @@ Share the X11 socket. Weaker isolation.
 .B \-\-no\-gpu
 Hide /dev/dri and the NVIDIA devices.
 .TP
+.B \-\-gpu\-render\-only
+Of /dev/dri, share only the render nodes (renderD*) that programs draw with, not the card* nodes that can also
+drive the display. The NVIDIA devices are not affected.
+.TP
 .B \-\-no\-sound
 Hide PipeWire and PulseAudio, which includes the microphone.
 .TP
@@ -210,7 +214,7 @@ memory=2G
 .fi
 .RE
 .PP
-Switches take 0 or 1. Defaults: net=1, wayland=1, wayland_strict=0, x11=0, gpu=1, sound=1, portals=0, private=0,
+Switches take 0 or 1. Defaults: net=1, wayland=1, wayland_strict=0, x11=0, gpu=1, gpu_render_only=0, sound=1, portals=0, private=0,
 hostname=0, userns=1, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
 allow_sensitive=0, compat=0, tray=0, and the extra portals portal_screenshot, portal_screencast, portal_location,
 portal_shortcuts, portal_wallpaper, portal_launcher, portal_remote_desktop, portal_input_capture and

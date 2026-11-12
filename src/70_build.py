@@ -100,7 +100,10 @@ def build(prog, args, live=False, o=None):
                 else: warn("no usable cookie for this display in XAUTHORITY; not passing the file")
             if xsrc: late += ["--ro-bind", xsrc, xa]; env["XAUTHORITY"] = xa
     if cfg["gpu"] or cfg["rocm"]:
-        a += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
+        if cfg["gpu_render_only"]:      # render nodes are enough to draw; the card* nodes can also drive the display
+            for p in sorted(glob.glob("/dev/dri/renderD*")): a += ["--dev-bind", p, p]
+        else:
+            a += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
     if cfg["gpu"]:
         for p in sorted(glob.glob("/dev/nvidia*")): a += ["--dev-bind", p, p]
     if cfg["rocm"]: a += ["--dev-bind-try", "/dev/kfd", "/dev/kfd"]

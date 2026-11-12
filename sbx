@@ -61,7 +61,7 @@ TRAY_PIDS = range(2, 65)
 TRAY_IDS = range(1, 4)
 # Settings (key=value files) and their defaults. Lists: LISTS. Text values: LIMITS (a pattern each value must match).
 SCALARS = {"net": True, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
-           "sound": True, "portals": False, "hostname": False, "userns": True, "theme": True, "camera": False,
+           "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
            "compat": False, "tray": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
@@ -880,7 +880,10 @@ def build(prog, args, live=False, o=None):
                 else: warn("no usable cookie for this display in XAUTHORITY; not passing the file")
             if xsrc: late += ["--ro-bind", xsrc, xa]; env["XAUTHORITY"] = xa
     if cfg["gpu"] or cfg["rocm"]:
-        a += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
+        if cfg["gpu_render_only"]:      # render nodes are enough to draw; the card* nodes can also drive the display
+            for p in sorted(glob.glob("/dev/dri/renderD*")): a += ["--dev-bind", p, p]
+        else:
+            a += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
     if cfg["gpu"]:
         for p in sorted(glob.glob("/dev/nvidia*")): a += ["--dev-bind", p, p]
     if cfg["rocm"]: a += ["--dev-bind-try", "/dev/kfd", "/dev/kfd"]
@@ -1071,7 +1074,7 @@ def run(prog, args, opts):
 # ---------------------------------------------------------------- command line
 FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
-         "--no-gpu": ("gpu", False), "--no-sound": ("sound", False), "--portals": ("portals", True),
+         "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
          "--tray": ("tray", True), "--hostname": ("hostname", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
@@ -1094,6 +1097,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --net=none    no network                   --no-wayland   hide the Wayland socket\n"
          "  --private     private home erased on exit  --x11          share the X11 socket (weaker isolation)\n"
          "  --here        share the current folder     --no-gpu       hide /dev/dri and NVIDIA devices\n"
+         "  --gpu-render-only      of /dev/dri share only the render nodes (renderD*), not the display card nodes\n"
          "  --no-sound    hide PipeWire/PulseAudio     --portals      notifications and basic portals (xdg-dbus-proxy)\n"
          "  --hostname    hostname 'sbx' inside        --no-userns    the program can't create user namespaces\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"

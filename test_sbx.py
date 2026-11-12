@@ -38,7 +38,8 @@ FAKE_FILES = {"/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/sudoers", "/e
               "/etc/ssh/ssh_host_ed25519_key", "/run/user/1000/xauth", "/etc/hostname", "/etc/hosts"}
 FAKE_DIRS = {"/run/systemd/resolve", "/etc/sudoers.d", "/etc/ssl/private", "/root", "/mnt", "/media", "/srv", "/var/tmp",
              "/home", "/var/log", "/var/mail", "/var/spool/mail", "/sys/devices/virtual/dmi/id", "/sys/class/net"}
-FAKE_GLOBS = {"/etc/ssh/ssh_host_*_key": ["/etc/ssh/ssh_host_ed25519_key"], "/dev/video*": ["/dev/video0"]}
+FAKE_GLOBS = {"/etc/ssh/ssh_host_*_key": ["/etc/ssh/ssh_host_ed25519_key"], "/dev/video*": ["/dev/video0"],
+              "/dev/dri/renderD*": ["/dev/dri/renderD128", "/dev/dri/renderD129"]}
 NO_SECURITY_CONTEXT = {"wl_supported": lambda p: False}
 SCENARIOS = [                                   # (title, program, flags, overrides of sbx's own functions)
     ("default", "firefox", [], {}),
@@ -48,6 +49,7 @@ SCENARIOS = [                                   # (title, program, flags, overri
     ("program inside your home", "/home/user/apps/foo/bin/foo", [], {}),
     ("shared folders, parent read-only", "firefox",
      [f"--whitelist={FIX}/a/b", f"--read-only={FIX}/a", f"--whitelist={FIX}/c", "--here"], {"share_dir": lambda d: f"{FIX}/a/b"}),
+    ("render-only graphics", "firefox", ["--gpu-render-only"], {}),
     ("devices", "firefox", ["--camera", "--alsa", "--input", "--kvm", "--rocm", "--printing"], {}),
     ("environment", "firefox", ["--env=EXTRA_VAR", "--setenv=FOO=bar", "--setenv=HOME=/elsewhere", "--env=SECRET_TOKEN"], {}),
     ("limits", "firefox", ["--memory=2G", "--tasks=512", "--cpu=200%"], {}),
@@ -142,6 +144,16 @@ class Snapshot(unittest.TestCase):
             for x, (_, p) in enumerate(shared):
                 for y, (_, q) in enumerate(shared):
                     if q.startswith(p + "/"): self.assertLess(x, y, f"{title}: {p} must be mounted before {q}")
+
+    def test_render_only_graphics_binds_no_card_nodes(self):
+        def dri(*flags):
+            _, a = fake_preview("firefox", list(flags))
+            return [a[i + 2] for i in range(len(a) - 2) if a[i] in ("--dev-bind", "--dev-bind-try") and a[i + 2].startswith("/dev/dri")]
+        self.assertEqual(dri(), ["/dev/dri"])
+        self.assertEqual(dri("--gpu-render-only"), ["/dev/dri/renderD128", "/dev/dri/renderD129"])
+        self.assertEqual(dri("--no-gpu", "--gpu-render-only"), [])                        # no graphics at all wins over render-only
+        self.assertEqual(dri("--no-gpu", "--rocm", "--gpu-render-only"), ["/dev/dri/renderD128", "/dev/dri/renderD129"])   # ROCm draws on render nodes too
+        self.assertEqual(dri("--no-gpu", "--rocm"), ["/dev/dri"])
 
     def test_secrets_are_blanked(self):
         _, a = fake_preview("firefox", [])
@@ -915,6 +927,10 @@ class Gui(unittest.TestCase):
         self.assertEqual(self.hint_keys(run("FATAL: No usable sandbox!"), userns=True), [])               # already on: nothing to suggest
         self.assertEqual(self.hint_keys(run("libEGL warning: failed to open /dev/dri/renderD128"), gpu=False), [("gpu", True)])
         self.assertEqual(self.hint_keys(run("curl: (6) Temporary failure in name resolution"), net=False), [("net", True)])
+        gl = run("MESA: error: failed to open /dev/dri/card0")
+        self.assertEqual(self.hint_keys(gl, gpu=True, gpu_render_only=True), [("gpu_render_only", False)])
+        self.assertEqual(self.hint_keys(gl, gpu=True, gpu_render_only=False), [])
+        self.assertEqual(self.hint_keys(gl, gpu=False, gpu_render_only=True), [("gpu", True)])           # render-only means nothing without graphics
         self.assertEqual(self.hint_keys(run("cannot open /dev/video0"), camera=False), [("camera", True)])
         self.assertEqual(self.hint_keys(run("Error: cannot open display: :0")), [("x11", True)])
         self.assertEqual(self.hint_keys(run("Failed to connect to Wayland display"), wayland=False), [("wayland", True), ("x11", True)])

@@ -4,7 +4,7 @@
 # ---------------------------------------------------------------- command line
 FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
-         "--no-gpu": ("gpu", False), "--no-sound": ("sound", False), "--portals": ("portals", True),
+         "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
          "--tray": ("tray", True), "--hostname": ("hostname", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
@@ -27,6 +27,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --net=none    no network                   --no-wayland   hide the Wayland socket\n"
          "  --private     private home erased on exit  --x11          share the X11 socket (weaker isolation)\n"
          "  --here        share the current folder     --no-gpu       hide /dev/dri and NVIDIA devices\n"
+         "  --gpu-render-only      of /dev/dri share only the render nodes (renderD*), not the display card nodes\n"
          "  --no-sound    hide PipeWire/PulseAudio     --portals      notifications and basic portals (xdg-dbus-proxy)\n"
          "  --hostname    hostname 'sbx' inside        --no-userns    the program can't create user namespaces\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"

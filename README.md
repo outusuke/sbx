@@ -72,6 +72,7 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | `--wayland-strict` | no Wayland at all if the compositor can't restrict it |
 | `--x11` | share the X11 socket (weaker isolation) |
 | `--no-gpu` | hide `/dev/dri` and NVIDIA devices |
+| `--gpu-render-only` | of `/dev/dri` share only the render nodes (`renderD*`) that programs draw with, not the `card*` nodes that can also drive the display. NVIDIA devices are not affected. Setting: `gpu_render_only=1` |
 | `--no-sound` | hide PipeWire/PulseAudio (this includes the microphone) |
 | `--camera` `--alsa` `--input` `--kvm` `--rocm` `--printing` | share `/dev/video*` (and the Camera portal), `/dev/snd`, `/dev/input` (plus `/run/udev`, so controllers are recognised), `/dev/kvm`, `/dev/kfd`, the CUPS socket |
 | `--tray` | let the program show a tray icon and answer media keys, through `xdg-dbus-proxy`. Works without `--portals`; only the tray and media-key names are allowed on the bus |
@@ -130,7 +131,7 @@ setenv=GTK_THEME=Adwaita:dark
 memory=2G
 ```
 
-Switches (all `0`/`1`), with defaults: `net=1`, `wayland=1`, `wayland_strict=0`, `x11=0`, `gpu=1`, `sound=1`, `portals=0`, `private=0`, `hostname=0`, `userns=1`, `theme=1`, `camera=0`, `alsa=0`, `input=0`, `kvm=0`, `rocm=0`, `printing=0`, `ssh_agent=0`, `allow_sensitive=0`, `compat=0`, `tray=0`, and the extra portals `portal_screenshot`, `portal_screencast`, `portal_location`, `portal_shortcuts`, `portal_wallpaper`, `portal_launcher`, `portal_remote_desktop`, `portal_input_capture`, `portal_secret` (all `0`, and only used when `portals=1`). Anything else (`net=maybe`) is reported with its file and line number and ignored, instead of silently counting as on or off.
+Switches (all `0`/`1`), with defaults: `net=1`, `wayland=1`, `wayland_strict=0`, `x11=0`, `gpu=1`, `gpu_render_only=0`, `sound=1`, `portals=0`, `private=0`, `hostname=0`, `userns=1`, `theme=1`, `camera=0`, `alsa=0`, `input=0`, `kvm=0`, `rocm=0`, `printing=0`, `ssh_agent=0`, `allow_sensitive=0`, `compat=0`, `tray=0`, and the extra portals `portal_screenshot`, `portal_screencast`, `portal_location`, `portal_shortcuts`, `portal_wallpaper`, `portal_launcher`, `portal_remote_desktop`, `portal_input_capture`, `portal_secret` (all `0`, and only used when `portals=1`). Anything else (`net=maybe`) is reported with its file and line number and ignored, instead of silently counting as on or off.
 
 Lists that add up across the two files: `whitelist`, `read_only`, `env`, `setenv`, `allow_syscall`. Limits: `memory`, `tasks`, `cpu`; an empty value in a program's file cancels the default's. Command-line flags beat the files. Flags can only change a setting in the direction shown in the table above (for example, there is no flag to turn the network back on); `--ignore-config` starts from the built-in defaults.
 
