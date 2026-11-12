@@ -860,6 +860,42 @@ class Logging(unittest.TestCase):
         self.assertIn("critical", sent); self.assertTrue(any("app stopped" in x for x in sent))
 
 
+class JournalTag(unittest.TestCase):
+    def reconnected(self, set_env):
+        with tempfile.TemporaryDirectory() as d:
+            path = f"{d}/journal"
+            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); srv.bind(path); srv.listen(2); srv.settimeout(10)
+            # The fake launcher's stream is a connection to the same kind of socket, so the test can tell it is "the journal"
+            code = (f"import os, socket, sys\nns = {{'__name__': 'x'}}\nexec(compile(open({HERE + '/sbx'!r}).read(), 'sbx', 'exec'), ns)\n"
+                    f"c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); c.connect({path!r})\n"
+                    "os.dup2(c.fileno(), 1); os.dup2(c.fileno(), 2)\n"
+                    "st = os.fstat(1)\n" + ("os.environ['JOURNAL_STREAM'] = f'{st.st_dev}:{st.st_ino}'\n" if set_env else "os.environ.pop('JOURNAL_STREAM', None)\n") +
+                    f"ns['journal_tag']('myapp', {path!r})\nsys.stdout.write('hello\\n'); sys.stdout.flush()\n"
+                    "sys.stderr.write('oops\\n'); sys.stderr.flush()\n")
+            p = subprocess.Popen([sys.executable, "-c", code])
+            old, _ = srv.accept()                         # the launcher's own connection: it stays quiet
+            new, _ = srv.accept(); new.settimeout(10)     # the one journal_tag opens
+            data = b""
+            while True:
+                chunk = new.recv(4096)
+                if not chunk: break
+                data += chunk
+            p.wait(timeout=10); old.close(); new.close(); srv.close()
+        return data
+
+    def test_journal_streams_are_reconnected_with_the_program_name(self):
+        self.assertEqual(self.reconnected(True), b"myapp\n\n6\n0\n0\n0\n0\nhello\noops\n")
+
+    def test_journal_streams_are_found_without_JOURNAL_STREAM(self):
+        self.assertEqual(self.reconnected(False), b"myapp\n\n6\n0\n0\n0\n0\nhello\noops\n")
+
+    def test_nothing_changes_when_not_started_from_the_journal(self):
+        S = load_sbx()
+        with mock.patch.dict(os.environ, clear=False):
+            os.environ.pop("JOURNAL_STREAM", None)
+            S["journal_tag"]("myapp", "/nonexistent/journal")      # no stream to match: must not even try to connect
+
+
 class Gui(unittest.TestCase):
     """sbx-gui's settings logic, with GTK stubbed out (the window itself can't be tested here)."""
     def setUp(self):

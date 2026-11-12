@@ -137,6 +137,7 @@ def cmd_open(a):
     if len(a) != 1 or a[0].startswith("-"): die("usage: sbx open FILE")
     f = os.path.abspath(a[0])
     name = clean(os.path.basename(f))
+    journal_tag(name)
     if not os.path.isfile(f): notify(f"Can't open {name}", "no such file"); sys.exit(1)
     flags = []
     if not os.access(f, os.X_OK) and not elf_interpreter(f):
