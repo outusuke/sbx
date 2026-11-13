@@ -21,6 +21,12 @@ class App(Adw.Application):
 
 
 if __name__ == "__main__":
+    for flag, on in (("--install-menu", True), ("--remove-menu", False)):
+        if flag in sys.argv[1:]:                         # no window: what `sbx desktop --install-menu` runs
+            try: set_menu_entry(on)
+            except (OSError, subprocess.SubprocessError) as e: sys.exit(f"sbx-gui: {getattr(e, 'strerror', None) or e}")
+            print(f"wrote {tilde(MENU_DESKTOP)}" if on else "removed sbx from the app menu")
+            sys.exit(0)
     load_schema()
     argv = sys.argv[:]
     target, trouble = False, None                        # sbx-gui NAME opens that program, --default the defaults, --log [NAME] the log

@@ -15,6 +15,8 @@ complete -c sbx -f -n "__fish_seen_subcommand_from show" -a "(__sbx_apps)"
 complete -c sbx -f -n "__fish_seen_subcommand_from clean" -a "(__sbx_homes)"
 complete -c sbx -f -n "__fish_seen_subcommand_from stop" -a "(__sbx_homes)"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l install-opener -d "Add \"Run in sbx\" to Open With"
+complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l install-menu -d "Add sbx-gui to the app menu"
+complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l remove-menu -d "Remove it again"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l remove-opener -d "Remove it again"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l remove -d "Remove a launcher made by sbx"
 # options (before the program)

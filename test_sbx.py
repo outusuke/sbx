@@ -802,6 +802,31 @@ class Units(unittest.TestCase):
             self.assertIsNone(of(bad), bad)
         self.assertEqual(of("/tmp/x/game"), "/tmp/x")
 
+    def test_menu_commands(self):
+        S, h = self.S, self.home
+        desk = f"{h}/.local/share/applications/org.sbx.Gui.desktop"; icon = f"{h}/.local/share/icons/hicolor/scalable/apps/org.sbx.Gui.svg"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_menu"](False)
+        self.assertIn("nothing to remove", out.getvalue())
+        self.write(".local/share/applications/org.sbx.Gui.desktop", "x"); self.write(".local/share/icons/hicolor/scalable/apps/org.sbx.Gui.svg", "x")
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}), contextlib.redirect_stdout(out): S["cmd_desktop"](["--remove-menu"])
+        self.assertFalse(os.path.exists(desk) or os.path.exists(icon))
+        def fake(uid, mode):                                                                                 # which sbx-gui counts: root-owned and not writable by others
+            real_stat = os.stat
+            def stat(p, *a, **k):
+                return os.stat_result((mode, 0, 0, 1, uid, uid, 0, 0, 0, 0)) if str(p).endswith("/sbx-gui") else real_stat(p, *a, **k)
+            return stat
+        for uid, mode in ((1000, 0o100755), (0, 0o100775), (0, 0o100757)):
+            with mock.patch("os.stat", fake(uid, mode)), mock.patch.object(S["subprocess"], "run") as run, \
+                 contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                S["cmd_menu"](True)
+            run.assert_not_called()
+        with mock.patch("os.stat", fake(0, 0o100755)), mock.patch.object(S["subprocess"], "run", return_value=mock.Mock(returncode=0)) as run, \
+             self.assertRaises(SystemExit) as r:
+            S["cmd_menu"](True)
+        self.assertEqual(r.exception.code, 0)
+        self.assertEqual(run.call_args[0][0], ["/usr/local/bin/sbx-gui", "--install-menu"])
+
     def test_opener_install_and_remove(self):
         S, h = self.S, self.home
         bindir = f"{self.tmp}/bin"; os.makedirs(bindir)
@@ -821,6 +846,7 @@ class Units(unittest.TestCase):
         for must in ("Name=Run in sbx", "Exec=", " open %f", "application/x-executable;application/x-pie-executable;", "Terminal=false", "X-Sbx-Opener=true"):
             self.assertIn(must, text)
         self.assertIn("application/x-shellscript;", text)                                                   # offered under Open With...
+        self.assertIn("NoDisplay=true\n", text)                                                             # ...but not shown in the app menu
         with open(log) as f: self.assertEqual(f.read().strip(), "default sbx-run.desktop application/x-executable application/x-pie-executable")   # ...but never made the default for .sh
         with open(f"{cfg}/mimeapps.list", "a") as f: f.write("application/x-executable=sbx-run.desktop;other.desktop;\n")
         with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(out): S["cmd_opener"](False)

@@ -24,7 +24,7 @@ _sbx() {
             clean) (( CURRENT == i + 1 )) && _sbx_homes; return ;;
             stop) (( CURRENT == i + 1 )) && _sbx_homes; return ;;
             doctor|schema|list) return ;;
-            desktop) compadd -- --install-opener --remove-opener --remove; return ;;
+            desktop) compadd -- --install-opener --remove-opener --install-menu --remove-menu --remove; return ;;
             *) _files; return ;;                          # the program's own arguments
         esac
     done

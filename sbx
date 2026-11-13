@@ -1284,6 +1284,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx open FILE                          run a downloaded program with sensible defaults (for \"Open with\")\n"
          "sbx desktop NAME | --remove NAME       make a launcher (NAME.desktop) start the program through sbx\n"
          "sbx desktop --install-opener           add \"Run in sbx\" to your file manager's Open With (--remove-opener undoes it)\n"
+         "sbx desktop --install-menu             add sbx-gui to your app menu (--remove-menu undoes it)\n"
          "options (before the program; most also exist as a setting, e.g. net=0, x11=1):\n"
          "  --net=none    no network                   --no-wayland   hide the Wayland socket\n"
          "  --net-private internet, but not this computer's own services (localhost); needs pasta\n"
@@ -1437,8 +1438,27 @@ def rewrite_desktop(text, sbx):
     return "\n".join(out) + "\n", notes
 
 
+def cmd_menu(install):
+    """sbx desktop --install-menu: put sbx-gui in the app menu. The launcher is written by the installed sbx-gui itself, and only
+    a root-owned copy counts (see menu_exec in sbx-gui), so nothing you can write to is ever started from the menu."""
+    if not install:
+        gone = False
+        for p in (f"{HOME}/.local/share/applications/org.sbx.Gui.desktop", f"{HOME}/.local/share/icons/hicolor/scalable/apps/org.sbx.Gui.svg"):
+            try: os.unlink(p); gone = True
+            except OSError: pass
+        if gone and shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", f"{HOME}/.local/share/applications"], stderr=subprocess.DEVNULL)
+        print("removed sbx from the app menu" if gone else "nothing to remove")
+        return
+    for d in ("/usr/local/bin", "/usr/bin"):
+        try: st = os.stat(d + "/sbx-gui")
+        except OSError: continue
+        if st.st_uid == 0 and not st.st_mode & 0o022: sys.exit(subprocess.run([d + "/sbx-gui", "--install-menu"]).returncode)
+    die("sbx-gui is not installed (a root-owned copy is needed). Install it first: sudo install -m755 sbx-gui /usr/local/bin/")
+
+
 def cmd_desktop(a):
     if a in (["--install-opener"], ["--remove-opener"]): return cmd_opener(a[0] == "--install-opener")
+    if a in (["--install-menu"], ["--remove-menu"]): return cmd_menu(a[0] == "--install-menu")
     remove = "--remove" in a
     a = [x for x in a if x != "--remove"]
     if len(a) != 1 or a[0].startswith("-"): die("usage: sbx desktop NAME   |   sbx desktop --remove NAME   (NAME = the launcher's id, e.g. firefox or org.mozilla.firefox)")
@@ -1550,7 +1570,7 @@ def cmd_opener(install):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, "w") as f:
             f.write("[Desktop Entry]\nType=Application\nName=Run in sbx\nComment=Run a downloaded program in the sbx sandbox\n"
-                    f"Exec={q} open %f\nMimeType={';'.join(OPENER_MIMES + OPENER_LISTED)};\nTerminal=false\nCategories=System;\n"
+                    f"Exec={q} open %f\nMimeType={';'.join(OPENER_MIMES + OPENER_LISTED)};\nTerminal=false\nNoDisplay=true\nCategories=System;\n"
                     "X-Sbx-Opener=true\n")
         xm = shutil.which("xdg-mime")
         if xm: subprocess.run([xm, "default", OPENER_ID, *OPENER_MIMES])

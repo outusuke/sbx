@@ -16,7 +16,7 @@ _sbx() {
             clean) COMPREPLY=($(compgen -W "$(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
             stop) COMPREPLY=($(compgen -W "$(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
             doctor|schema|list) return ;;
-            desktop) COMPREPLY=($(compgen -W "--install-opener --remove-opener --remove" -- "$cur")); return ;;
+            desktop) COMPREPLY=($(compgen -W "--install-opener --remove-opener --install-menu --remove-menu --remove" -- "$cur")); return ;;
             *) COMPREPLY=($(compgen -f -- "$cur")); return ;;
         esac
     done

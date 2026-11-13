@@ -60,6 +60,7 @@ sbx open FILE                            run a downloaded program with sensible 
 sbx desktop NAME                         make a launcher (.desktop file) start the program through sbx
 sbx desktop --remove NAME                undo that
 sbx desktop --install-opener             add "Run in sbx" to your file manager's Open With (--remove-opener undoes it)
+sbx desktop --install-menu               add sbx-gui to your app menu (--remove-menu undoes it; needs sbx-gui installed in /usr/local/bin)
 ```
 
 Options go before the program name. A program named like a command: `sbx -- clean`. `man sbx` has the full text.
