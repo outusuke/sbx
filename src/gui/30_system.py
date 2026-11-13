@@ -3,12 +3,12 @@
 
 MENU_DESKTOP = HOME + "/.local/share/applications/org.sbx.Gui.desktop"
 MENU_ICON = HOME + "/.local/share/icons/hicolor/scalable/apps/org.sbx.Gui.svg"
-MENU_ENTRY = f"""[Desktop Entry]
+MENU_ENTRY = """[Desktop Entry]
 Type=Application
 Name=sbx
 GenericName=Sandbox Settings
 Comment=Edit the settings of programs run in the sbx sandbox
-Exec={os.path.realpath(sys.argv[0]) if os.path.basename(sys.argv[0]) == "sbx-gui" else "/usr/local/bin/sbx-gui"}
+Exec=@EXEC@
 Icon=org.sbx.Gui
 Terminal=false
 StartupNotify=true
@@ -72,12 +72,25 @@ def menu_entry_exists():
     return os.path.isfile(MENU_DESKTOP)
 
 
+def menu_exec():
+    """The installed sbx-gui the launcher should start. Only a root-owned copy that nobody else can write to counts, so a
+    program running as you can't swap the launcher's target for its own code; a copy in your home or the download folder
+    never does."""
+    for d in ("/usr/local/bin", "/usr/bin"):
+        path = d + "/sbx-gui"
+        try: st = os.stat(path)
+        except OSError: continue
+        if st.st_uid == 0 and not st.st_mode & 0o022: return path
+    raise OSError(errno.ENOENT, "Install sbx-gui first: sudo install -m755 sbx-gui /usr/local/bin/")
+
+
 def set_menu_entry(on):
-    """Add or remove sbx-gui's own launcher in the user's app menu (no root needed)."""
+    """Add or remove sbx-gui's own launcher in the user's app menu (the launcher file needs no root)."""
     if on:
+        entry = MENU_ENTRY.replace("@EXEC@", menu_exec())
         os.makedirs(os.path.dirname(MENU_DESKTOP), exist_ok=True)
         os.makedirs(os.path.dirname(MENU_ICON), exist_ok=True)
-        for path, text in ((MENU_ICON, MENU_SVG), (MENU_DESKTOP, MENU_ENTRY)):
+        for path, text in ((MENU_ICON, MENU_SVG), (MENU_DESKTOP, entry)):
             with open(path + ".tmp", "w") as f: f.write(text)
             os.replace(path + ".tmp", path)
     else:

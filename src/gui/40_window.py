@@ -61,6 +61,7 @@ class Win(Adw.ApplicationWindow):
                 self.toasts.add_toast(Adw.Toast(title="Added to the app menu" if r.get_active() else "Removed from the app menu"))
             except (OSError, subprocess.SubprocessError) as e:
                 self.toasts.add_toast(Adw.Toast(title=f"Could not change it: {getattr(e, 'strerror', None) or e}"))
+                menu.handler_block_by_func(on_menu); menu.set_active(menu_entry_exists()); menu.handler_unblock_by_func(on_menu)
         menu.connect("notify::active", on_menu)
         mg.add(menu)
         page.add(mg)
