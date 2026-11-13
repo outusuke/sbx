@@ -2,6 +2,14 @@
 #| Layer rule: this fragment may use names from lower-numbered fragments (and its own) only; build.py enforces it.
 
 # ---------------------------------------------------------------- the bwrap command
+def fake_passwd():
+    """A minimal /etc/passwd for privacy=1: you (no full name), root and nobody. Written from scratch, not filtered from the
+    real file, so neither your real name (the GECOS field) nor the other accounts on this computer can come through."""
+    me = f"{USER}:x:{os.getuid()}:{os.getgid()}::{HOME}:{_pw.pw_shell or '/bin/sh'}\n"
+    root = "root:x:0:0:root:/root:/usr/sbin/nologin\n"
+    return (me if os.getuid() == 0 else root + me) + "nobody:x:65534:65534:Nobody:/:/usr/sbin/nologin\n"
+
+
 def build(prog, args, live=False, o=None):
     """The bwrap command. live=True also creates what a real run needs (machine-id, proxy, X cookie, listening sockets...)
     and returns it in `state` so run() can clean up; preview (live=False) only prints."""
@@ -171,6 +179,8 @@ def build(prog, args, live=False, o=None):
     if cfg["hostname"]:                         # /etc/hostname and /etc/hosts would still tell the real name
         if os.path.isfile("/etc/hostname"): a += data("/etc/hostname", "sbx\n", "hostname")
         if os.path.isfile("/etc/hosts"): a += data("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n127.0.1.1 sbx\n", "hosts")
+    if cfg["privacy"] and os.path.isfile("/etc/passwd"):      # onto the file's real path: bwrap can't mount on a symlink (NixOS)
+        a += data(os.path.realpath("/etc/passwd"), fake_passwd(), "passwd")
     if priv and os.path.isfile("/etc/resolv.conf"):      # the only name server pasta answers; onto the link's target, bwrap can't mount on a symlink
         a += data(resolv_target(), f"nameserver {DNS_FWD}\n", "resolv.conf")
     if os.path.isfile("/etc/machine-id"):

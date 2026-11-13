@@ -57,12 +57,13 @@ GROUPS = [
     ("Privacy and safety", [
         ("private", "Private home erased on exit", "Nothing the program saves in its home is kept", False),
         ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),
+        ("privacy", "Hide your real name", "The program sees a minimal /etc/passwd: your username, root and nobody. Your full name and the other accounts on this computer stay out", False),
         ("userns", "Allow user namespaces", "Turn off to stop the program creating nested sandboxes. Chromium, Electron and Flatpak need this on", True),
         ("allow_sensitive", "Allow sharing secret folders", "Lets you share ~/.ssh, ~/.gnupg and similar. Only if you really mean it", False)]),
 ]
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
-         "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "userns": "user namespaces",
+         "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces",
          "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm",
          "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
          "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",

@@ -186,6 +186,10 @@ remote\-desktop, input\-capture or secret (settings: portal_screenshot=1 and so 
 .B \-\-hostname
 The program sees the hostname "sbx", also in /etc/hostname and /etc/hosts.
 .TP
+.B \-\-privacy
+The program sees a minimal /etc/passwd: your user name, root and nobody. Your full name (the GECOS field) and the other
+accounts on this computer are not in it.
+.TP
 .B \-\-no\-userns
 The program cannot create user namespaces. Programs that build their own sandbox (Chromium, Electron, Flatpak,
 nested bubblewrap) need them.
@@ -239,7 +243,7 @@ memory=2G
 .RE
 .PP
 Switches take 0 or 1. Defaults: net=1, net_private=0, wayland=1, wayland_strict=0, x11=0, gpu=1, gpu_render_only=0, sound=1, portals=0, private=0,
-hostname=0, userns=1, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
+hostname=0, privacy=0, userns=1, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
 allow_sensitive=0, compat=0, tray=0, and the extra portals portal_screenshot, portal_screencast, portal_location,
 portal_shortcuts, portal_wallpaper, portal_launcher, portal_remote_desktop, portal_input_capture and
 portal_secret (all 0, and only used when portals=1). Anything else, such as net=maybe, is reported with its file

@@ -31,6 +31,7 @@ complete -c sbx -n $c -l no-sound -d "Hide PipeWire and PulseAudio"
 complete -c sbx -n $c -l portals -d "Notifications and basic portals"
 complete -c sbx -n $c -l tray -d "Tray icon and media keys"
 complete -c sbx -n $c -l hostname -d "Hostname 'sbx' inside"
+complete -c sbx -n $c -l privacy -d "Minimal /etc/passwd: no real name, no other accounts"
 complete -c sbx -n $c -l no-userns -d "No nested user namespaces"
 complete -c sbx -n $c -l no-theme -d "Don't show your fonts, icons and GTK settings"
 for d in camera alsa input kvm rocm printing ssh-agent

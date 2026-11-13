@@ -421,6 +421,45 @@ class Units(unittest.TestCase):
         S["teardown"](st)
         self.assertFalse(os.path.exists(boot))
 
+    def test_privacy_binds_a_minimal_passwd_without_the_full_name(self):
+        S = self.S
+        os.makedirs(f"{self.tmp}/run4")
+        S["runtime_dir"] = lambda: f"{self.tmp}/run4"
+        S["bwrap_has"] = lambda flag: True
+        text = S["fake_passwd"]()
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 2 if os.getuid() == 0 else 3)       # you, root (which may be you), nobody: no other account
+        mine = [l for l in lines if l.split(":")[0] == S["USER"]]
+        self.assertEqual(len(mine), 1)
+        for l in lines: self.assertEqual(len(l.split(":")), 7)           # a valid passwd line, GECOS field empty for you
+        self.assertEqual(mine[0].split(":")[4], "")
+        self.assertEqual(sorted(l.split(":")[0] for l in lines), sorted({S["USER"], "root", "nobody"}))
+        with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}):
+            _, off, st0 = S["build"]("/bin/true", [], True, {})
+            _, on, st1 = S["build"]("/bin/true", [], True, {"privacy": True})
+        self.addCleanup(lambda: [f.close() for f in st0["keep"] + st1["keep"]])
+        real = os.path.realpath("/etc/passwd")
+        triples = lambda cmd: [cmd[i:i + 3] for i in range(len(cmd) - 2)]
+        self.assertFalse(any(t[0] == "--ro-bind" and t[2] == real for t in triples(off)), "privacy is off by default")
+        fake = f"{self.tmp}/run4/sbx/{os.getpid()}.passwd"
+        self.assertIn(["--ro-bind", fake, real], triples(on))
+        with open(fake) as f: self.assertEqual(f.read(), text)
+        self.assertEqual(os.stat(fake).st_mode & 0o777, 0o600)
+        S["teardown"](st1); S["teardown"](st0)
+        self.assertFalse(os.path.exists(fake))
+
+    def test_privacy_is_in_the_tables_and_its_stale_helper_file_is_swept(self):
+        S = self.S
+        self.assertIs(S["SCALARS"]["privacy"], False)                    # off by default
+        self.assertEqual(S["FLAGS"]["--privacy"], ("privacy", True))
+        os.makedirs(f"{self.tmp}/run5/sbx")
+        S["runtime_dir"] = lambda: f"{self.tmp}/run5"
+        dead = 2 ** 22 + 12345                                           # above pid_max: no such process
+        stale = f"{self.tmp}/run5/sbx/{dead}.passwd"
+        open(stale, "w").close()
+        S["sweep_stale"]()
+        self.assertFalse(os.path.exists(stale))
+
     def test_net_private_is_a_switch_a_flag_and_needs_the_network(self):
         S = self.S
         self.assertIs(S["SCALARS"]["net_private"], False)                                 # off unless asked for
@@ -1654,6 +1693,11 @@ class Isolation(unittest.TestCase):
         import json
         self.assertIn("hostname", json.loads(self.sbx_run("schema").stdout)["switches"])
         self.assertIn("net_private", json.loads(self.sbx_run("schema").stdout)["switches"])
+
+    def test_privacy_is_a_switch_and_a_flag(self):
+        import json
+        self.assertIn("privacy", json.loads(self.sbx_run("schema").stdout)["switches"])
+        self.assertIn("--privacy", self.sbx_run("--help").stdout + self.sbx_run("--help").stderr)
 
     def test_clean(self):
         os.makedirs(f"{self.home}/.sbx-homes/cleantest/sub"); os.chmod(f"{self.home}/.sbx-homes/cleantest/sub", 0o500)

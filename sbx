@@ -61,7 +61,7 @@ TRAY_PIDS = range(2, 65)
 TRAY_IDS = range(1, 4)
 # Settings (key=value files) and their defaults. Lists: LISTS. Text values: LIMITS (a pattern each value must match).
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
-           "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "userns": True, "theme": True, "camera": False,
+           "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
            "compat": False, "tray": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
@@ -864,6 +864,14 @@ def check_origin(name, real, rebind=False):
 
 
 # ---------------------------------------------------------------- the bwrap command
+def fake_passwd():
+    """A minimal /etc/passwd for privacy=1: you (no full name), root and nobody. Written from scratch, not filtered from the
+    real file, so neither your real name (the GECOS field) nor the other accounts on this computer can come through."""
+    me = f"{USER}:x:{os.getuid()}:{os.getgid()}::{HOME}:{_pw.pw_shell or '/bin/sh'}\n"
+    root = "root:x:0:0:root:/root:/usr/sbin/nologin\n"
+    return (me if os.getuid() == 0 else root + me) + "nobody:x:65534:65534:Nobody:/:/usr/sbin/nologin\n"
+
+
 def build(prog, args, live=False, o=None):
     """The bwrap command. live=True also creates what a real run needs (machine-id, proxy, X cookie, listening sockets...)
     and returns it in `state` so run() can clean up; preview (live=False) only prints."""
@@ -1033,6 +1041,8 @@ def build(prog, args, live=False, o=None):
     if cfg["hostname"]:                         # /etc/hostname and /etc/hosts would still tell the real name
         if os.path.isfile("/etc/hostname"): a += data("/etc/hostname", "sbx\n", "hostname")
         if os.path.isfile("/etc/hosts"): a += data("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n127.0.1.1 sbx\n", "hosts")
+    if cfg["privacy"] and os.path.isfile("/etc/passwd"):      # onto the file's real path: bwrap can't mount on a symlink (NixOS)
+        a += data(os.path.realpath("/etc/passwd"), fake_passwd(), "passwd")
     if priv and os.path.isfile("/etc/resolv.conf"):      # the only name server pasta answers; onto the link's target, bwrap can't mount on a symlink
         a += data(resolv_target(), f"nameserver {DNS_FWD}\n", "resolv.conf")
     if os.path.isfile("/etc/machine-id"):
@@ -1133,12 +1143,12 @@ def stop_program(name):
 
 # ---------------------------------------------------------------- running it
 def sweep_stale():
-    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.resolv.conf, PID.seccomp)."""
+    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp)."""
     d = f"{runtime_dir()}/sbx"
     try: names = os.listdir(d)
     except OSError: return
     for n in names:
-        m = re.fullmatch(r"(\d+)\.(bus|xauth|wl|gsettings|boot_id|hostname|hosts|resolv\.conf|seccomp)", n)
+        m = re.fullmatch(r"(\d+)\.(bus|xauth|wl|gsettings|boot_id|hostname|hosts|passwd|resolv\.conf|seccomp)", n)
         if not m: continue
         try: os.kill(int(m.group(1)), 0); continue          # still running
         except ProcessLookupError: pass
@@ -1254,7 +1264,7 @@ def run(prog, args, opts):
 FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
          "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
-         "--tray": ("tray", True), "--hostname": ("hostname", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
+         "--tray": ("tray", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
@@ -1282,6 +1292,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --gpu-render-only      of /dev/dri share only the render nodes (renderD*), not the display card nodes\n"
          "  --no-sound    hide PipeWire/PulseAudio     --portals      notifications and basic portals (xdg-dbus-proxy)\n"
          "  --hostname    hostname 'sbx' inside        --no-userns    the program can't create user namespaces\n"
+         "  --privacy     /etc/passwd without your real name or the other accounts\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"

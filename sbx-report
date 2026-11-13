@@ -235,7 +235,7 @@ row("INFO", "Visible in ~ (non-hidden)", ", ".join(names) or "nothing (private h
 row("INFO", "Home storage", "temporary (tmpfs, erased on exit)" if fstypes.get(H) == "tmpfs" else "persistent private home")
 try: gecos = next(l.split(":")[4] for l in open("/etc/passwd") if l.split(":")[0] == os.environ.get("USER", ""))
 except Exception: gecos = ""
-row("EXPOSED" if gecos.strip(",") else "hidden", "Real name in /etc/passwd", gecos[:30])
+row("EXPOSED" if gecos.strip(",") else "hidden", "Real name in /etc/passwd", gecos[:30] + ("  (privacy=1 hides it)" if gecos.strip(",") else ""))
 row("INFO", "Computer name", socket.gethostname())
 fonts = f"{H}/.local/share/fonts" in mounts or f"{H}/.fonts" in mounts
 row(yn(fonts), "Your fonts", "shown read-only (theme=1)" if fonts else "")
