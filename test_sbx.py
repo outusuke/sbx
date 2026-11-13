@@ -1502,7 +1502,7 @@ class Isolation(unittest.TestCase):
             self.assertRegex(r.stdout, rf"PASS  {re.escape(must)}")
 
     def test_the_report_shows_what_the_sandbox_hides(self):
-        r = self.sbx_run("--net=none", self.report, *self.canaries)
+        r = self.sbx_run("--net=none", "--privacy", self.report, *self.canaries)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn(TOKEN, r.stdout + r.stderr)
         self.assertRegex(r.stdout, r"blocked\s+Internet")
