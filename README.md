@@ -18,12 +18,22 @@ Requires Linux, Python 3.8+ and `bubblewrap` (0.8+ for `userns=0`). For the GUI:
 ```
 sudo apt install bubblewrap         # or dnf, pacman, ... your distro's equivalent
 sudo install -m755 sbx sbx-gui sbx-selftest sbx-report /usr/local/bin/
-sudo install -Dm644 sbx.1 /usr/local/share/man/man1/sbx.1                                  # optional: man sbx
-sudo install -Dm644 completions/sbx.bash /usr/local/share/bash-completion/completions/sbx  # optional
 sbx doctor                          # checks that everything works on this machine
 ```
 
-Completion for zsh (`completions/_sbx`, into a folder on your `$fpath`, then `compinit`) and fish (`completions/sbx.fish`, into `~/.config/fish/completions/`) is also there; the comment at the top of each file says how.
+Optional extras, each one line:
+
+```
+sudo install -Dm644 sbx.1 /usr/local/share/man/man1/sbx.1                                       # man sbx
+sudo install -Dm644 completions/sbx.bash /usr/local/share/bash-completion/completions/sbx       # bash completion
+sudo install -Dm644 completions/_sbx /usr/local/share/zsh/site-functions/_sbx                   # zsh completion
+sudo install -Dm644 completions/sbx.fish /usr/local/share/fish/vendor_completions.d/sbx.fish   # fish completion
+sbx desktop --install-menu          # sbx-gui in your app menu; --remove-menu undoes it
+```
+
+Open a new shell for the completion to load. If your zsh doesn't find `_sbx`, put it in a folder on your `$fpath` and run `compinit`; the comment at the top of each completion file says how, also for a per-user install.
+
+The app menu entry needs `sbx-gui` installed in `/usr/local/bin` as above: only a root-owned copy is used, so a program running as you can't replace what the menu starts. The "Show sbx in the app menu" switch in the window does the same as the command.
 
 `sbx doctor` also explains the usual surprise on Ubuntu 24.04+, where AppArmor blocks the user namespaces bubblewrap needs.
 
