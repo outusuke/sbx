@@ -21,11 +21,17 @@ def find_program(prog, noexec=False):
     return path, real
 
 
+def resolv_target():
+    """The file /etc/resolv.conf really is: its link target when it is a link (often into /run), else itself. bwrap can't
+    mount onto a symlink, so anything that replaces the name server file is bound onto this path."""
+    return os.path.realpath("/etc/resolv.conf")
+
+
 def resolv_dirs():
     """/etc/resolv.conf is often a link into /run, which is emptied; keep the folder it points to."""
     out = ["/run/systemd/resolve", "/run/NetworkManager"]
     try:
-        t = os.path.realpath("/etc/resolv.conf")
+        t = resolv_target()
         if t.startswith("/run/") and os.path.dirname(t) not in out: out.append(os.path.dirname(t))
     except OSError:
         pass

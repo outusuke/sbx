@@ -85,6 +85,7 @@ def fake_preview(prog, flags, patch=None):
     S["wayland_path"] = lambda: "/run/user/1000/wayland-0"
     S["wl_supported"] = lambda p: True
     S["resolv_dirs"] = lambda: ["/run/systemd/resolve"]
+    S["resolv_target"] = lambda: "/run/systemd/resolve/stub-resolv.conf"      # /etc/resolv.conf is a link, as on most desktops
     S["glob"] = types.SimpleNamespace(glob=lambda pat: FAKE_GLOBS.get(pat, []))
     S["gsettings_keyfile_text"] = lambda: None                  # whatever desktop settings this machine has must not change the snapshot
     S.update(patch or {})
@@ -184,14 +185,17 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(a[a.index("--uid"):a.index("--uid") + 4], ["--uid", "1000", "--gid", "1000"])     # pasta's namespace maps you to root
         self.assertEqual(a.count("--share-net"), 1)                                         # bwrap shares pasta's network, not the host's
         triples = [a[k:k + 3] for k in range(len(a) - 2)]
-        self.assertIn(["--ro-bind", "/run/user/1000/sbx/PID.resolv.conf", "/etc/resolv.conf"], triples)
+        self.assertIn(["--ro-bind", "/run/user/1000/sbx/PID.resolv.conf", "/run/systemd/resolve/stub-resolv.conf"], triples)   # onto the link's target: bwrap can't mount on a symlink
+        self.assertNotIn("/etc/resolv.conf", a)
         self.assertEqual(a[a.index("/sys/class/net") - 1], "--tmpfs")                       # the host's cards stay hidden, network on or not
         self.assertLess(a.index("/run/systemd/resolve"), a.index("/run/user/1000/sbx/PID.resolv.conf"))   # after the folders resolv.conf may point into
+        wrap, a = fake_preview("firefox", ["--net-private"], {"resolv_target": lambda: "/etc/resolv.conf"})   # a plain file: bound where it is
+        self.assertIn(["--ro-bind", "/run/user/1000/sbx/PID.resolv.conf", "/etc/resolv.conf"], [a[k:k + 3] for k in range(len(a) - 2)])
         # without the switch none of that appears
         for flags in ([], ["--net=none"]):
             wrap, a = fake_preview("firefox", flags)
             self.assertEqual(wrap, [], flags)
-            self.assertNotIn("--uid", a); self.assertNotIn("/etc/resolv.conf", a)
+            self.assertNotIn("--uid", a); self.assertNotIn("/run/systemd/resolve/stub-resolv.conf", a)
             self.assertEqual(a[a.index("--seccomp") + 1], "FD")
         # with the network off the switch does nothing at all
         wrap, a = fake_preview("firefox", ["--net=none", "--net-private"])
@@ -432,6 +436,7 @@ class Units(unittest.TestCase):
         S = self.S
         os.makedirs(f"{self.tmp}/run4")
         S["runtime_dir"] = lambda: f"{self.tmp}/run4"
+        S["resolv_target"] = lambda: "/run/systemd/resolve/stub-resolv.conf"
         with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}), mock.patch.object(shutil, "which", lambda x: f"/usr/bin/{x}"):
             _, cmd, st = S["build"]("/bin/true", [], True, {"net_private": True, "allow_syscall": ["io_uring"]})
         self.addCleanup(lambda: [f.close() for f in st["keep"]])
@@ -444,7 +449,8 @@ class Units(unittest.TestCase):
         with open(resolv) as f: self.assertEqual(f.read(), "nameserver 169.254.1.1\n")
         for p in (sec, resolv):
             self.assertEqual(os.stat(p).st_mode & 0o777, 0o600); self.assertIn(p, st["files"])
-        self.assertIn(["--ro-bind", resolv, "/etc/resolv.conf"], [cmd[i:i + 3] for i in range(len(cmd) - 2)])
+        if os.path.isfile("/etc/resolv.conf"):                 # (a machine without one gets no name server file)
+            self.assertIn(["--ro-bind", resolv, "/run/systemd/resolve/stub-resolv.conf"], [cmd[i:i + 3] for i in range(len(cmd) - 2)])
         S["teardown"](st)
         self.assertFalse(os.path.exists(sec) or os.path.exists(resolv))
 

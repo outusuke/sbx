@@ -171,7 +171,8 @@ def build(prog, args, live=False, o=None):
     if cfg["hostname"]:                         # /etc/hostname and /etc/hosts would still tell the real name
         if os.path.isfile("/etc/hostname"): a += data("/etc/hostname", "sbx\n", "hostname")
         if os.path.isfile("/etc/hosts"): a += data("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n127.0.1.1 sbx\n", "hosts")
-    if priv and os.path.isfile("/etc/resolv.conf"): a += data("/etc/resolv.conf", f"nameserver {DNS_FWD}\n", "resolv.conf")    # the only name server pasta answers
+    if priv and os.path.isfile("/etc/resolv.conf"):      # the only name server pasta answers; onto the link's target, bwrap can't mount on a symlink
+        a += data(resolv_target(), f"nameserver {DNS_FWD}\n", "resolv.conf")
     if os.path.isfile("/etc/machine-id"):
         mid = machine_id(name, live)
         a += ["--ro-bind", mid, "/etc/machine-id"]

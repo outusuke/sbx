@@ -803,7 +803,7 @@ bwrap
 --tmpfs /etc/sudoers.d
 --tmpfs /etc/ssl/private
 --ro-bind /dev/null /etc/ssh/ssh_host_ed25519_key
---ro-bind /run/user/1000/sbx/PID.resolv.conf /etc/resolv.conf
+--ro-bind /run/user/1000/sbx/PID.resolv.conf /run/systemd/resolve/stub-resolv.conf
 --ro-bind /home/user/.config/sbx/ids/firefox /etc/machine-id
 --ro-bind /home/user/.config/sbx/ids/firefox /var/lib/dbus/machine-id
 --setenv HOME /home/user
