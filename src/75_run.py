@@ -101,14 +101,15 @@ def run(prog, args, opts):
     log("START allow=[" + ",".join(k for k in SCALARS if cfg[k]) + "]", name)
     try: mark_running(name)
     except OSError: pass                          # only `sbx stop`, `sbx list` and the running-check of `sbx clean` need it
-    start, stopped = time.time(), [False]
+    start, stopped, child = time.time(), [False], [None]
     piped = not sys.stderr.isatty()               # started from the app menu or a file manager: no terminal, so the log keeps stderr
     try:
-        p = subprocess.Popen(st["prefix"] + st["wrap"] + cmd, pass_fds=st["fds"], stderr=subprocess.PIPE if piped else None)
-
         def stop(*_):
-            stopped[0] = True; p.terminate()
-        for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, stop)
+            stopped[0] = True
+            if child[0]: child[0].terminate()
+        for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, stop)      # before the child exists, so no signal is missed
+        p = child[0] = subprocess.Popen(st["prefix"] + st["wrap"] + cmd, pass_fds=st["fds"], stderr=subprocess.PIPE if piped else None)
+        if stopped[0]: p.terminate()                  # a signal that came while it was starting
         t = threading.Thread(target=tee_stderr, args=(p.stderr.fileno(), name), daemon=True) if piped else None
         if t: t.start()
         rc = p.wait()
