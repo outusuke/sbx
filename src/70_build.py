@@ -18,6 +18,8 @@ def build(prog, args, live=False, o=None):
     rw = [p for p in [share_path(x, False, ok) for x in cfg["whitelist"]] + [share_path(x, True, ok) for x in o.get("whitelist", [])] if p]
     ro = [p for p in [share_path(x, False, ok) for x in cfg["read_only"]] + [share_path(x, True, ok) for x in o.get("read_only", [])] if p]
     allow = [n for n in cfg["allow_syscall"] if syscall_ok(n)]
+    if live and cfg["hostname"] and not bwrap_has("--hostname"):
+        die("hostname=1 needs bubblewrap with --hostname (0.7 or newer), so the computer name can't be hidden here. Update bubblewrap, or turn hostname off.")
     if live and not cfg["userns"] and not bwrap_has("--disable-userns"):
         die("userns=0 needs bubblewrap 0.8 or newer (--disable-userns). Not starting without it.")
     shares = order_shares(rw, ro, cwd, program_share(real) if real.startswith(HOME + "/") else None)
@@ -94,7 +96,7 @@ def build(prog, args, live=False, o=None):
         xa = os.environ.get("XAUTHORITY")
         if xa and os.path.isfile(xa):
             xsrc = xa
-            if live and disp.startswith(":"):                  # only this display's cookie, not every cookie in the file
+            if live:                                           # only this display's cookie, not every cookie in the file
                 xsrc = scoped_xauth(xa, disp, tag + ".xauth")
                 if xsrc: state["files"].append(xsrc)
                 else: warn("no usable cookie for this display in XAUTHORITY; not passing the file")

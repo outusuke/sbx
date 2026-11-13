@@ -57,8 +57,13 @@ def bwrap_has(flag):
 
 
 def scoped_xauth(src, disp, dst):
-    """A copy of the XAUTHORITY file with only the cookie for this display (no xauth tool needed), or None."""
+    """A copy of the XAUTHORITY file with only the cookie for this display on this computer (no xauth tool needed), or None.
+    An entry is kept when it is for this display number AND for this machine (family Local with our host name, or family
+    Wild), so a cookie for display :0 on another host is not shared. Entries with no display number (Xwayland's own auth
+    file) are kept too. A DISPLAY that is not ':N' (for example SSH's localhost:10.0) gets nothing."""
+    if not disp.startswith(":"): return None
     num = disp[1:].split(".")[0].encode()
+    me = os.fsencode(socket.gethostname())
     try:
         with open(src, "rb") as f: data = f.read(1_000_000)
     except OSError:
@@ -66,14 +71,15 @@ def scoped_xauth(src, disp, dst):
     keep, i = [], 0
     while i + 2 <= len(data):
         start = i
-        i += 2                                    # family
+        fam = int.from_bytes(data[i:i+2], "big"); i += 2      # family: 256 Local, 65535 Wild
         fields = []
         for _ in range(4):                        # address, display number, auth name, auth data
-            if i + 2 > len(data): return None     # truncated or not an Xauthority file: use it unchanged
+            if i + 2 > len(data): return None     # truncated or not an Xauthority file: not shared
             n = int.from_bytes(data[i:i+2], "big"); i += 2
             fields.append(data[i:i+n]); i += n
         if i > len(data): return None
-        if fields[1] in (num, b""): keep.append(data[start:i])
+        mine = fam == 65535 or (fam == 256 and fields[0] == me)
+        if fields[1] == b"" or (fields[1] == num and mine): keep.append(data[start:i])
     if not keep: return None
     try:
         os.makedirs(os.path.dirname(dst), mode=0o700, exist_ok=True)

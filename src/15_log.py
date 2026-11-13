@@ -16,20 +16,31 @@ LOG_NAME = [None]               # set by run(): warnings and errors of this run 
 
 
 def open_log():
-    """The log, opened for appending (owner-only, never through a link), or None."""
+    """The log, opened for appending (owner-only, never through a link), or None. Never replaced or renamed: several sbx
+    processes share it, and a handle that outlives a replaced file would keep writing into a file nobody reads."""
     try:
         os.makedirs(STATE, mode=0o700, exist_ok=True)
-        try:
-            if os.path.getsize(LOG) > LOG_MAX:
-                with open(LOG, errors="replace") as f: tail = f.readlines()[-LOG_KEEP:]
-                fd = os.open(LOG + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-                with os.fdopen(fd, "w") as f: f.writelines(tail)
-                os.replace(LOG + ".tmp", LOG)
-        except OSError:
-            pass
-        return os.fdopen(os.open(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600), "a", errors="replace")
+        fd = os.open(LOG, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        os.fchmod(fd, 0o600)
+        return os.fdopen(fd, "a+", errors="replace")
     except OSError:
         return None
+
+
+def log_write(f, text):
+    """Append TEXT to the open log F under a lock. When the file is over LOG_MAX it is cut down to its last LOG_KEEP lines
+    first, in place (truncate, not replace), so another sbx cannot cut a line in half and no handle is left on an old file."""
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            if os.fstat(f.fileno()).st_size > LOG_MAX:
+                f.seek(0); tail = f.readlines()[-LOG_KEEP:]
+                f.truncate(0); f.writelines(tail)
+            f.write(text); f.flush()
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+    except OSError:
+        pass
 
 
 def log(msg, name=None):
@@ -37,7 +48,7 @@ def log(msg, name=None):
     if not f: return
     with f:
         msg = CTRL.sub("", msg).replace("\n", " ")
-        f.write(f"[{time.strftime('%F %T')}] " + (f"[{name}] " if name else "") + f"{msg}\n")
+        log_write(f, f"[{time.strftime('%F %T')}] " + (f"[{name}] " if name else "") + f"{msg}\n")
 
 
 JOURNAL_SOCK = "/run/systemd/journal/stdout"

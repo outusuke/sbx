@@ -17,6 +17,12 @@ TOKEN = "CANARY-5b0e77d1-do-not-read"
 FIX = "/tmp/sbx-snapshot-fixture"          # real folders the snapshot scenarios share (the path must not change)
 
 
+def xentry(family, host, num, data):
+    """One record of an Xauthority file."""
+    parts = [host, num, b"MIT-MAGIC-COOKIE-1", data]
+    return struct.pack(">H", family) + b"".join(struct.pack(">H", len(p)) + p for p in parts)
+
+
 def load_sbx():
     """The sbx script as a module-like dict (its CLI doesn't run on import)."""
     with open(f"{HERE}/sbx") as f: src = f.read()
@@ -233,6 +239,13 @@ class Units(unittest.TestCase):
             self.assertIn(must, text)
         self.assertIn(":4:", text)                                              # line numbers
 
+    def test_a_line_without_an_equals_sign_is_reported(self):
+        p = self.write("d.conf", "net 0\nwhitelist ~/x\n# fine\n\nnet=0\nwhitelist=\n")
+        sc, ls, _ = self.S["parse_conf"](p)
+        self.assertEqual((sc, ls["whitelist"]), ({"net": False}, []))
+        text = "\n".join(self.warned)
+        for must in (":1:", "'net 0'", ":2:", "expected key=value", "whitelist has no value"): self.assertIn(must, text)
+
     def test_settings_precedence_and_flags(self):
         self.write(".config/sbx/default.conf", "net=0\ngpu=0\nwhitelist=~/a\nmemory=1G\n")
         self.write(".config/sbx/apps/app.conf", "net=1\nwhitelist=~/b\nwhitelist=~/a\nmemory=\n")
@@ -304,10 +317,19 @@ class Units(unittest.TestCase):
         self.assertTrue(hints(["/tmp"]))
 
     # -- X11
+    def test_scoped_xauth_keeps_only_this_computers_cookies(self):
+        me = os.fsencode(socket.gethostname())
+        src = self.write("xauth2"); dst = f"{self.tmp}/out/x2"
+        with open(src, "wb") as f:
+            f.write(xentry(256, me, b"0", b"AAAA") + xentry(256, b"remote-box", b"0", b"BBBB") + xentry(65535, b"", b"0", b"CCCC"))
+        self.assertEqual(self.S["scoped_xauth"](src, ":0", dst), dst)
+        with open(dst, "rb") as f: got = f.read()
+        self.assertEqual(got, xentry(256, me, b"0", b"AAAA") + xentry(65535, b"", b"0", b"CCCC"))      # not remote-box's
+        self.assertIsNone(self.S["scoped_xauth"](src, "localhost:10.0", dst + "x"))                   # SSH-style DISPLAY: nothing
+
     def test_scoped_xauth_keeps_only_this_display(self):
         def entry(num, data):
-            parts = [b"host", num, b"MIT-MAGIC-COOKIE-1", data]
-            return struct.pack(">H", 256) + b"".join(struct.pack(">H", len(p)) + p for p in parts)
+            return xentry(256, os.fsencode(socket.gethostname()), num, data)
         src = self.write("xauth"); dst = f"{self.tmp}/out/x"
         with open(src, "wb") as f: f.write(entry(b"0", b"AAAA") + entry(b"1", b"BBBB") + entry(b"", b"CCCC"))
         self.assertEqual(self.S["scoped_xauth"](src, ":0", dst), dst)
@@ -341,6 +363,16 @@ class Units(unittest.TestCase):
         self.assertFalse(any(cmd[i:i + 3] == ["--ro-bind", bad, bad] for i in range(len(cmd))), "the whole file was shared")
         self.assertNotIn("XAUTHORITY", cmd)
         self.assertTrue(any("XAUTHORITY" in w for w in self.warned), self.warned)
+
+    def test_a_forwarded_display_does_not_get_the_whole_cookie_file(self):
+        S = self.S
+        xa = self.write("fwd.xauth", "x")
+        os.makedirs(f"{self.tmp}/run2")
+        S["runtime_dir"] = lambda: f"{self.tmp}/run2"
+        with mock.patch.dict(os.environ, {"DISPLAY": "localhost:10.0", "XAUTHORITY": xa, "WAYLAND_DISPLAY": ""}):
+            _, cmd, st = S["build"]("/bin/true", [], True, {"x11": True})
+        for fd in st["fds"]: os.close(fd)
+        self.assertFalse(any(cmd[i:i + 3] == ["--ro-bind", xa, xa] for i in range(len(cmd))), "the whole file was shared")
 
     def test_unknown_architecture_does_not_start_without_the_filter(self):
         if os.geteuid() == 0: self.skipTest("run() refuses root before it gets to the architecture")
@@ -474,6 +506,21 @@ class Units(unittest.TestCase):
         self.assertEqual(len(ifaces), 2)
 
     # -- small things
+    def test_completions_know_every_option_and_command(self):
+        S = self.S
+        internal = {"--loader"}                       # set by sbx itself, not typed
+        root = os.path.dirname(os.path.abspath(__file__))
+        text = {f: open(f"{root}/completions/{f}").read() for f in ("sbx.bash", "_sbx", "sbx.fish")}
+        opts = [f for f in list(S["FLAGS"]) + list(S["VALUE_FLAGS"]) if f not in internal]
+        for f, t in text.items():
+            looped = {w for l in t.splitlines() if l.startswith("for ") for w in l.split()[3:]}      # sbx.fish: for d in camera alsa ...
+            for o in opts:
+                name = o[2:]
+                ok = (o in t or f"-l {name}" in t or name in looped
+                      or (name.startswith("portal-") and name[7:] in looped))
+                self.assertTrue(ok, f"{f} doesn't offer {o}")
+            for c in ("preview", "show", "doctor", "clean", "desktop", "open"): self.assertIn(c, t, f"{f} lacks {c}")
+
     def test_install_hint(self):
         def hint(text):
             self.S["open"] = lambda p, *a, **k: io.StringIO(text) if p == "/etc/os-release" else open(p, *a, **k)
@@ -793,6 +840,17 @@ class Logging(unittest.TestCase):
         S["log"]("after trim", "app")
         out = self.lines()
         self.assertLessEqual(len(out), S["LOG_KEEP"] + 1); self.assertIn("after trim", out[-1])
+
+    def test_a_long_running_handle_survives_another_process_trimming_the_log(self):
+        S = self.S
+        held = S["open_log"]()
+        S["log_write"](held, "early line\n")
+        with open(S["LOG"], "a") as f: f.write(("y" * 99 + "\n") * (S["LOG_MAX"] // 100 + 10))
+        S["log"]("another sbx trims", "other")
+        S["log_write"](held, "late line from the long-running program\n"); held.close()
+        out = self.lines()
+        self.assertIn("late line from the long-running program", out[-1]); self.assertLessEqual(len(out), S["LOG_KEEP"] + 2)
+        self.assertEqual(os.stat(S["LOG"]).st_mode & 0o777, 0o600)
 
     def test_log_does_not_follow_a_link(self):
         S = self.S

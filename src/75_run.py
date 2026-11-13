@@ -69,9 +69,7 @@ def tee_stderr(fd, name):
             for line in lines:
                 if lf and n < LOG_RUN_MAX:
                     n += len(line)
-                    lf.write(f"[{name}] {line}")
-                    if n >= LOG_RUN_MAX: lf.write(f"[{name}] (more output not logged)\n")
-                    lf.flush()
+                    log_write(lf, f"[{name}] {line}" + (f"[{name}] (more output not logged)\n" if n >= LOG_RUN_MAX else ""))
             if not data: break
     except Exception:
         pass

@@ -25,14 +25,17 @@ def parse_conf(path):
         return sc, ls, lim
     for n, line in enumerate(lines, 1):
         line = re.sub(r"(^|\s)#.*$", "", line).strip()
-        if "=" not in line: continue
-        k, _, v = (x.strip() for x in line.partition("="))
+        if not line: continue
         at = f"{path}:{n}"
+        if "=" not in line:
+            warn(f"{at}: ignoring '{line[:60]}': expected key=value"); continue      # 'net 0' must not quietly leave the network on
+        k, _, v = (x.strip() for x in line.partition("="))
         if k in ls:
             if k == "env" and not env_name_ok(v): warn(f"{at}: '{v}' is not a variable name, ignored")
             elif k == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): warn(f"{at}: setenv needs NAME=value, ignored")
             elif k == "allow_syscall" and not syscall_ok(v): warn(f"{at}: can't allow '{v}': not one of {', '.join(sorted(EXTRA_SYSCALLS))}, io_uring")
-            elif v: ls[k].append(v)
+            elif not v: warn(f"{at}: {k} has no value, ignored")
+            else: ls[k].append(v)
         elif k in SCALARS:
             b = parse_bool(v)
             if b is None: warn(f"{at}: {k}={v} is not 0 or 1, ignored")
