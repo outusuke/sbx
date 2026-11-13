@@ -244,7 +244,8 @@ class Units(unittest.TestCase):
         sc, ls, _ = self.S["parse_conf"](p)
         self.assertEqual((sc, ls["whitelist"]), ({"net": False}, []))
         text = "\n".join(self.warned)
-        for must in (":1:", "'net 0'", ":2:", "expected key=value", "whitelist has no value"): self.assertIn(must, text)
+        for must in (":1:", ":2:", "expected key=value", "whitelist has no value"): self.assertIn(must, text)
+        self.assertNotIn("net 0", text)                                    # the text of a line is never echoed (it may be anything)
 
     def test_settings_precedence_and_flags(self):
         self.write(".config/sbx/default.conf", "net=0\ngpu=0\nwhitelist=~/a\nmemory=1G\n")

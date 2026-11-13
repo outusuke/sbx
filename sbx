@@ -692,7 +692,7 @@ def parse_conf(path):
         if not line: continue
         at = f"{path}:{n}"
         if "=" not in line:
-            warn(f"{at}: ignoring '{line[:60]}': expected key=value"); continue      # 'net 0' must not quietly leave the network on
+            warn(f"{at}: ignoring this line: expected key=value"); continue      # 'net 0' must not quietly leave the network on
         k, _, v = (x.strip() for x in line.partition("="))
         if k in ls:
             if k == "env" and not env_name_ok(v): warn(f"{at}: '{v}' is not a variable name, ignored")
