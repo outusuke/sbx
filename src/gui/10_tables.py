@@ -52,8 +52,6 @@ SHORT = {"net": "network", "net_private": "this computer private", "wayland": "W
          "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 LISTS = ("whitelist", "read_only")
-# Switches that most programs never need to touch: they sit under "More options" in their group, so the page opens short.
-ADVANCED = {"wayland_strict", "theme", "compat", "gpu_render_only", "alsa", "rocm", "kvm", "ssh_agent", "hostname", "userns", "allow_sensitive"}   # and every portal_*
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
        ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))

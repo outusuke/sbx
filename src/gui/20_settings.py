@@ -88,10 +88,6 @@ def is_on(scope, key):
     return SWITCHES[key][2] if key in SWITCHES else False
 
 
-def is_advanced(key):
-    return key in ADVANCED or key.startswith("portal_")
-
-
 NET_CHOICES = (("Full access", "The internet, this computer's own services and your local network"),
                ("Internet only", "The internet, but not services running on this computer (databases, dev servers). Other devices on your local network are still reachable. Needs pasta (passt)"),
                ("No network", "The program can't reach any network"))

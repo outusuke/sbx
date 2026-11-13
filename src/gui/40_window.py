@@ -244,45 +244,26 @@ class Win(Adw.ApplicationWindow):
         search = Gtk.SearchEntry(placeholder_text="Search settings", hexpand=True)
         sg.add(search)
         page.add(sg)
-        found = []                                                                # (group, main rows, expander or None, its rows) for the search
+        found = []                                                                # (group, [(row, key)]) for the search
         for title, rows in GROUPS:
             g = Adw.PreferencesGroup(title=title)
-            main, adv = [], []
+            members = []
             for key, t, s, _d in rows:
                 if key == "net_private" and "net" in SWITCHES: continue          # part of the Network choice
                 if key == "net" and "net_private" in SWITCHES: r, key = self.network_row(scope, page_rows), "net net_private internet network"
                 else: r = self.switch_row(scope, key, page_rows)
-                (adv if is_advanced(key) else main).append((r, key))
-            for r, _k in main: g.add(r)
-            ex = None
-            if adv:
-                ex = Adw.ExpanderRow(title="More options")
-                for r, _k in adv: ex.add_row(r)
-
-                def count(ex=ex, adv=adv):
-                    changed = sum(1 for _r, k in adv if k in parse(scope)[0])
-                    ex.set_subtitle(f"{len(adv)} more" + (f", {changed} changed" if changed else ""))
-                page_rows.append(count); count()
-                g.add(ex)
+                g.add(r); members.append((r, key))
             page.add(g)
-            found.append((g, main, ex, adv))
+            found.append((g, members))
 
         def filter_rows(entry):
             words = entry.get_text().lower().split()
-
-            def hits(members):
-                out = 0
+            for g, members in found:
+                shown = 0
                 for r, key in members:
                     hit = all(w in f"{r.get_title()} {r.get_subtitle() or ''} {key}".lower() for w in words)
-                    r.set_visible(hit); out += hit
-                return out
-            for g, main, ex, adv in found:
-                shown = hits(main)
-                if ex is not None:
-                    n = hits(adv)
-                    ex.set_visible(n > 0 or not words); ex.set_expanded(bool(words) and n > 0)
-                    shown += n
-                g.set_visible(shown > 0 or not words)
+                    r.set_visible(hit); shown += hit
+                g.set_visible(shown > 0)
         search.connect("search-changed", filter_rows)
         for grp in self.folders_group(scope, refresh_caps): page.add(grp)
         if scope is not None:
