@@ -233,30 +233,58 @@ class Win(Adw.ApplicationWindow):
             rg.add(run); rg.add(stop)
             refresh_run()
             page.add(rg)
+        cg = Adw.PreferencesGroup(title="Summary" if scope is not None else "Every program starts with")
+
+        def refresh_caps(*_):
+            cg.set_description(GLib.markup_escape_text(capabilities(scope)))
+        page_rows.append(refresh_caps)
+        refresh_caps()
+        page.add(cg)
         sg = Adw.PreferencesGroup()
         search = Gtk.SearchEntry(placeholder_text="Search settings", hexpand=True)
         sg.add(search)
         page.add(sg)
-        found = []                                                                # (group, [(row, key)]) for the search
+        found = []                                                                # (group, main rows, expander or None, its rows) for the search
         for title, rows in GROUPS:
             g = Adw.PreferencesGroup(title=title)
-            members = []
+            main, adv = [], []
             for key, t, s, _d in rows:
-                r = self.switch_row(scope, key, page_rows)
-                g.add(r); members.append((r, key))
+                if key == "net_private" and "net" in SWITCHES: continue          # part of the Network choice
+                if key == "net" and "net_private" in SWITCHES: r, key = self.network_row(scope, page_rows), "net net_private internet network"
+                else: r = self.switch_row(scope, key, page_rows)
+                (adv if is_advanced(key) else main).append((r, key))
+            for r, _k in main: g.add(r)
+            ex = None
+            if adv:
+                ex = Adw.ExpanderRow(title="More options")
+                for r, _k in adv: ex.add_row(r)
+
+                def count(ex=ex, adv=adv):
+                    changed = sum(1 for _r, k in adv if k in parse(scope)[0])
+                    ex.set_subtitle(f"{len(adv)} more" + (f", {changed} changed" if changed else ""))
+                page_rows.append(count); count()
+                g.add(ex)
             page.add(g)
-            found.append((g, members))
+            found.append((g, main, ex, adv))
 
         def filter_rows(entry):
             words = entry.get_text().lower().split()
-            for g, members in found:
-                shown = 0
+
+            def hits(members):
+                out = 0
                 for r, key in members:
                     hit = all(w in f"{r.get_title()} {r.get_subtitle() or ''} {key}".lower() for w in words)
-                    r.set_visible(hit); shown += hit
-                g.set_visible(shown > 0)
+                    r.set_visible(hit); out += hit
+                return out
+            for g, main, ex, adv in found:
+                shown = hits(main)
+                if ex is not None:
+                    n = hits(adv)
+                    ex.set_visible(n > 0 or not words); ex.set_expanded(bool(words) and n > 0)
+                    shown += n
+                g.set_visible(shown > 0 or not words)
         search.connect("search-changed", filter_rows)
-        for grp in self.folders_group(scope): page.add(grp)
+        for grp in self.folders_group(scope, refresh_caps): page.add(grp)
         if scope is not None:
             rg = Adw.PreferencesGroup(title="More")
             cmd = Adw.ActionRow(title="Show command", subtitle="The bwrap command sbx would run", activatable=True)
@@ -282,6 +310,37 @@ class Win(Adw.ApplicationWindow):
             dg.add(tr)
         page.add(dg)
         return self.page("Default settings" if scope is None else scope, page, banner=banner)
+
+    def network_row(self, scope, page_rows):
+        """The switches net and net_private as one choice: full access, internet only, or none."""
+        row = Adw.ComboRow(title="Network", model=Gtk.StringList.new([c[0] for c in NET_CHOICES]), use_markup=False)
+        undo = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"])
+        row.add_suffix(undo)
+        busy = [False]
+
+        def show():
+            i = net_choice(scope)
+            busy[0] = True; row.set_selected(i); busy[0] = False
+            row.set_subtitle(NET_CHOICES[i][1])
+            sc = parse(scope)[0]
+            undo.set_visible(scope is not None and ("net" in sc or "net_private" in sc))
+            undo.set_tooltip_text("Back to the default: " + NET_CHOICES[net_choice(None)][0])
+
+        def changed():
+            show()
+            for refresh in page_rows: refresh()
+
+        def chosen(*_):
+            if busy[0]: return
+            i = row.get_selected()
+            set_key(scope, "net", i != 2); set_key(scope, "net_private", i == 1)
+            if i == 1 and not shutil.which("pasta"):
+                self.toasts.add_toast(Adw.Toast(title="pasta (passt) is not installed: the program won't start until you install it"))
+            changed()
+        row.connect("notify::selected", chosen)
+        undo.connect("clicked", lambda *_: (set_key(scope, "net", None), set_key(scope, "net_private", None), changed()))
+        show()
+        return row
 
     def switch_row(self, scope, key, page_rows=None):
         """page_rows: the refresh functions of every switch on this page, so a switch others depend on can update them."""
@@ -343,7 +402,7 @@ class Win(Adw.ApplicationWindow):
         row.connect("notify::active", toggled)
         return row
 
-    def folders_group(self, scope):
+    def folders_group(self, scope, on_change=None):
         """One list of shared folders and files. Each row has its own access choice: read and write, read only, or not shared."""
         g = Adw.PreferencesGroup(title="Shared folders and files",
                                  description="Everything not listed here is read-only or hidden from the program.")
@@ -384,6 +443,7 @@ class Win(Adw.ApplicationWindow):
                     r.add_suffix(dd); g.add(r); rows.append(r)
             if not rows:
                 r = Adw.ActionRow(title="None"); g.add(r); rows.append(r)
+            if on_change: on_change()
 
         def pick(folder):
             dlg = Gtk.FileDialog(title="Choose a folder to share" if folder else "Choose a file to share")

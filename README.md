@@ -7,7 +7,7 @@ sbx firefox
 sbx --net=none --here python3 script.py
 ```
 
-`sbx-gui` is an optional GTK4/libadwaita editor for the same settings files. A program's page has Run and Stop at the top, a search box for the switches, and greys out switches that do nothing until another one is on.
+`sbx-gui` is an optional GTK4/libadwaita editor for the same settings files. A program's page has Run and Stop at the top, a one-line summary of what the program can do, and a search box. Network is one choice (full, internet only, none); rarely needed switches sit under "More options" in their group, and switches that do nothing until another one is on are greyed out.
 
 ![sbx window](docs/screenshot.png)
 

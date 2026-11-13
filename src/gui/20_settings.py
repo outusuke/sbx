@@ -88,6 +88,32 @@ def is_on(scope, key):
     return SWITCHES[key][2] if key in SWITCHES else False
 
 
+def is_advanced(key):
+    return key in ADVANCED or key.startswith("portal_")
+
+
+NET_CHOICES = (("Full access", "The internet, this computer's own services and your local network"),
+               ("Internet only", "The internet, but not services running on this computer (databases, dev servers). Other devices on your local network are still reachable. Needs pasta (passt)"),
+               ("No network", "The program can't reach any network"))
+
+
+def net_choice(scope):
+    """Index into NET_CHOICES for the two switches net and net_private, as this program runs."""
+    if "net_private" not in SWITCHES: return 0 if is_on(scope, "net") else 2
+    return 2 if not is_on(scope, "net") else 1 if is_on(scope, "net_private") else 0
+
+
+def capabilities(scope):
+    """One sentence on what a program can do, from its effective settings (own file, else default.conf, else built-in)."""
+    net = NET_CHOICES[net_choice(scope)][0].lower()
+    on = [words for key, words in CAN if key in SWITCHES and is_on(scope, key)]
+    lists = [parse(None)[1], parse(scope)[1]] if scope is not None else [parse(None)[1]]
+    shared = {v: k for ls in lists for k in LISTS for v in ls[k]}
+    text = f"Network: {net}. " + ("Can use: " + ", ".join(on) + ". " if on else "Can use no devices or desktop services. ")
+    if shared: text += f"Shares {len(shared)} folder{'s' if len(shared) != 1 else ''} or file{'s' if len(shared) != 1 else ''}. "
+    return text.strip() + (" Its home is erased on exit." if is_on(scope, "private") else "")
+
+
 def program_name(text):
     """What a typed program name becomes: the same cleaning sbx applies."""
     return re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(text.strip())).lstrip("._-")[:64]
