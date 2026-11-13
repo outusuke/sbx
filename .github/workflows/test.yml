@@ -6,7 +6,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install bubblewrap and helpers
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap xdg-dbus-proxy wayland-protocols linux-libc-dev python3-pyflakes
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap passt xdg-dbus-proxy wayland-protocols linux-libc-dev python3-pyflakes
       - name: Allow unprivileged user namespaces (Ubuntu 24.04 restricts them with AppArmor)
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Doctor

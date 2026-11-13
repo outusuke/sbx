@@ -22,10 +22,14 @@ def build(prog, args, live=False, o=None):
         die("hostname=1 needs bubblewrap with --hostname (0.7 or newer), so the computer name can't be hidden here. Update bubblewrap, or turn hostname off.")
     if live and not cfg["userns"] and not bwrap_has("--disable-userns"):
         die("userns=0 needs bubblewrap 0.8 or newer (--disable-userns). Not starting without it.")
+    priv = private_net(cfg)
+    if live and cfg["net_private"] and not cfg["net"]:
+        warn("net_private does nothing while net=0: the program has no network at all")
+    if live and priv and not shutil.which("pasta"): die("net_private=1 needs pasta: " + install_hint("passt") + ". Or turn net_private off.")
     shares = order_shares(rw, ro, cwd, program_share(real) if real.startswith(HOME + "/") else None)
     rt = runtime_dir()
     tag = f"{rt}/sbx/{os.getpid() if live else 'PID'}"
-    state = {"proxy": None, "bus": tag + ".bus", "files": [], "fds": [], "keep": [], "wl": None, "cleanup": [], "prefix": []}
+    state = {"proxy": None, "bus": tag + ".bus", "files": [], "fds": [], "keep": [], "wl": None, "cleanup": [], "prefix": [], "wrap": []}
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": sandbox_path(), "XDG_RUNTIME_DIR": rt, "SBX_ACTIVE": "1"}
     for k in ENV_KEEP:
         if k in os.environ: env[k] = os.environ[k]
@@ -34,10 +38,23 @@ def build(prog, args, live=False, o=None):
             if (k in COMPAT_ENV or k.startswith(COMPAT_PREFIXES)) and k not in ENV_PROTECTED: env[k] = v
     a = ["bwrap", "--unshare-all"] + (["--share-net"] if cfg["net"] else [])
     if not cfg["userns"]: a += ["--unshare-user", "--disable-userns"]
+    if priv: a += ["--uid", str(os.getuid()), "--gid", str(os.getgid())]      # pasta's user namespace maps you to root; keep your own ids inside
     a += ["--die-with-parent", "--new-session", "--clearenv"]
     if cfg["hostname"]: a += ["--hostname", "sbx"]
+
+    def put(src, blob):                         # a private file next to the other helper files, removed when the run ends
+        if not live: return                     # (a file, not an inherited descriptor: a wrapper such as pasta would close those)
+        os.makedirs(os.path.dirname(src), mode=0o700, exist_ok=True)
+        fd = os.open(src, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as f: f.write(blob)
+        state["files"].append(src)
+
     machine = platform.machine()
-    if machine in ARCHES:
+    if machine in ARCHES and priv:              # inside pasta: bwrap reads the filter from descriptor 9, which a shell opens from this file
+        put(f"{tag}.seccomp", seccomp_program(machine, allow))
+        a += ["--seccomp", str(SEC_FD)]
+        state["wrap"] = net_wrap(f"{tag}.seccomp")
+    elif machine in ARCHES:
         if live:
             sec = seccomp_file(allow)
             os.set_inheritable(sec.fileno(), True)
@@ -45,15 +62,12 @@ def build(prog, args, live=False, o=None):
             a += ["--seccomp", str(sec.fileno())]
         else:
             a += ["--seccomp", "FD"]
+    elif priv:
+        state["wrap"] = net_wrap()
 
-    def data(dest, text, ext):                  # a read-only file made from text: a private file, removed when the run ends
-        src = f"{tag}.{ext}"                    # (a file, not an inherited descriptor: a wrapper such as pasta would close those)
-        if live:
-            os.makedirs(os.path.dirname(src), mode=0o700, exist_ok=True)
-            fd = os.open(src, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(fd, "w") as f: f.write(text)
-            state["files"].append(src)
-        return ["--ro-bind", src, dest]
+    def data(dest, text, ext):                  # a read-only file made from text
+        put(f"{tag}.{ext}", text.encode())
+        return ["--ro-bind", f"{tag}.{ext}", dest]
 
     def track(dst, source, tryit):              # bwrap creates mountpoints inside the private home; note them for cleanup
         if not live or cfg["private"] or not dst.startswith(HOME + "/") or (tryit and not os.path.exists(source)): return
@@ -139,7 +153,7 @@ def build(prog, args, live=False, o=None):
         if os.path.isdir(d) and not os.path.islink(d) and d not in hide and not HOME.startswith(d + "/"):
             hide.append(d)
     for d in hide: a += ["--tmpfs", d]
-    for d in HIDE_SYS + ([] if cfg["net"] else ["/sys/class/net"]):     # /sys/class/net would list the host's cards even without a network
+    for d in HIDE_SYS + ([] if cfg["net"] and not priv else ["/sys/class/net"]):     # /sys/class/net would list the host's cards even without a network, or with pasta's own
         if os.path.isdir(d): a += ["--tmpfs", d]
     a += ["--tmpfs", HOME] if cfg["private"] else ["--bind", f"{HOMES}/{name}", HOME]     # private=1: erased on exit
     for i in range(0, len(late), 3): mount(late[i], late[i + 1], late[i + 2])
@@ -157,6 +171,7 @@ def build(prog, args, live=False, o=None):
     if cfg["hostname"]:                         # /etc/hostname and /etc/hosts would still tell the real name
         if os.path.isfile("/etc/hostname"): a += data("/etc/hostname", "sbx\n", "hostname")
         if os.path.isfile("/etc/hosts"): a += data("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n127.0.1.1 sbx\n", "hosts")
+    if priv and os.path.isfile("/etc/resolv.conf"): a += data("/etc/resolv.conf", f"nameserver {DNS_FWD}\n", "resolv.conf")    # the only name server pasta answers
     if os.path.isfile("/etc/machine-id"):
         mid = machine_id(name, live)
         a += ["--ro-bind", mid, "/etc/machine-id"]

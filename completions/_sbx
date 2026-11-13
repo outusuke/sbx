@@ -7,7 +7,7 @@ _sbx_homes() { local -a a; a=(${(f)"$(ls ~/.sbx-homes 2>/dev/null)"}); (( $#a ))
 _sbx() {
     local -a cmds opts
     cmds=(preview show doctor clean desktop open schema list stop)
-    opts=(--net=none --private --here --no-wayland --wayland-strict --x11 --no-gpu --gpu-render-only --no-sound --portals --tray --hostname
+    opts=(--net=none --net-private --private --here --no-wayland --wayland-strict --x11 --no-gpu --gpu-render-only --no-sound --portals --tray --hostname
           --no-userns --no-theme --camera --alsa --input --kvm --rocm --printing --ssh-agent --allow-sensitive --compat
           --ignore-config --rebind --portal-screenshot --portal-screencast --portal-location --portal-shortcuts
           --portal-remote-desktop --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret

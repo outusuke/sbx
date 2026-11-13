@@ -18,7 +18,7 @@ def main(argv=None):
     if not a: die("usage: sbx [preview] [options] PROGRAM [args]")
     if cmd == "preview":
         _, cmdline, st = build(a[0], a[1:], False, opts)
-        print(shlex.join(st["prefix"] + cmdline)); return
+        print(shlex.join(st["prefix"] + st["wrap"] + cmdline)); return
     run(a[0], a[1:], opts)
 
 

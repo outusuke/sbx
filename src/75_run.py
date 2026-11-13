@@ -3,12 +3,12 @@
 
 # ---------------------------------------------------------------- running it
 def sweep_stale():
-    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts)."""
+    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.resolv.conf, PID.seccomp)."""
     d = f"{runtime_dir()}/sbx"
     try: names = os.listdir(d)
     except OSError: return
     for n in names:
-        m = re.fullmatch(r"(\d+)\.(bus|xauth|wl|gsettings|boot_id|hostname|hosts)", n)
+        m = re.fullmatch(r"(\d+)\.(bus|xauth|wl|gsettings|boot_id|hostname|hosts|resolv\.conf|seccomp)", n)
         if not m: continue
         try: os.kill(int(m.group(1)), 0); continue          # still running
         except ProcessLookupError: pass
@@ -104,7 +104,7 @@ def run(prog, args, opts):
     start, stopped = time.time(), [False]
     piped = not sys.stderr.isatty()               # started from the app menu or a file manager: no terminal, so the log keeps stderr
     try:
-        p = subprocess.Popen(st["prefix"] + cmd, pass_fds=st["fds"], stderr=subprocess.PIPE if piped else None)
+        p = subprocess.Popen(st["prefix"] + st["wrap"] + cmd, pass_fds=st["fds"], stderr=subprocess.PIPE if piped else None)
 
         def stop(*_):
             stopped[0] = True; p.terminate()

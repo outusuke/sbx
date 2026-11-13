@@ -19,6 +19,7 @@ complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l remove-opener -d 
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l remove -d "Remove a launcher made by sbx"
 # options (before the program)
 complete -c sbx -n $c -l net -x -a none -d "No network (--net=none)"
+complete -c sbx -n $c -l net-private -d "Internet, but not this computer's own services (needs pasta)"
 complete -c sbx -n $c -l private -d "Private home erased on exit"
 complete -c sbx -n $c -l here -d "Share the current folder"
 complete -c sbx -n $c -l no-wayland -d "Hide the Wayland socket"

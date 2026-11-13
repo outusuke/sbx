@@ -102,7 +102,20 @@ Flags can only change a setting in the direction shown here; there is no flag to
 starts from the built\-in defaults.
 .TP
 .B \-\-net=none
-No network. Only this also closes abstract Unix sockets.
+No network. This and
+.B \-\-net\-private
+also close abstract Unix sockets.
+.TP
+.B \-\-net\-private
+Keep this computer private: with the network on, the program gets its own network through
+.BR pasta (1)
+that reaches the internet but not
+localhost or the services running on this computer. Your local network stays reachable, so this is not a firewall.
+/etc/resolv.conf is replaced by a generated one, and /sys/class/net is hidden. Needs
+.BR pasta ;
+sbx does not start without it. Does nothing, with a warning, when the network is off.
+Setting:
+.BR net_private=1 .
 .TP
 .B \-\-private
 The private home is erased on exit.
@@ -225,7 +238,7 @@ memory=2G
 .fi
 .RE
 .PP
-Switches take 0 or 1. Defaults: net=1, wayland=1, wayland_strict=0, x11=0, gpu=1, gpu_render_only=0, sound=1, portals=0, private=0,
+Switches take 0 or 1. Defaults: net=1, net_private=0, wayland=1, wayland_strict=0, x11=0, gpu=1, gpu_render_only=0, sound=1, portals=0, private=0,
 hostname=0, userns=1, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
 allow_sensitive=0, compat=0, tray=0, and the extra portals portal_screenshot, portal_screencast, portal_location,
 portal_shortcuts, portal_wallpaper, portal_launcher, portal_remote_desktop, portal_input_capture and

@@ -13,7 +13,7 @@ sbx --net=none --here python3 script.py
 
 ## Install
 
-Requires Linux, Python 3.8+ and `bubblewrap` (0.8+ for `userns=0`). For the GUI: GTK 4, libadwaita 1.5+ and PyGObject. For `portals`: `xdg-dbus-proxy`. For memory/task/CPU limits: `systemd-run` (systemd).
+Requires Linux, Python 3.8+ and `bubblewrap` (0.8+ for `userns=0`). For the GUI: GTK 4, libadwaita 1.5+ and PyGObject. For `portals`: `xdg-dbus-proxy`. For `net_private`: `pasta` (package `passt`). For memory/task/CPU limits: `systemd-run` (systemd).
 
 ```
 sudo apt install bubblewrap         # or dnf, pacman, ... your distro's equivalent
@@ -37,9 +37,9 @@ Completion for zsh (`completions/_sbx`, into a folder on your `$fpath`, then `co
 | `/tmp`, `/run` | fresh empty tmpfs |
 | `/etc/shadow`, `sudoers`, SSH host keys, `/etc/ssl/private`, saved NetworkManager connections | emptied |
 | `/etc/machine-id`, boot id | random per program (`~/.config/sbx/ids/NAME`) / random per run |
-| Hardware identity | `/sys/devices/virtual/dmi/id` emptied; with `net=0` also `/sys/class/net` (MAC addresses) |
+| Hardware identity | `/sys/devices/virtual/dmi/id` emptied; with `net=0` or `net_private=1` also `/sys/class/net` (MAC addresses) |
 | Environment | cleared; only locale, terminal and desktop variables are kept, plus what you pass with `env=` / `setenv=` |
-| Namespaces | all unshared (PID, IPC, UTS, user, cgroup); network shared unless `net=0`; nested user namespaces blocked with `userns=0` |
+| Namespaces | all unshared (PID, IPC, UTS, user, cgroup); network shared unless `net=0` (or its own, through `pasta`, with `net_private=1`); nested user namespaces blocked with `userns=0` |
 | System calls | a blocklist: `kexec_*`, `perf_event_open`, `bpf`, `syslog`, `keyctl` and friends, `mbind` and NUMA calls, `open_by_handle_at`, `io_uring_*`, `userfaultfd`, `process_vm_readv/writev`, `kcmp`, `pidfd_getfd`, the new mount API (`open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`), and all 32-bit/x32 calls |
 | Desktop look (`theme=1`) | your fonts, icons and GTK/fontconfig settings, read-only. Your title-bar button layout (so GNOME's minimize and maximize buttons show up) and cursor theme and size live in dconf, which the sandbox can't read, so sbx reads them on your side and hands over only those settings as a small GSettings key file (the program gets `GSETTINGS_BACKEND=keyfile`). Every value is checked first, and nothing else from dconf is shared. `--no-theme` turns all of this off |
 | Wayland | through a [security context](https://wayland.app/protocols/security-context-v1) when the compositor supports it (no screen capture or input injection), otherwise the full socket with a warning |
@@ -67,6 +67,7 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | Option | Effect |
 |---|---|
 | `--net=none` | no network |
+| `--net-private` | with the network on: internet, but not this computer's own services (see below). Needs `pasta`. Setting: `net_private=1` |
 | `--private` | private home is erased on exit |
 | `--here` | share the current folder, read-write (not your whole home, not hidden folders) |
 | `--whitelist=PATH` | share a file or folder, read-write; repeatable |
@@ -135,7 +136,7 @@ setenv=GTK_THEME=Adwaita:dark
 memory=2G
 ```
 
-Switches (all `0`/`1`), with defaults: `net=1`, `wayland=1`, `wayland_strict=0`, `x11=0`, `gpu=1`, `gpu_render_only=0`, `sound=1`, `portals=0`, `private=0`, `hostname=0`, `userns=1`, `theme=1`, `camera=0`, `alsa=0`, `input=0`, `kvm=0`, `rocm=0`, `printing=0`, `ssh_agent=0`, `allow_sensitive=0`, `compat=0`, `tray=0`, and the extra portals `portal_screenshot`, `portal_screencast`, `portal_location`, `portal_shortcuts`, `portal_wallpaper`, `portal_launcher`, `portal_remote_desktop`, `portal_input_capture`, `portal_secret` (all `0`, and only used when `portals=1`). Anything else (`net=maybe`) is reported with its file and line number and ignored, instead of silently counting as on or off.
+Switches (all `0`/`1`), with defaults: `net=1`, `net_private=0`, `wayland=1`, `wayland_strict=0`, `x11=0`, `gpu=1`, `gpu_render_only=0`, `sound=1`, `portals=0`, `private=0`, `hostname=0`, `userns=1`, `theme=1`, `camera=0`, `alsa=0`, `input=0`, `kvm=0`, `rocm=0`, `printing=0`, `ssh_agent=0`, `allow_sensitive=0`, `compat=0`, `tray=0`, and the extra portals `portal_screenshot`, `portal_screencast`, `portal_location`, `portal_shortcuts`, `portal_wallpaper`, `portal_launcher`, `portal_remote_desktop`, `portal_input_capture`, `portal_secret` (all `0`, and only used when `portals=1`). Anything else (`net=maybe`) is reported with its file and line number and ignored, instead of silently counting as on or off.
 
 Lists that add up across the two files: `whitelist`, `read_only`, `env`, `setenv`, `allow_syscall`. Limits: `memory`, `tasks`, `cpu`; an empty value in a program's file cancels the default's. Command-line flags beat the files. Flags can only change a setting in the direction shown in the table above (for example, there is no flag to turn the network back on); `--ignore-config` starts from the built-in defaults.
 
@@ -167,7 +168,8 @@ sbx --net=none --no-userns ./sbx-selftest --expect=net0,userns0   # also check w
 
 - This is a convenience sandbox, not a security boundary against a hostile program or a kernel exploit. The system-call filter is a blocklist, and nested user namespaces are allowed unless you set `userns=0`.
 - **Wayland:** the security context is implemented against the protocol and tested against a fake compositor; it has not been tried here on a real Mutter, KWin or wlroots session. Check with `sbx doctor`. Without compositor support the program gets the full socket (a warning says so), which on some compositors includes screen capture and input injection; `wayland_strict=1` turns Wayland off in that case instead.
-- With `net=1`, the abstract Unix socket namespace is shared with the host, so `x11=0` does not fully keep a program off an X server that listens on an abstract socket, and `/sys/class/net` still lists your network cards. Only `net=0` closes both.
+- With `net=1`, the abstract Unix socket namespace is shared with the host, so `x11=0` does not fully keep a program off an X server that listens on an abstract socket, and `/sys/class/net` still lists your network cards. `net=0` closes both; so does `net_private=1`, which gives the program a network namespace of its own.
+- `net_private=1` runs the program behind [`pasta`](https://passt.top/) in a network namespace of its own: nothing is forwarded in either direction, the gateway is not mapped to this computer (`--no-map-gw`), and name lookups go to a forwarder address that `pasta` answers. The internet works; `localhost`, services listening on this computer and its own addresses don't. **Your local network stays reachable**, so this is not a firewall. It does nothing with `net=0` (a warning says so), and sbx refuses to start without `pasta` instead of falling back to the shared network. Because the namespace is made by `pasta`, the program sees `/etc/resolv.conf` replaced by a generated one, and the filter is passed through a file in `$XDG_RUNTIME_DIR/sbx` (`pasta` closes inherited descriptors); `sbx preview` shows the exact command.
 - `sound=1` gives access to the PipeWire/PulseAudio socket, which includes microphone and, depending on setup, camera and screen-capture nodes.
 - `portals=1` lets the program ask your desktop to open URLs and files and show file choosers. Leave it off for programs you don't trust. **The file chooser is untested:** the portal sees the program as an ordinary host application, so it hands back real host paths that may not exist inside the private home. Choosing a file in a shared folder works the same as typing its path; elsewhere it probably won't.
 - Sharing `~/.ssh`, `~/.gnupg`, `~/.aws` and similar needs `--allow-sensitive`. The list covers common cases, not every program that keeps secrets.

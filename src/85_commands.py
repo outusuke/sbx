@@ -265,6 +265,8 @@ def doctor():
     row("OK" if shutil.which("notify-send") else "WARN", "notify-send", "" if shutil.which("notify-send") else f"only needed for the failed-to-start popup: {install_hint('libnotify')}")
     px = shutil.which("xdg-dbus-proxy")
     row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1 and tray=1: {install_hint('xdg-dbus-proxy')}")
+    ps = shutil.which("pasta")
+    row("OK" if ps else "WARN", "pasta", "" if ps else f"only needed for net_private=1: {install_hint('passt')}")
     sd = shutil.which("systemd-run")
     row("OK" if sd else "WARN", "systemd-run", "" if sd else "only needed for memory/tasks/cpu limits")
     wp = wayland_path()
@@ -277,7 +279,7 @@ def doctor():
     except OSError:
         abstract_x = False
     if abstract_x: row("WARN", "an X server listens on an abstract socket",
-                       "with net=1 (the default) a sandboxed program can reach it even with x11=0; only net=0 closes that")
+                       "with net=1 (the default) a sandboxed program can reach it even with x11=0; only net=0 or net_private=1 closes that")
     rt = runtime_dir()
     row("INFO", "sound: " + (", ".join(x for x in ("pipewire-0", "pulse/native") if os.path.exists(f"{rt}/{x}")) or "no PipeWire/PulseAudio socket"))
     row("INFO", "graphics: " + ("/dev/dri present" if os.path.isdir("/dev/dri") else "no /dev/dri"))

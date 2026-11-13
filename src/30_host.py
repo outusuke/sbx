@@ -56,6 +56,25 @@ def bwrap_has(flag):
     return flag in r.stdout + r.stderr
 
 
+def private_net(cfg):
+    """net_private: the program gets its own network (through pasta) that reaches the internet but not this computer."""
+    return bool(cfg["net"] and cfg["net_private"])
+
+
+# pasta gives the sandbox its own network namespace. Nothing is forwarded in either direction (-t/-u/-T/-U none), the gateway
+# address is not mapped to this computer (--no-map-gw), and DNS goes through a forwarder address that pasta answers itself.
+DNS_FWD = "169.254.1.1"
+PASTA = ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", DNS_FWD,
+         "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--"]
+SEC_FD = 9      # pasta closes inherited descriptors, so bwrap's seccomp filter is re-opened from a file inside it
+
+
+def net_wrap(secpath=None):
+    """The words that go in front of bwrap to run it inside pasta. With secpath, a shell first opens that file as descriptor 9."""
+    if secpath: return PASTA + ["/bin/sh", "-c", f'exec {SEC_FD}<"$1"; shift; exec "$@"', "sh", secpath]
+    return PASTA
+
+
 def scoped_xauth(src, disp, dst):
     """A copy of the XAUTHORITY file with only the cookie for this display on this computer (no xauth tool needed), or None.
     An entry is kept when it is for this display number AND for this machine (family Local with our host name, or family

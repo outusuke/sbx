@@ -2,7 +2,7 @@
 #| Layer rule: this fragment may use names from lower-numbered fragments (and its own) only; build.py enforces it.
 
 # ---------------------------------------------------------------- command line
-FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here": ("here", True),
+FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
          "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
          "--tray": ("tray", True), "--hostname": ("hostname", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
@@ -27,6 +27,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx desktop --install-opener           add \"Run in sbx\" to your file manager's Open With (--remove-opener undoes it)\n"
          "options (before the program; most also exist as a setting, e.g. net=0, x11=1):\n"
          "  --net=none    no network                   --no-wayland   hide the Wayland socket\n"
+         "  --net-private internet, but not this computer's own services (localhost); needs pasta\n"
          "  --private     private home erased on exit  --x11          share the X11 socket (weaker isolation)\n"
          "  --here        share the current folder     --no-gpu       hide /dev/dri and NVIDIA devices\n"
          "  --gpu-render-only      of /dev/dri share only the render nodes (renderD*), not the display card nodes\n"
@@ -50,7 +51,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --rebind               this file is the same program as before, just moved (see below)\n"
          "notes: the program starts in its private home, so use full paths or --here for files.\n"
          "  Flags only turn things off (or on, for the extras); settings files set the rest.\n"
-         "  net=1 also shares abstract Unix sockets (some X servers); only net=0 closes that.\n"
+         "  net=1 also shares abstract Unix sockets (some X servers); only net=0 or --net-private closes that.\n"
          "  32-bit programs are blocked by the syscall filter. Terminal programs lose /dev/tty (--new-session).\n"
          "  A program named like a command (clean, show...): sbx -- clean\n"
          "  A name belongs to the file that first used it; a different file under that name is refused (--name=OTHER or --rebind).\n"

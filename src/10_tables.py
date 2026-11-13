@@ -24,7 +24,7 @@ SECRETS = ["/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/gshadow-", "/etc
 SECRET_GLOBS = ["/etc/ssh/ssh_host_*_key"]
 # Folders emptied so other drives, other users, logs and mail stay out of sight (/home is added below if it is a real folder).
 EMPTY_DIRS = ["/root", "/mnt", "/media", "/srv", "/var/tmp", "/var/log", "/var/mail", "/var/spool/mail"]
-HIDE_SYS = ["/sys/devices/virtual/dmi/id"]       # serial numbers, product and vendor names; /sys/class/net too when net=0
+HIDE_SYS = ["/sys/devices/virtual/dmi/id"]       # serial numbers, product and vendor names; /sys/class/net too when net=0 or net_private=1
 DRIVES = ("/mnt/", "/media/", "/run/media/")
 OUTSIDE = DRIVES + ("/tmp/",)                    # places outside the home that can be shared
 ENV_KEEP = ("LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME", "TZ", "TERM", "COLORTERM",
@@ -48,7 +48,7 @@ PORTAL_EXTRA = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenC
 TRAY_PIDS = range(2, 65)
 TRAY_IDS = range(1, 4)
 # Settings (key=value files) and their defaults. Lists: LISTS. Text values: LIMITS (a pattern each value must match).
-SCALARS = {"net": True, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
+SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
            "compat": False, "tray": False, **{k: False for k in PORTAL_EXTRA}}

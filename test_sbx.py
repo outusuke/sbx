@@ -41,7 +41,7 @@ def tearDownModule():
 
 # ---------------------------------------------------------------- snapshot of `sbx preview`
 FAKE_FILES = {"/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/sudoers", "/etc/machine-id", "/var/lib/dbus/machine-id",
-              "/etc/ssh/ssh_host_ed25519_key", "/run/user/1000/xauth", "/etc/hostname", "/etc/hosts"}
+              "/etc/ssh/ssh_host_ed25519_key", "/run/user/1000/xauth", "/etc/hostname", "/etc/hosts", "/etc/resolv.conf"}
 FAKE_DIRS = {"/run/systemd/resolve", "/etc/sudoers.d", "/etc/ssl/private", "/root", "/mnt", "/media", "/srv", "/var/tmp",
              "/home", "/var/log", "/var/mail", "/var/spool/mail", "/sys/devices/virtual/dmi/id", "/sys/class/net"}
 FAKE_GLOBS = {"/etc/ssh/ssh_host_*_key": ["/etc/ssh/ssh_host_ed25519_key"], "/dev/video*": ["/dev/video0"],
@@ -62,6 +62,7 @@ SCENARIOS = [                                   # (title, program, flags, overri
     ("no theme", "firefox", ["--no-theme"], {}),
     ("desktop settings the program can't read", "firefox", [],
      {"gsettings_keyfile_text": lambda: "[org/gnome/desktop/wm/preferences]\nbutton-layout=':minimize,maximize,close'\n"}),
+    ("private network (pasta)", "firefox", ["--net-private"], {}),
     ("compositor without security context", "firefox", [], NO_SECURITY_CONTEXT),
     ("wayland strict, no security context", "firefox", ["--wayland-strict"], NO_SECURITY_CONTEXT),
 ]
@@ -93,9 +94,10 @@ def fake_preview(prog, flags, patch=None):
     with mock.patch.dict(os.environ, env, clear=True), \
          mock.patch.object(os.path, "isdir", lambda p: p in FAKE_DIRS), \
          mock.patch.object(os.path, "isfile", lambda p: p in FAKE_FILES), \
-         mock.patch.object(os.path, "islink", lambda p: False):
+         mock.patch.object(os.path, "islink", lambda p: False), \
+         mock.patch.object(os, "getuid", lambda: 1000), mock.patch.object(os, "getgid", lambda: 1000):
         _, args, state = S["build"](prog, [], False, opts)
-    return state["prefix"], args
+    return state["prefix"] + state["wrap"], args
 
 
 def snapshot_text():
@@ -171,6 +173,29 @@ class Snapshot(unittest.TestCase):
         self.assertNotIn("/sys/class/net", a, "with a network the interfaces stay listed")
         _, a = fake_preview("firefox", ["--net=none"])
         self.assertEqual(a[a.index("/sys/class/net") - 1], "--tmpfs")
+
+    def test_net_private_runs_bwrap_inside_pasta_and_changes_only_what_it_must(self):
+        wrap, a = fake_preview("firefox", ["--net-private"])
+        self.assertEqual(wrap, ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", "169.254.1.1",
+                                "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--",
+                                "/bin/sh", "-c", 'exec 9<"$1"; shift; exec "$@"', "sh", "/run/user/1000/sbx/PID.seccomp"])
+        self.assertEqual(a[a.index("--seccomp") + 1], "9")                                  # the shell opens the file as descriptor 9
+        self.assertNotIn("FD", a)
+        self.assertEqual(a[a.index("--uid"):a.index("--uid") + 4], ["--uid", "1000", "--gid", "1000"])     # pasta's namespace maps you to root
+        self.assertEqual(a.count("--share-net"), 1)                                         # bwrap shares pasta's network, not the host's
+        triples = [a[k:k + 3] for k in range(len(a) - 2)]
+        self.assertIn(["--ro-bind", "/run/user/1000/sbx/PID.resolv.conf", "/etc/resolv.conf"], triples)
+        self.assertEqual(a[a.index("/sys/class/net") - 1], "--tmpfs")                       # the host's cards stay hidden, network on or not
+        self.assertLess(a.index("/run/systemd/resolve"), a.index("/run/user/1000/sbx/PID.resolv.conf"))   # after the folders resolv.conf may point into
+        # without the switch none of that appears
+        for flags in ([], ["--net=none"]):
+            wrap, a = fake_preview("firefox", flags)
+            self.assertEqual(wrap, [], flags)
+            self.assertNotIn("--uid", a); self.assertNotIn("/etc/resolv.conf", a)
+            self.assertEqual(a[a.index("--seccomp") + 1], "FD")
+        # with the network off the switch does nothing at all
+        wrap, a = fake_preview("firefox", ["--net=none", "--net-private"])
+        self.assertEqual(wrap, []); self.assertNotIn("--uid", a); self.assertEqual(a.count("--share-net"), 0)
 
     def test_shares_keep_their_modes(self):
         _, a = fake_preview("firefox", [f"--whitelist={FIX}/a/b", f"--read-only={FIX}/a"])
@@ -392,6 +417,62 @@ class Units(unittest.TestCase):
         S["teardown"](st)
         self.assertFalse(os.path.exists(boot))
 
+    def test_net_private_is_a_switch_a_flag_and_needs_the_network(self):
+        S = self.S
+        self.assertIs(S["SCALARS"]["net_private"], False)                                 # off unless asked for
+        self.assertEqual(S["parse_options"](["--net-private", "x"])[0], {"net_private": True})
+        sc, _, _ = S["parse_conf"](self.write("n.conf", "net_private=1\n"))
+        self.assertEqual(sc, {"net_private": True})
+        self.assertIn("net_private", S["schema"]()["switches"])
+        self.assertTrue(S["private_net"]({"net": True, "net_private": True}))
+        self.assertFalse(S["private_net"]({"net": False, "net_private": True}))
+        self.assertFalse(S["private_net"]({"net": True, "net_private": False}))
+
+    def test_net_private_files_are_private_files_not_descriptors_and_are_removed_after(self):
+        S = self.S
+        os.makedirs(f"{self.tmp}/run4")
+        S["runtime_dir"] = lambda: f"{self.tmp}/run4"
+        with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}), mock.patch.object(shutil, "which", lambda x: f"/usr/bin/{x}"):
+            _, cmd, st = S["build"]("/bin/true", [], True, {"net_private": True, "allow_syscall": ["io_uring"]})
+        self.addCleanup(lambda: [f.close() for f in st["keep"]])
+        d = f"{self.tmp}/run4/sbx"
+        sec, resolv = f"{d}/{os.getpid()}.seccomp", f"{d}/{os.getpid()}.resolv.conf"
+        self.assertEqual(st["fds"], []); self.assertEqual(st["keep"], [])                 # pasta would close anything inherited
+        self.assertEqual(st["wrap"][-2:], ["sh", sec])
+        self.assertEqual(cmd[cmd.index("--seccomp") + 1], "9")
+        with open(sec, "rb") as f: self.assertEqual(f.read(), S["seccomp_program"](S["platform"].machine(), ["io_uring"]))
+        with open(resolv) as f: self.assertEqual(f.read(), "nameserver 169.254.1.1\n")
+        for p in (sec, resolv):
+            self.assertEqual(os.stat(p).st_mode & 0o777, 0o600); self.assertIn(p, st["files"])
+        self.assertIn(["--ro-bind", resolv, "/etc/resolv.conf"], [cmd[i:i + 3] for i in range(len(cmd) - 2)])
+        S["teardown"](st)
+        self.assertFalse(os.path.exists(sec) or os.path.exists(resolv))
+
+    def test_net_private_refuses_to_start_without_pasta_and_warns_when_the_network_is_off(self):
+        S = self.S
+        os.makedirs(f"{self.tmp}/run5")
+        S["runtime_dir"] = lambda: f"{self.tmp}/run5"
+        real_which = shutil.which
+        with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}), \
+             mock.patch.object(shutil, "which", lambda x: None if x == "pasta" else real_which(x)):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as r: S["build"]("/bin/true", [], True, {"net_private": True})
+            self.assertNotEqual(r.exception.code, 0)
+            self.assertRegex(err.getvalue(), r"net_private=1 needs pasta"); self.assertIn("passt", err.getvalue())
+            self.assertFalse(os.path.exists(f"{self.tmp}/run5/sbx"), "nothing was made before refusing")
+            self.assertEqual(self.warned, [])
+            _, cmd, st = S["build"]("/bin/true", [], True, {"net_private": True, "net": False})      # no pasta needed: no network at all
+        self.addCleanup(lambda: [f.close() for f in st["keep"]])
+        self.assertEqual(st["wrap"], []); self.assertNotIn("--uid", cmd); self.assertNotIn("--share-net", cmd)
+        self.assertEqual(len(self.warned), 1); self.assertIn("net_private does nothing while net=0", self.warned[0])
+        S["teardown"](st)
+
+    def test_preview_prints_the_pasta_command_first(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): self.S["main"](["preview", "--ignore-config", "--net-private", "/bin/true"])
+        words = __import__("shlex").split(out.getvalue())
+        self.assertEqual(words[:2], ["pasta", "--quiet"]); self.assertLess(words.index("pasta"), words.index("bwrap"))
+
     def test_unknown_architecture_does_not_start_without_the_filter(self):
         if os.geteuid() == 0: self.skipTest("run() refuses root before it gets to the architecture")
         S, dies = self.S, []
@@ -607,7 +688,7 @@ class Units(unittest.TestCase):
             try: os.kill(dead, 0); dead += 1
             except ProcessLookupError: break
             except PermissionError: dead += 1
-        names = {f"{dead}.bus": False, f"{dead}.xauth": False, f"{dead}.wl": False, f"{dead}.boot_id": False, f"{dead}.hostname": False, f"{dead}.hosts": False, f"{os.getpid()}.wl": True, "notes.txt": True, f"{dead}.other": True}
+        names = {f"{dead}.bus": False, f"{dead}.xauth": False, f"{dead}.wl": False, f"{dead}.boot_id": False, f"{dead}.hostname": False, f"{dead}.hosts": False, f"{dead}.resolv.conf": False, f"{dead}.seccomp": False, f"{os.getpid()}.wl": True, "notes.txt": True, f"{dead}.other": True}
         for n in names: open(f"{d}/{n}", "w").close()
         self.S["sweep_stale"]()
         for n, kept in names.items(): self.assertEqual(os.path.exists(f"{d}/{n}"), kept, n)
@@ -1364,6 +1445,30 @@ class Isolation(unittest.TestCase):
         r = self.sbx_run(self.script, "--expect=userns0")                       # negative control: without --no-userns they work
         if self.has_disable_userns and r.returncode == 0: self.fail("user namespaces were blocked without asking")
 
+    def test_net_private_reaches_the_internet_stack_but_not_this_computer(self):
+        if not shutil.which("pasta"): self.skipTest("pasta is not installed")
+        if subprocess.run(["pasta", "--quiet", "--config-net", "--", "true"], capture_output=True, timeout=30).returncode != 0:
+            self.skipTest("pasta cannot start here")
+        probe = ("import os, socket, sys\n"
+                 "s = socket.socket(); s.settimeout(5)\n"
+                 "try: s.connect(('127.0.0.1', int(sys.argv[1]))); r = 'connected'\n"
+                 "except OSError as e: r = 'refused' if e.errno == 111 else 'error %s' % e\n"
+                 "print(r, os.getuid(), os.getgid(), repr(open('/etc/resolv.conf').read()), sorted(os.listdir('/sys/class/net')))\n")
+        with socket.socket() as srv:                                  # something on this computer that the program must not reach
+            srv.bind(("127.0.0.1", 0)); srv.listen(5)
+            port = str(srv.getsockname()[1])
+            r = self.sbx_run("--ignore-config", "python3", "-c", probe, port)            # control: the shared network does reach it
+            self.assertEqual(r.stdout.split()[0], "connected", r.stdout + r.stderr)
+            run = f"{self.T}/run-pasta"
+            r = self.sbx_run("--ignore-config", "--net-private", "python3", "-c", probe, port, env={"XDG_RUNTIME_DIR": run})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.split()[0], "refused", r.stdout + r.stderr)
+        self.assertIn(f" {os.getuid()} {os.getgid()} ", r.stdout)                         # still your own ids
+        self.assertIn("'nameserver 169.254.1.1\\n'", r.stdout)
+        self.assertTrue(r.stdout.rstrip().endswith("[]"), "/sys/class/net should be empty: " + r.stdout)
+        left = os.listdir(f"{run}/sbx") if os.path.isdir(f"{run}/sbx") else []
+        self.assertEqual([n for n in left if n.endswith(("seccomp", "resolv.conf"))], [], "the helper files are removed when the run ends")
+
     def test_io_uring_can_be_allowed_again(self):
         try:
             with open("/proc/sys/kernel/io_uring_disabled") as f:
@@ -1499,8 +1604,10 @@ class Isolation(unittest.TestCase):
         self.assertRegex(r.stdout, r"net\s+= 0\s+\[apps/showtest.conf\]")
         self.assertRegex(r.stdout, r"gpu\s+= 1\s+\[default\]"); self.assertRegex(r.stdout, r"memory\s+= 1G")
         self.assertRegex(r.stdout, r"whitelist\s+= ~/Documents\s+\[apps/showtest.conf\]"); self.assertRegex(r.stdout, r"env\s+= ZED\s+\[flag\]")
+        self.assertRegex(r.stdout, r"(OK|WARN)\s+pasta")
         import json
         self.assertIn("hostname", json.loads(self.sbx_run("schema").stdout)["switches"])
+        self.assertIn("net_private", json.loads(self.sbx_run("schema").stdout)["switches"])
 
     def test_clean(self):
         os.makedirs(f"{self.home}/.sbx-homes/cleantest/sub"); os.chmod(f"{self.home}/.sbx-homes/cleantest/sub", 0o500)

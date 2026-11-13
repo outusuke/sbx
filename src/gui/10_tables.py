@@ -4,7 +4,9 @@
 # Wording for each switch: key, title, subtitle, default. The list of switches itself comes from `sbx schema` (see
 # load_schema), so a switch added to sbx shows up here at once, under "Other", even before it has wording of its own.
 GROUPS = [
-    ("Network", [("net", "Network", "Internet and your local network", True)]),
+    ("Network", [
+        ("net", "Network", "Internet and your local network", True),
+        ("net_private", "Keep this computer private", "Internet only: the program can't reach services running on this computer (databases, dev servers). Other devices on your local network are still reachable. Needs pasta (passt). Works only when “Network” is on", False)]),
     ("Display", [
         ("wayland", "Wayland", "Lets graphical programs open a window", True),
         ("wayland_strict", "Wayland only if restricted", "No Wayland at all when the compositor can't limit what the program may do", False),
@@ -41,7 +43,7 @@ GROUPS = [
         ("allow_sensitive", "Allow sharing secret folders", "Lets you share ~/.ssh, ~/.gnupg and similar. Only if you really mean it", False)]),
 ]
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
-SHORT = {"net": "network", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
+SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "userns": "user namespaces",
          "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm",
          "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
