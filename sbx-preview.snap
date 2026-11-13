@@ -14,7 +14,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -84,7 +84,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -108,8 +108,8 @@ bwrap
 --tmpfs /etc/sudoers.d
 --tmpfs /etc/ssl/private
 --ro-bind /dev/null /etc/ssh/ssh_host_ed25519_key
---ro-bind-data FD /etc/hostname
---ro-bind-data FD /etc/hosts
+--ro-bind /run/user/1000/sbx/PID.hostname /etc/hostname
+--ro-bind /run/user/1000/sbx/PID.hosts /etc/hosts
 --ro-bind /home/user/.config/sbx/ids/firefox /etc/machine-id
 --ro-bind /home/user/.config/sbx/ids/firefox /var/lib/dbus/machine-id
 --setenv HOME /home/user
@@ -138,7 +138,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -210,7 +210,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -279,7 +279,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -350,7 +350,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -419,7 +419,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -495,7 +495,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -567,7 +567,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -635,7 +635,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -691,7 +691,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -761,7 +761,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000
@@ -829,7 +829,7 @@ bwrap
 --proc /proc
 --tmpfs /tmp
 --tmpfs /run
---ro-bind-data FD /proc/sys/kernel/random/boot_id
+--ro-bind /run/user/1000/sbx/PID.boot_id /proc/sys/kernel/random/boot_id
 --ro-bind /run/systemd/resolve /run/systemd/resolve
 --perms 0700
 --dir /run/user/1000

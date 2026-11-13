@@ -881,12 +881,14 @@ def build(prog, args, live=False, o=None):
         else:
             a += ["--seccomp", "FD"]
 
-    def data(dest, text):                       # a read-only file made from text (no file on disk)
-        if not live: return ["--ro-bind-data", "FD", dest]
-        fd = os.memfd_create("sbx")
-        os.write(fd, text.encode()); os.lseek(fd, 0, os.SEEK_SET); os.set_inheritable(fd, True)
-        state["fds"].append(fd)
-        return ["--ro-bind-data", str(fd), dest]
+    def data(dest, text, ext):                  # a read-only file made from text: a private file, removed when the run ends
+        src = f"{tag}.{ext}"                    # (a file, not an inherited descriptor: a wrapper such as pasta would close those)
+        if live:
+            os.makedirs(os.path.dirname(src), mode=0o700, exist_ok=True)
+            fd = os.open(src, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w") as f: f.write(text)
+            state["files"].append(src)
+        return ["--ro-bind", src, dest]
 
     def track(dst, source, tryit):              # bwrap creates mountpoints inside the private home; note them for cleanup
         if not live or cfg["private"] or not dst.startswith(HOME + "/") or (tryit and not os.path.exists(source)): return
@@ -900,7 +902,7 @@ def build(prog, args, live=False, o=None):
         a.extend([kind, source, dst]); track(dst, source, kind.endswith("-try"))
 
     a += ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run"]
-    a += data("/proc/sys/kernel/random/boot_id", str(uuid.uuid4()) + "\n")      # the host's boot id is a fingerprint
+    a += data("/proc/sys/kernel/random/boot_id", str(uuid.uuid4()) + "\n", "boot_id")      # the host's boot id is a fingerprint
     for link in NIX_LINKS:
         if os.path.islink(link): a += ["--symlink", os.readlink(link), link]
     for d in resolv_dirs():
@@ -988,8 +990,8 @@ def build(prog, args, live=False, o=None):
         if os.path.isdir(p): a += ["--tmpfs", p]
         elif os.path.isfile(p): a += ["--ro-bind", "/dev/null", p]
     if cfg["hostname"]:                         # /etc/hostname and /etc/hosts would still tell the real name
-        if os.path.isfile("/etc/hostname"): a += data("/etc/hostname", "sbx\n")
-        if os.path.isfile("/etc/hosts"): a += data("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n127.0.1.1 sbx\n")
+        if os.path.isfile("/etc/hostname"): a += data("/etc/hostname", "sbx\n", "hostname")
+        if os.path.isfile("/etc/hosts"): a += data("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n127.0.1.1 sbx\n", "hosts")
     if os.path.isfile("/etc/machine-id"):
         mid = machine_id(name, live)
         a += ["--ro-bind", mid, "/etc/machine-id"]
@@ -1088,12 +1090,12 @@ def stop_program(name):
 
 # ---------------------------------------------------------------- running it
 def sweep_stale():
-    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.xauth, PID.wl, PID.gsettings)."""
+    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts)."""
     d = f"{runtime_dir()}/sbx"
     try: names = os.listdir(d)
     except OSError: return
     for n in names:
-        m = re.fullmatch(r"(\d+)\.(bus|xauth|wl|gsettings)", n)
+        m = re.fullmatch(r"(\d+)\.(bus|xauth|wl|gsettings|boot_id|hostname|hosts)", n)
         if not m: continue
         try: os.kill(int(m.group(1)), 0); continue          # still running
         except ProcessLookupError: pass

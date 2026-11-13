@@ -142,8 +142,8 @@ class Snapshot(unittest.TestCase):
                 self.assertIn(("--bind", private), binds, title)
                 k = a.index(private)                     # the parent folder is emptied before the private home goes in
                 self.assertIn("/home", a[:k]); self.assertEqual(a[a.index("/home") - 1], "--tmpfs")
-            # fake data files are bound read-only from a descriptor, and the boot id is always replaced
-            self.assertIn(["--ro-bind-data", "FD", "/proc/sys/kernel/random/boot_id"], [a[k:k + 3] for k in range(len(a) - 2)], title)
+            # fake data files are bound read-only from private files, and the boot id is always replaced
+            self.assertIn(["--ro-bind", "/run/user/1000/sbx/PID.boot_id", "/proc/sys/kernel/random/boot_id"], [a[k:k + 3] for k in range(len(a) - 2)], title)
             # a folder is mounted before what is inside it, so the inner share keeps its own mode
             shared = [(a[j], a[j + 1]) for j in range(len(a) - 2) if a[j] in ("--bind", "--ro-bind") and a[j + 1] == a[j + 2]
                       and a[j + 1].startswith(("/tmp/", "/home/user/")) and "/.sbx-homes" not in a[j + 1]]
@@ -375,6 +375,23 @@ class Units(unittest.TestCase):
         for f in st["keep"]: f.close()
         self.assertFalse(any(cmd[i:i + 3] == ["--ro-bind", xa, xa] for i in range(len(cmd))), "the whole file was shared")
 
+    def test_fake_files_are_private_files_not_descriptors_and_are_removed_after(self):
+        S = self.S
+        os.makedirs(f"{self.tmp}/run3")
+        S["runtime_dir"] = lambda: f"{self.tmp}/run3"
+        S["bwrap_has"] = lambda flag: True
+        with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}):
+            _, cmd, st = S["build"]("/bin/true", [], True, {"hostname": True})
+        self.addCleanup(lambda: [f.close() for f in st["keep"]])
+        self.assertNotIn("--ro-bind-data", cmd)                         # nothing a wrapper like pasta would close
+        boot = f"{self.tmp}/run3/sbx/{os.getpid()}.boot_id"
+        self.assertIn(["--ro-bind", boot, "/proc/sys/kernel/random/boot_id"], [cmd[i:i + 3] for i in range(len(cmd) - 2)])
+        with open(boot) as f: self.assertRegex(f.read(), r"^[0-9a-f-]{36}\n$")
+        self.assertEqual(os.stat(boot).st_mode & 0o777, 0o600)
+        self.assertIn(boot, st["files"])
+        S["teardown"](st)
+        self.assertFalse(os.path.exists(boot))
+
     def test_unknown_architecture_does_not_start_without_the_filter(self):
         if os.geteuid() == 0: self.skipTest("run() refuses root before it gets to the architecture")
         S, dies = self.S, []
@@ -590,7 +607,7 @@ class Units(unittest.TestCase):
             try: os.kill(dead, 0); dead += 1
             except ProcessLookupError: break
             except PermissionError: dead += 1
-        names = {f"{dead}.bus": False, f"{dead}.xauth": False, f"{dead}.wl": False, f"{os.getpid()}.wl": True, "notes.txt": True, f"{dead}.other": True}
+        names = {f"{dead}.bus": False, f"{dead}.xauth": False, f"{dead}.wl": False, f"{dead}.boot_id": False, f"{dead}.hostname": False, f"{dead}.hosts": False, f"{os.getpid()}.wl": True, "notes.txt": True, f"{dead}.other": True}
         for n in names: open(f"{d}/{n}", "w").close()
         self.S["sweep_stale"]()
         for n, kept in names.items(): self.assertEqual(os.path.exists(f"{d}/{n}"), kept, n)
