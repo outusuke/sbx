@@ -1420,6 +1420,11 @@ class FakeCompositor(threading.Thread):
         self.running = False
         self.join(2)
         self.srv.close()
+        if self.listen: self.listen.close(); self.listen = None
+        if self.close_fd is not None:
+            try: os.close(self.close_fd)
+            except OSError: pass
+            self.close_fd = None
 
     def run(self):
         while self.running:

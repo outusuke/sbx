@@ -16,4 +16,7 @@ jobs:
       - name: Lint
         run: python3 -m pyflakes sbx sbx-gui sbx-selftest sbx-report test_sbx.py build.py tools/verify_move.py
       - name: Tests (the isolation tests must not be skipped on CI)
-        run: python3 test_sbx.py -v 2>&1 | tee out.txt; ! grep -q "skipped" out.txt
+        run: |
+          set -o pipefail
+          python3 test_sbx.py -v 2>&1 | tee out.txt
+          ! grep -q "skipped" out.txt

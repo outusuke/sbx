@@ -18,6 +18,7 @@ def seccomp_program(machine, allow=()):
     audit, nrs = ARCHES[machine][0], blocked_numbers(machine, allow)
     deny = 0x00050000 | errno.EPERM
     n = len(nrs)
+    if n > 250: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
     ins = [(0x20, 0, 0, 4), (0x15, 1, 0, audit), (0x06, 0, 0, deny), (0x20, 0, 0, 0),
            (0x35, n + 1, 0, 0x40000000)]                       # x32 calls: deny
     ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
