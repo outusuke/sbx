@@ -26,7 +26,8 @@ sbx \- run a program in a bubblewrap sandbox
 \fIFILE\fR
 .br
 .B sbx desktop
-\fINAME\fR | \fB\-\-remove\fR \fINAME\fR | \fB\-\-install\-opener\fR | \fB\-\-remove\-opener\fR
+\fINAME\fR | \fB\-\-remove\fR \fINAME\fR | \fB\-\-install\-opener\fR | \fB\-\-remove\-opener\fR |
+\fB\-\-install\-menu\fR | \fB\-\-remove\-menu\fR
 .SH DESCRIPTION
 .B sbx
 starts a program inside a
@@ -89,6 +90,13 @@ undoes that.
 Add "Run in sbx" to the file manager's Open With.
 .B \-\-remove\-opener
 undoes it.
+.TP
+.B sbx desktop \-\-install\-menu
+Add sbx\-gui to your app menu.
+.B \-\-remove\-menu
+takes it out again. It needs sbx\-gui installed as a root\-owned file in
+.IR /usr/local/bin :
+only such a copy is ever started from the menu, so a program running as you cannot replace it.
 .TP
 .B sbx schema
 Print the switches and limits that exist, as JSON. sbx\-gui reads this.
@@ -311,6 +319,15 @@ The private home of NAME.
 .TP
 .I ~/.local/state/sbx/sbx.log
 The launch log.
+.TP
+.I ~/.local/share/applications/org.sbx.Gui.desktop
+The app menu entry for sbx\-gui, made by
+.BR "sbx desktop \-\-install\-menu" .
+.TP
+.I ~/.local/share/applications/sbx\-run.desktop
+The "Run in sbx" entry for Open With, made by
+.BR "sbx desktop \-\-install\-opener" .
+It is hidden from the app menu.
 .SH EXIT STATUS
 The program's own status, or 128 plus the signal number if a signal ended it. sbx itself exits with 1 when it
 cannot start the program (bad option, unreadable path, missing bubblewrap).

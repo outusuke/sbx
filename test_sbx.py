@@ -802,6 +802,10 @@ class Units(unittest.TestCase):
             self.assertIsNone(of(bad), bad)
         self.assertEqual(of("/tmp/x/game"), "/tmp/x")
 
+    def test_man_page_documents_the_desktop_options(self):
+        with open(f"{HERE}/sbx.1") as f: man = f.read().replace("\\-", "-")
+        for flag in ("--install-opener", "--remove-opener", "--install-menu", "--remove-menu", "--remove"): self.assertIn(flag, man)
+
     def test_menu_commands(self):
         S, h = self.S, self.home
         desk = f"{h}/.local/share/applications/org.sbx.Gui.desktop"; icon = f"{h}/.local/share/icons/hicolor/scalable/apps/org.sbx.Gui.svg"
