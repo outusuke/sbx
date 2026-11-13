@@ -14,6 +14,11 @@ sbx \- run a program in a bubblewrap sandbox
 .br
 .B sbx doctor
 .br
+.B sbx list
+.br
+.B sbx stop
+\fINAME\fR
+.br
 .B sbx clean
 [\fB\-\-yes\fR] \fINAME\fR
 .br
@@ -60,8 +65,14 @@ Print the settings that apply to a program and which file or flag each one came 
 Check bubblewrap, the helpers (xdg\-dbus\-proxy, notify\-send, systemd\-run), Wayland support and the
 settings files.
 .TP
+.B sbx list
+List the programs sbx knows (a private home or a settings file) and say which are running.
+.TP
+.B sbx stop NAME
+Ask a running program to stop (SIGTERM).
+.TP
 .B sbx clean [\-\-yes] NAME
-Delete a program's private home and its machine\-id.
+Delete a program's private home and its machine\-id. Refused while the program is running.
 .TP
 .B sbx open FILE
 Run a downloaded program with sensible defaults. This is what "Open with" calls; see

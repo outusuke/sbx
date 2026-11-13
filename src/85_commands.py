@@ -25,6 +25,7 @@ def cmd_clean(a):
     name = a[0]
     home, mid = f"{HOMES}/{name}", f"{CONF}/ids/{name}"
     if clean(name) != name or not (os.path.isdir(home) or os.path.exists(mid)): die(f"nothing to clean for '{name}'")
+    if running(name): die(f"'{name}' is running. Stop it first: sbx stop {name}")
     real = os.path.realpath(home)
     if os.path.islink(home) or not real.startswith(os.path.realpath(HOMES) + "/"): die(f"{tilde(home)} is not a plain private home")
     if not yes:
@@ -41,6 +42,28 @@ def cmd_clean(a):
         try: os.unlink(gone)
         except OSError: pass
     print(f"removed {tilde(home)} and its machine-id")
+
+
+def cmd_list(a):
+    """Every program sbx knows (a private home or a settings file, or running now), and whether it is running."""
+    if a: die("usage: sbx list")
+    names = set()
+    for d, suffix in ((HOMES, ""), (f"{CONF}/apps", ".conf")):
+        try: names.update(n[:len(n) - len(suffix)] for n in os.listdir(d) if n.endswith(suffix) and not n.startswith("."))
+        except OSError: pass
+    live = {p: pid_app(p) for p in running()}
+    names.update(live.values())
+    for n in sorted(names):
+        k = sum(1 for v in live.values() if v == n)
+        print(f"{n:32} " + (f"running ({k})" if k else "idle"))
+
+
+def cmd_stop(a):
+    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx stop NAME")
+    if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
+    if not running(a[0]): die(f"'{a[0]}' is not running")
+    n = stop_program(a[0])
+    print(f"stopping {a[0]}" + (f" ({n} processes)" if n > 1 else ""))
 
 
 def rewrite_desktop(text, sbx):

@@ -372,7 +372,7 @@ class Units(unittest.TestCase):
         S["runtime_dir"] = lambda: f"{self.tmp}/run2"
         with mock.patch.dict(os.environ, {"DISPLAY": "localhost:10.0", "XAUTHORITY": xa, "WAYLAND_DISPLAY": ""}):
             _, cmd, st = S["build"]("/bin/true", [], True, {"x11": True})
-        for fd in st["fds"]: os.close(fd)
+        for f in st["keep"]: f.close()
         self.assertFalse(any(cmd[i:i + 3] == ["--ro-bind", xa, xa] for i in range(len(cmd))), "the whole file was shared")
 
     def test_unknown_architecture_does_not_start_without_the_filter(self):
@@ -520,7 +520,57 @@ class Units(unittest.TestCase):
                 ok = (o in t or f"-l {name}" in t or name in looped
                       or (name.startswith("portal-") and name[7:] in looped))
                 self.assertTrue(ok, f"{f} doesn't offer {o}")
-            for c in ("preview", "show", "doctor", "clean", "desktop", "open"): self.assertIn(c, t, f"{f} lacks {c}")
+            for c in ("preview", "show", "doctor", "clean", "desktop", "open", "list", "stop"): self.assertIn(c, t, f"{f} lacks {c}")
+
+    # -- running programs
+    def running_file(self, pid, name, start="same"):
+        os.makedirs(self.S["RUNNING"], exist_ok=True)
+        with open(f"{self.S['RUNNING']}/{pid}", "w") as f:
+            f.write(f"{name}\n" + (self.S["proc_start"](pid) if start == "same" else start))
+
+    def test_a_running_file_counts_only_for_the_process_that_wrote_it(self):
+        S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
+        me = os.getpid()
+        self.running_file(me, "app")
+        self.assertEqual(S["running"]("app"), [str(me)]); self.assertEqual(S["running"](), [str(me)]); self.assertEqual(S["running"]("other"), [])
+        self.running_file(me, "app", start="1")                       # the PID now belongs to another process
+        self.assertEqual(S["running"]("app"), [])
+        with open(f"{S['RUNNING']}/{me}", "w") as f: f.write("app\n")      # no start time: can't be checked
+        self.assertEqual(S["running"]("app"), [])
+        self.running_file(me, "app"); S["live_sbx"] = lambda pid: False      # not an sbx process
+        self.assertEqual(S["running"]("app"), [])
+
+    def test_mark_running_drops_stale_files_and_unmark_removes_ours(self):
+        S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
+        os.makedirs(S["RUNNING"]); open(f"{S['RUNNING']}/999999", "w").write("gone\n123")
+        open(f"{S['RUNNING']}/notes.txt", "w").close()
+        S["mark_running"]("app")
+        self.assertEqual(sorted(os.listdir(S["RUNNING"])), sorted(["notes.txt", str(os.getpid())]))
+        self.assertEqual(S["running"]("app"), [str(os.getpid())])
+        S["unmark_running"](); S["unmark_running"]()
+        self.assertEqual(os.listdir(S["RUNNING"]), ["notes.txt"])
+
+    def test_stop_signals_the_checked_process_and_leaves_a_reused_pid_alone(self):
+        S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
+        mine, other = (subprocess.Popen(["sleep", "60"]) for _ in range(2))
+        self.addCleanup(lambda: [p.kill() or p.wait() for p in (mine, other)])
+        self.running_file(mine.pid, "app")
+        self.running_file(other.pid, "app", start="1")                # a newcomer that took a stale file's PID
+        self.assertEqual(S["stop_program"]("app"), 1)
+        self.assertEqual(mine.wait(5), -15)
+        self.assertIsNone(other.poll())
+
+    def test_clean_refuses_a_running_program_and_stop_needs_one(self):
+        S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
+        os.makedirs(f"{S['HOMES']}/busy"); os.makedirs(f"{S['HOMES']}/idle")
+        self.running_file(os.getpid(), "busy")
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+            S["cmd_clean"](["--yes", "busy"])
+        self.assertIn("sbx stop busy", err.getvalue()); self.assertTrue(os.path.isdir(f"{S['HOMES']}/busy"))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["cmd_stop"](["idle"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_list"]([])
+        self.assertEqual([l.split() for l in out.getvalue().splitlines()], [["busy", "running", "(1)"], ["idle", "idle"]])
 
     def test_install_hint(self):
         def hint(text):
@@ -1001,6 +1051,16 @@ class Gui(unittest.TestCase):
             row = G["Adw"].SwitchRow.return_value; row.set_subtitle.reset_mock()
             G["Win"].switch_row(mock.MagicMock(), scope, key)
             row.set_subtitle.assert_called_with(G["SWITCHES"][key][1])
+
+    def test_the_window_will_not_trash_the_home_of_a_running_program(self):
+        G = self.G
+        G["RUNNING"] = f"{self.tmp}/run"; os.makedirs(G["RUNNING"])
+        with open("/proc/self/stat", "rb") as f: start = f.read().rsplit(b")", 1)[1].split()[19].decode()
+        G["live_sbx"] = lambda pid: True
+        with open(f"{G['RUNNING']}/{os.getpid()}", "w") as f: f.write(f"app\n{start}")
+        self.assertTrue(G["program_running"]("app")); self.assertFalse(G["program_running"]("other"))
+        with open(f"{G['RUNNING']}/{os.getpid()}", "w") as f: f.write("app\n1")
+        self.assertFalse(G["program_running"]("app"))
 
     def test_log_page_reads_the_same_file_sbx_writes_and_filters_by_program(self):
         G, S = self.G, self.S

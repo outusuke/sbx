@@ -13,13 +13,15 @@ FLAGS = {"--net=none": ("net", False), "--private": ("private", True), "--here":
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
                "--loader": "loader"}
-COMMANDS = ("preview", "show", "doctor", "clean", "desktop", "open", "schema")
+COMMANDS = ("preview", "show", "doctor", "clean", "desktop", "open", "schema", "list", "stop")
 
 USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx preview [options] PROGRAM [args]   print the command instead of running it\n"
          "sbx show [options] NAME                the settings that apply to a program, and where each comes from\n"
          "sbx doctor                             check that everything sbx needs works here\n"
-         "sbx clean [--yes] NAME                 delete a program's private home and machine-id\n"
+         "sbx list                               the programs sbx knows, and which are running\n"
+         "sbx stop NAME                          stop a running program\n"
+         "sbx clean [--yes] NAME                 delete a program's private home and machine-id (not while it runs)\n"
          "sbx open FILE                          run a downloaded program with sensible defaults (for \"Open with\")\n"
          "sbx desktop NAME | --remove NAME       make a launcher (NAME.desktop) start the program through sbx\n"
          "sbx desktop --install-opener           add \"Run in sbx\" to your file manager's Open With (--remove-opener undoes it)\n"

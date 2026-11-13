@@ -53,7 +53,9 @@ sbx [options] PROGRAM [args]
 sbx preview [options] PROGRAM [args]     print the command instead of running it
 sbx show [options] NAME                  the settings that apply, and which file or flag each came from
 sbx doctor                               check bubblewrap, helpers, Wayland support, settings files
-sbx clean [--yes] NAME                   delete a private home and its machine-id
+sbx list                                 the programs sbx knows, and which are running
+sbx stop NAME                            stop a running program
+sbx clean [--yes] NAME                   delete a private home and its machine-id (refused while the program runs)
 sbx open FILE                            run a downloaded program with sensible defaults (what "Open with" calls)
 sbx desktop NAME                         make a launcher (.desktop file) start the program through sbx
 sbx desktop --remove NAME                undo that

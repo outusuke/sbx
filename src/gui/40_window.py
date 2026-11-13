@@ -379,6 +379,8 @@ class Win(Adw.ApplicationWindow):
         self.nav.replace([self.main, self.program_page(scope)])
 
     def trash_home(self, name, row):
+        if program_running(name):
+            return self.alert("It is running", f"Stop it first (sbx stop {name}), then move its home to the Trash.")
         try: Gio.File.new_for_path(f"{HOMES}/{name}").trash(None)
         except GLib.Error as e:
             return self.alert("Couldn't move it to the Trash", e.message)

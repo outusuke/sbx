@@ -14,7 +14,8 @@ _sbx() {
             -*) ;;
             preview|show) [[ $word == show ]] && { COMPREPLY=($(compgen -W "$(ls ~/.config/sbx/apps 2>/dev/null | sed 's/\.conf$//')" -- "$cur")); return; } ;;
             clean) COMPREPLY=($(compgen -W "$(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
-            doctor|schema) return ;;
+            stop) COMPREPLY=($(compgen -W "$(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
+            doctor|schema|list) return ;;
             desktop) COMPREPLY=($(compgen -W "--install-opener --remove-opener --remove" -- "$cur")); return ;;
             *) COMPREPLY=($(compgen -f -- "$cur")); return ;;
         esac
@@ -23,7 +24,7 @@ _sbx() {
         --allow-syscall=*) COMPREPLY=($(compgen -W "io_uring userfaultfd process_vm_readv process_vm_writev kcmp pidfd_getfd" -- "${cur#*=}")) ;;
         --whitelist=*|--read-only=*) compopt -o filenames; COMPREPLY=($(compgen -f -- "${cur#*=}")) ;;
         -*) compopt -o nospace; COMPREPLY=($(compgen -W "$opts" -- "$cur")) ;;
-        *) COMPREPLY=($(compgen -W "preview show doctor clean desktop open" -- "$cur") $(compgen -c -- "$cur")) ;;
+        *) COMPREPLY=($(compgen -W "preview show doctor clean desktop open list stop" -- "$cur") $(compgen -c -- "$cur")) ;;
     esac
 }
 complete -F _sbx sbx

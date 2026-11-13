@@ -99,6 +99,8 @@ def run(prog, args, opts):
     os.makedirs(f"{HOMES}/{name}", mode=0o700, exist_ok=True)
     cfg, _ = effective(name, opts)
     log("START allow=[" + ",".join(k for k in SCALARS if cfg[k]) + "]", name)
+    try: mark_running(name)
+    except OSError: pass                          # only `sbx stop`, `sbx list` and the running-check of `sbx clean` need it
     start, stopped = time.time(), [False]
     piped = not sys.stderr.isatty()               # started from the app menu or a file manager: no terminal, so the log keeps stderr
     try:
@@ -112,7 +114,7 @@ def run(prog, args, opts):
         rc = p.wait()
         if t: t.join(2)
     finally:
-        teardown(st); undo_exec_bit(prog, restore)
+        unmark_running(); teardown(st); undo_exec_bit(prog, restore)
     log(f"EXIT code={exit_code(rc)}", name)
     if rc != 0 and not stopped[0] and time.time() - start < 10 and not os.environ.get("SBX_NO_POPUP"): notify_failure(name)
     sys.exit(exit_code(rc))

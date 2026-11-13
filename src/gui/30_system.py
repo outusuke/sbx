@@ -24,6 +24,31 @@ MENU_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" v
 """
 
 
+RUNNING = HOME + "/.local/state/sbx/running"      # written by sbx: RUNNING/PID holds "NAME\nSTARTTIME"
+
+
+def live_sbx(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f: return b"sbx" in f.read()
+    except OSError:
+        return False
+
+
+def program_running(name):
+    """True if an sbx process is running NAME. A file counts only if the process under that PID is the one that wrote it
+    (same start time), so a reused PID doesn't make a program look busy."""
+    try: pids = [f for f in os.listdir(RUNNING) if f.isdigit()]
+    except OSError: return False
+    for pid in pids:
+        try:
+            with open(f"{RUNNING}/{pid}") as f: who, _, start = f.read().partition("\n")
+            with open(f"/proc/{pid}/stat", "rb") as f: now = f.read().rsplit(b")", 1)[1].split()[19].decode()
+        except (OSError, IndexError, UnicodeDecodeError):
+            continue
+        if who.strip() == name and start.strip() == now and live_sbx(pid): return True
+    return False
+
+
 def use_window_icon():
     """Give the window its icon even when 'Show sbx in the app menu' is off: the SVG goes into a private icon folder in the
     cache (nothing in your own icon folders) and becomes the default icon of every window. A dock on Wayland still needs the
