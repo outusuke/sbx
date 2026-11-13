@@ -1604,13 +1604,13 @@ class Isolation(unittest.TestCase):
     def test_doctor_show_and_schema(self):
         r = self.sbx_run("doctor")
         self.assertIn(r.returncode, (0, 1)); self.assertRegex(r.stdout, r"(OK|FAIL)\s+.*bubblewrap")
+        self.assertRegex(r.stdout, r"(OK|WARN)\s+pasta")
         os.makedirs(f"{self.home}/.config/sbx/apps", exist_ok=True)
         with open(f"{self.home}/.config/sbx/apps/showtest.conf", "w") as f: f.write("net=0\nmemory=1G\nwhitelist=~/Documents\n")
         r = self.sbx_run("show", "--env=ZED", "showtest")
         self.assertRegex(r.stdout, r"net\s+= 0\s+\[apps/showtest.conf\]")
         self.assertRegex(r.stdout, r"gpu\s+= 1\s+\[default\]"); self.assertRegex(r.stdout, r"memory\s+= 1G")
         self.assertRegex(r.stdout, r"whitelist\s+= ~/Documents\s+\[apps/showtest.conf\]"); self.assertRegex(r.stdout, r"env\s+= ZED\s+\[flag\]")
-        self.assertRegex(r.stdout, r"(OK|WARN)\s+pasta")
         import json
         self.assertIn("hostname", json.loads(self.sbx_run("schema").stdout)["switches"])
         self.assertIn("net_private", json.loads(self.sbx_run("schema").stdout)["switches"])
