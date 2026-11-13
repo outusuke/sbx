@@ -52,6 +52,7 @@ SHORT = {"net": "network", "net_private": "this computer private", "wayland": "W
          "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 LISTS = ("whitelist", "read_only")
+NEEDS = {"net_private": ("net",), "gpu_render_only": ("gpu", "rocm")}      # key -> switches of which one must be on for it to do anything (portal_* need portals, see needs())
 # Troubleshooting hints: a pattern in a failed run's log -> the one setting that usually fixes it. Each entry is
 # (pattern, setting, wanted value, title, why, only while these hold). A hint is shown only if the setting is not already as wanted.
 # Nothing is ever changed without a click.

@@ -53,6 +53,7 @@ def cmd_list(a):
         except OSError: pass
     live = {p: pid_app(p) for p in running()}
     names.update(live.values())
+    if not names: print("No programs yet. Start one with: sbx PROGRAM"); return
     for n in sorted(names):
         k = sum(1 for v in live.values() if v == n)
         print(f"{n:32} " + (f"running ({k})" if k else "idle"))
@@ -231,12 +232,17 @@ def cmd_opener(install):
 
 
 def doctor():
-    rows, bad = [], 0
+    rows, bad, warned = [], 0, 0
+    paint = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM", "dumb") != "dumb"
+    colors = {"OK": "32", "WARN": "33", "FAIL": "1;31", "INFO": "2"}
 
     def row(level, text, hint=""):
-        nonlocal bad
-        rows.append(f"{level:<5} {text}" + (f"\n      {hint}" if hint else ""))
+        nonlocal bad, warned
+        tag = f"{level:<5}"
+        if paint and level in colors: tag = f"\033[{colors[level]}m{level}\033[0m" + " " * (5 - len(level))
+        rows.append(f"{tag} {text}" + (f"\n      {hint}" if hint else ""))
         bad += level == "FAIL"
+        warned += level == "WARN"
     row("OK" if sys.version_info >= (3, 8) else "FAIL", f"Python {platform.python_version()}", "" if sys.version_info >= (3, 8) else "sbx needs Python 3.8 or newer")
     row("FAIL" if os.geteuid() == 0 else "OK", "running as a normal user", "sbx refuses to run as root" if os.geteuid() == 0 else "")
     row("OK" if platform.machine() in ARCHES else "WARN", f"system-call filter for {platform.machine()}",
@@ -288,4 +294,8 @@ def doctor():
         if os.path.exists(p): parse_conf(p); n += 1                  # warnings about bad lines go to stderr
     row("INFO", f"{n} settings file{'s' if n != 1 else ''} read (problems, if any, are printed above)")
     print("\n".join(rows))
+    print()
+    if bad: print(f"{bad} problem{'s' if bad != 1 else ''} to fix before sbx can run programs (see FAIL above).")
+    elif warned: print(f"sbx works. {warned} optional thing{'s' if warned != 1 else ''} missing (see WARN above); each only matters for the setting it names.")
+    else: print("Everything sbx needs is here.")
     return 1 if bad else 0

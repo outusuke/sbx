@@ -491,6 +491,35 @@ class Units(unittest.TestCase):
             with self.assertRaises(SystemExit): S["run"]("/bin/true", [], {})
         self.assertEqual(len(dies), 1); self.assertIn("no system-call filter", dies[0])
 
+    def test_friendly_messages(self):
+        S = self.S
+        def dies(fn, *a):
+            msgs = []
+            S["die"] = lambda m, code=1: (msgs.append(m), (_ for _ in ()).throw(SystemExit(code)))[1]
+            try: fn(*a)
+            except SystemExit: pass
+            return msgs[0]
+        self.assertIn("did you mean --net=none?", dies(S["parse_options"], ["--net-none", "x"]))
+        self.assertIn("needs a value", dies(S["parse_options"], ["--whitelist", "x"]))
+        self.assertIn("doesn't take a value", dies(S["parse_options"], ["--private=1", "x"]))
+        self.assertIn("not found in your PATH", dies(S["find_program"], "no-such-program-xyz"))
+        d = tempfile.mkdtemp(); f = f"{d}/plain"
+        with open(f, "w") as fh: fh.write("x")
+        self.assertIn("is not executable", dies(S["find_program"], f))
+        old = os.getcwd()
+        try:
+            os.chdir(d)
+            self.assertIn("Write ./plain", dies(S["find_program"], "plain"))
+        finally: os.chdir(old); shutil.rmtree(d)
+
+    def test_list_says_so_when_empty(self):
+        S = self.S
+        S["HOMES"] = S["CONF"] = tempfile.mkdtemp()
+        S["running"] = lambda *a: []
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_list"]([])
+        self.assertIn("No programs yet", out.getvalue())
+
     def test_doctor_warns_about_an_abstract_x_socket(self):
         S = self.S
         real_open = open
@@ -1406,6 +1435,8 @@ class Isolation(unittest.TestCase):
         cls.sbx = f"{HERE}/sbx"
         cls.script = f"{cls.home}/sbx-selftest"
         shutil.copy(f"{HERE}/sbx-selftest", cls.script); os.chmod(cls.script, 0o755)
+        cls.report = f"{cls.home}/sbx-report"
+        shutil.copy(f"{HERE}/sbx-report", cls.report); os.chmod(cls.report, 0o755)
         cls.env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": cls.home, "SBX_HOME": cls.home,
                    "SBX_CANARY": TOKEN, "SSH_AUTH_SOCK": "/nonexistent", "GITHUB_TOKEN": TOKEN}
         cls.has_disable_userns = "--disable-userns" in subprocess.run(["bwrap", "--help"], capture_output=True, text=True).stdout
@@ -1430,6 +1461,15 @@ class Isolation(unittest.TestCase):
                      "syscall userfaultfd is blocked", "syscall process_vm_readv is blocked", "syscall kcmp is blocked",
                      "syscall pidfd_getfd is blocked"):
             self.assertRegex(r.stdout, rf"PASS  {re.escape(must)}")
+
+    def test_the_report_shows_what_the_sandbox_hides(self):
+        r = self.sbx_run("--net=none", self.report, *self.canaries)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn(TOKEN, r.stdout + r.stderr)
+        self.assertRegex(r.stdout, r"blocked\s+Internet")
+        for gone in (".ssh", ".gnupg", ".aws", ".config/sbx", ".sbx-homes"): self.assertRegex(r.stdout, rf"hidden\s+~/{re.escape(gone)}\s*\n")
+        self.assertNotRegex(r.stdout, r"(?m)^EXPOSED")
+        self.assertIn("Nothing EXPOSED", r.stdout)
 
     def test_the_selftest_fails_without_the_sandbox(self):
         """Negative control: with no sandbox the same checks must fail, otherwise they prove nothing."""

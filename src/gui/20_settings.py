@@ -75,6 +75,24 @@ def portals_on(scope):
     return parse(None)[0].get("portals", SWITCHES["portals"][2])
 
 
+def needs(key):
+    """The switches of which at least one must be on before KEY does anything, or ()."""
+    return ("portals",) if key.startswith("portal_") else NEEDS.get(key, ())
+
+
+def is_on(scope, key):
+    """The value a switch has for this program: its own setting, else the default settings, else the built-in default."""
+    sc = parse(scope)[0]
+    if key in sc: return sc[key]
+    if scope is not None and key in (dsc := parse(None)[0]): return dsc[key]
+    return SWITCHES[key][2] if key in SWITCHES else False
+
+
+def program_name(text):
+    """What a typed program name becomes: the same cleaning sbx applies."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(text.strip())).lstrip("._-")[:64]
+
+
 def log_tail(scope=None, n=200):
     """The last n lines of sbx's launch log (only one program's lines when scope is given), or a short note."""
     try:

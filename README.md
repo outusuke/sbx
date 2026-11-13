@@ -7,7 +7,7 @@ sbx firefox
 sbx --net=none --here python3 script.py
 ```
 
-`sbx-gui` is an optional GTK4/libadwaita editor for the same settings files.
+`sbx-gui` is an optional GTK4/libadwaita editor for the same settings files. A program's page has Run and Stop at the top, a search box for the switches, and greys out switches that do nothing until another one is on.
 
 ![sbx window](docs/screenshot.png)
 
@@ -17,7 +17,7 @@ Requires Linux, Python 3.8+ and `bubblewrap` (0.8+ for `userns=0`). For the GUI:
 
 ```
 sudo apt install bubblewrap         # or dnf, pacman, ... your distro's equivalent
-sudo install -m755 sbx sbx-gui sbx-selftest /usr/local/bin/
+sudo install -m755 sbx sbx-gui sbx-selftest sbx-report /usr/local/bin/
 sudo install -Dm644 sbx.1 /usr/local/share/man/man1/sbx.1                                  # optional: man sbx
 sudo install -Dm644 completions/sbx.bash /usr/local/share/bash-completion/completions/sbx  # optional
 sbx doctor                          # checks that everything works on this machine
@@ -152,7 +152,10 @@ Lists that add up across the two files: `whitelist`, `read_only`, `env`, `setenv
 python3 test_sbx.py              # all tests, as a normal user
 sbx ./sbx-selftest               # run inside the sandbox: every row should say PASS
 sbx --net=none --no-userns ./sbx-selftest --expect=net0,userns0   # also check what you asked for
+sbx ./sbx-report                 # a readable overview of what the program can reach
 ```
+
+`sbx-report` is for looking at a setup rather than testing it: network, sockets, devices, shared folders, desktop portals, the tray and the system-call filter, each as ALLOWED, blocked, hidden or EXPOSED (reachable, and probably not meant to be). It can't see your settings from inside, so tell it what you turned on: `sbx --portals --portal-location ./sbx-report --portals=location`, or `--tray`. It also saves the text as `sbx-report.txt` in the program's private home.
 
 `test_sbx.py` has three parts. The **snapshot** (`sbx-preview.snap`) holds the exact `bwrap` command for a number of option sets; when a change to `sbx` alters the mount list the test fails with a diff. Review it, then `UPDATE_SNAPSHOTS=1 python3 test_sbx.py` and commit the new snapshot. The **unit tests** cover settings parsing and precedence, path rules, mount ordering, the syscall filter (run through a small BPF interpreter, with numbers checked against the kernel headers when present), the Wayland client (against a fake compositor) and launcher rewriting. The **isolation tests** run real sandboxes against canary files planted in a temporary home: they check every flag, the exit status, cleanup of mountpoints, `clean`, `desktop` and more, and need bubblewrap. A negative control checks that the self-test fails without the sandbox.
 

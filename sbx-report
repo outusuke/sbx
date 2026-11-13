@@ -1,0 +1,390 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# sbx-report - run it INSIDE sbx and it prints what the program can reach: network, sockets, devices, folders, desktop
+# portals, the tray, system calls. Unlike sbx-selftest (which says PASS or FAIL) this is a readable overview, for
+# looking at a setup you made, for example before you give a program one more permission.
+#     sbx ./sbx-report [--portals=LIST] [--tray] [PATH ...]
+# Inside the sandbox the report can't see your settings, so tell it what you turned on, or those rows say EXPOSED:
+#     --portals=LIST   the extra portals that are on, comma separated: screenshot screencast location shortcuts
+#                      remote_desktop input_capture wallpaper launcher secret camera
+#     --tray           tray=1 is on
+# Extra PATHs are checked as "File argument": is it visible, and writable?
+# Legend: ALLOWED = reachable   blocked/hidden = not reachable   EXPOSED = reachable and probably not meant to be
+#         ACTIVE = a protection is working   INFO = for your information
+import ctypes, glob, json, os, platform, re, shutil, socket, struct, subprocess, sys
+
+args = sys.argv[1:]
+on_portals = {p for a in args if a.startswith("--portals=") for p in a[10:].split(",") if p}
+tray_flag = "--tray" in args
+paths = [a for a in args if not a.startswith("--")]
+out = []
+def row(state, name, detail=""):
+    out.append(f"{state:8} {name:<26} {detail}")
+def yn(c): return "ALLOWED" if c else "blocked"
+def sh(cmd, t=4):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=t)
+        return r.returncode, (r.stdout + r.stderr).strip()
+    except Exception as e:
+        return 127, str(e)
+
+H = os.path.expanduser("~")
+rt = os.environ.get("XDG_RUNTIME_DIR", "")
+
+try:
+    s = socket.create_connection(("1.1.1.1", 443), timeout=3); s.close(); net = True
+except OSError as e:
+    net = False; err = str(e)
+row(yn(net), "Internet", "" if net else err)
+try: ifaces = ", ".join(n for _, n in socket.if_nameindex())
+except OSError: ifaces = "?"
+row("INFO", "Network interfaces", ifaces)
+ports = set()
+for f in ("/proc/net/tcp", "/proc/net/tcp6"):
+    try:
+        for ln in open(f).read().splitlines()[1:]:
+            p = ln.split()
+            if p[3] == "0A": ports.add(int(p[1].split(":")[1], 16))
+    except OSError: pass
+row("INFO", "Host services visible", f"{len(ports)} listening TCP ports" + (" (host network is shared)" if ports else " (isolated network)"))
+
+row(yn(os.path.exists(f"{rt}/pipewire-0") or os.path.exists(f"{rt}/pulse/native")), "Audio sockets")
+row(yn(bool(os.environ.get("WAYLAND_DISPLAY")) and os.path.exists(f"{rt}/{os.environ.get('WAYLAND_DISPLAY','')}")), "Wayland socket")
+row(yn(bool(os.environ.get("DISPLAY"))), "X11", os.environ.get("DISPLAY", ""))
+
+def xauth_entries(path):
+    """Entries of an Xauthority file as (family, address, display number, auth name, auth data)."""
+    try: d = open(path, "rb").read()
+    except OSError: return None
+    ents, i = [], 0
+    while i < len(d):
+        fam = int.from_bytes(d[i:i+2], "big"); i += 2
+        parts = []
+        for _ in range(4):
+            n = int.from_bytes(d[i:i+2], "big"); i += 2
+            parts.append(d[i:i+n]); i += n
+        ents.append((fam, *parts))
+    return ents
+
+# Only meaningful with x11=1 (DISPLAY is not set otherwise). sbx should share just this host's cookie for this
+# display, not every cookie in your XAUTHORITY file, and the app must still be able to log in.
+xd = os.environ.get("DISPLAY", "")
+if xd.startswith(":"):
+    xnum = xd[1:].split(".")[0]
+    xa = os.environ.get("XAUTHORITY", "")
+    ents = xauth_entries(xa) if xa else None
+    if ents is None:
+        row("INFO", "  X11 cookies", "no XAUTHORITY file visible")
+    else:
+        # What matters is cookies for OTHER displays (e.g. remote ones). Entries for this display, or with no
+        # display number (wildcards, which Xwayland's own auth file uses), are expected. Cookie data is never printed.
+        other = [e for e in ents if e[2] not in (xnum.encode(), b"")]
+        kinds = ", ".join(f"family {e[0]} display '{e[2].decode(errors='replace')}'" for e in ents)
+        row("EXPOSED" if other else "hidden", "  X11 cookies visible",
+            f"{len(ents)} in file, {len(other)} for other displays [{kinds}]")
+    cands = [(e[3], e[4]) for e in (ents or []) if e[2] in (xnum.encode(), b"")] + [(b"", b"")]
+    pad = lambda b: b + b"\0" * (-len(b) % 4)
+    result = "cannot reach the X socket"
+    for i, (aname, adata) in enumerate(cands):
+        try:
+            xs = socket.socket(socket.AF_UNIX); xs.settimeout(3)
+            xs.connect(f"/tmp/.X11-unix/X{xnum}")
+            xs.sendall(b"l\0" + struct.pack("<HHHHH", 11, 0, len(aname), len(adata), 0) + pad(aname) + pad(adata))
+            ok = xs.recv(1) == b"\x01"; xs.close()
+        except OSError as e:
+            result = f"cannot reach the X socket: {e}"; break
+        if ok:
+            result = "accepted with " + (f"cookie #{i + 1}" if aname else "no cookie"); break
+        result = "refused every cookie in the file"
+    row("ALLOWED" if result.startswith("accepted") else "blocked", "  X11 login", result)
+
+# ---- Ways to reach the desktop outside the permission switches ----
+# 1. Abstract Unix sockets belong to the network namespace, so with Internet on (shared network) the host's are visible.
+abst = []
+try:
+    for ln in open("/proc/net/unix").read().splitlines()[1:]:
+        p = ln.split()
+        if len(p) >= 8 and p[7].startswith("@"): abst.append(p[7])
+except OSError: pass
+abst = sorted(set(abst))
+row("INFO", "Host abstract sockets", f"{len(abst)} visible" + (" (host network is shared)" if abst else " (isolated network)"))
+if not os.environ.get("DISPLAY"):      # x11 is off: the X server should not be reachable at all
+    xsocks = [n for n in abst if re.fullmatch(r"@/tmp/\.X11-unix/X\d+", n)]
+    if not xsocks:
+        row("hidden", "  X server (abstract socket)", "not visible")
+    for n in xsocks:
+        try:
+            xs = socket.socket(socket.AF_UNIX); xs.settimeout(3)
+            xs.connect("\0" + n[1:])
+            xs.sendall(b"l\0" + struct.pack("<HHHHH", 11, 0, 0, 0, 0))     # log in with no cookie
+            first = xs.recv(1); xs.close()
+        except OSError as e:
+            row("blocked", "  X server (abstract socket)", f"{n}: {e}"); continue
+        if first == b"\x01": row("EXPOSED", "  X server (abstract socket)", f"{n}: accepted a login with no cookie")
+        else: row("INFO", "  X server (abstract socket)", f"{n}: reachable, but a login needs a cookie")
+
+# 2. Wayland: list what the compositor offers to this app. Some compositors give every client protocols that can
+#    capture the screen, fake input or read the clipboard, which would bypass the portal switches.
+WL_RISKY = {
+    "zwlr_screencopy_manager_v1": "screen capture", "ext_image_copy_capture_manager_v1": "screen capture",
+    "zwlr_export_dmabuf_manager_v1": "screen capture", "zkde_screencast_unstable_v1": "screen capture",
+    "zwlr_virtual_pointer_manager_v1": "fake mouse input", "zwp_virtual_keyboard_manager_v1": "fake keyboard input",
+    "org_kde_kwin_fake_input": "fake input", "zwlr_data_control_manager_v1": "clipboard access",
+    "ext_data_control_manager_v1": "clipboard access", "zwlr_foreign_toplevel_manager_v1": "window list",
+    "ext_foreign_toplevel_list_v1": "window list", "org_kde_plasma_window_management": "window list",
+    "zwlr_input_inhibitor_manager_v1": "input grabbing", "ext_session_lock_manager_v1": "screen locking",
+    "zwlr_output_manager_v1": "display settings", "zwlr_gamma_control_manager_v1": "display settings",
+    "zwp_input_method_manager_v2": "input method (sees typing)"}
+
+def wl_globals(path):
+    s = socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect(path)
+    s.sendall(struct.pack("=III", 1, (12 << 16) | 1, 2) + struct.pack("=III", 1, (12 << 16) | 0, 3))   # get_registry, sync
+    buf, names = b"", []
+    while True:
+        chunk = s.recv(65536)
+        if not chunk: break
+        buf += chunk
+        while len(buf) >= 8:
+            oid, w = struct.unpack_from("=II", buf, 0)
+            size, op = w >> 16, w & 0xFFFF
+            if size < 8: s.close(); return names
+            if len(buf) < size: break
+            body, buf = buf[8:size], buf[size:]
+            if oid == 2 and op == 0 and len(body) >= 12:       # wl_registry.global: name, interface, version
+                n = struct.unpack_from("=I", body, 4)[0]
+                names.append(body[8:8 + max(n - 1, 0)].decode(errors="replace"))
+            elif oid == 3 and op == 0:                         # wl_callback.done: the list is complete
+                s.close(); return names
+    s.close(); return names
+
+wl = os.environ.get("WAYLAND_DISPLAY", "")
+wlp = wl if wl.startswith("/") else f"{rt}/{wl}"
+if wl and os.path.exists(wlp):
+    try:
+        names = wl_globals(wlp)
+        risky = [n for n in names if n in WL_RISKY]
+        row("EXPOSED" if risky else "hidden", "Wayland privileged protocols",
+            ", ".join(f"{n} ({WL_RISKY[n]})" for n in risky) if risky else f"none of the {len(names)} offered")
+        row("INFO", "Wayland security context", "offered by the compositor (sbx uses it, so the list above is what a restricted client gets)"
+            if "wp_security_context_manager_v1" in names else "not offered by the compositor: this program has the full socket")
+    except (OSError, struct.error) as e:
+        row("INFO", "Wayland protocols", f"could not read the list: {e}")
+
+# 3. PipeWire: the audio socket also shows video nodes. Camera nodes visible without Camera access, or a screen
+#    share seen while one is running (start one before this test), mean the audio switch leaks more than sound.
+if os.path.exists(f"{rt}/pipewire-0") and shutil.which("pw-dump"):
+    try:
+        r = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5)
+        objs = json.loads(r.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        objs = None
+    if objs is None:
+        row("INFO", "PipeWire video nodes", "pw-dump gave no readable output")
+    else:
+        classes = {}
+        for ob in objs:
+            c = ((ob.get("info") or {}).get("props") or {}).get("media.class") if isinstance(ob, dict) else None
+            if c: classes[c] = classes.get(c, 0) + 1
+        cams, shares = classes.get("Video/Source", 0), classes.get("Stream/Output/Video", 0)
+        has_dev = bool(glob.glob("/dev/video*"))
+        row("ALLOWED" if cams and has_dev else "EXPOSED" if cams else "hidden", "PipeWire camera nodes",
+            f"{cams} visible" + (" (Camera is on)" if cams and has_dev else " (Camera is off)" if cams else ""))
+        row("EXPOSED" if shares else "hidden", "PipeWire screen shares", f"{shares} active stream(s) visible")
+
+row(yn(os.path.exists("/run/cups/cups.sock")), "Printing (CUPS)")
+sa = os.environ.get("SSH_AUTH_SOCK", "")
+row(yn(bool(sa) and os.path.exists(sa)), "SSH agent", sa)
+if sa and shutil.which("ssh-add"):
+    row("INFO", "  ssh-add -l", sh(["ssh-add", "-l"])[1].splitlines()[0] if sh(["ssh-add", "-l"])[1] else "")
+
+dri = glob.glob("/dev/dri/*"); nv = glob.glob("/dev/nvidia*")
+row(yn(bool(dri)), "Graphics (/dev/dri)", " ".join(os.path.basename(x) for x in dri))
+row(yn(bool(nv)), "NVIDIA devices", f"{len(nv)} nodes")
+cam = glob.glob("/dev/video*")
+row(yn(bool(cam)), "Camera", " ".join(os.path.basename(x) for x in cam))
+inp = glob.glob("/dev/input/*")
+row(yn(bool(inp)), "Input devices", f"{len(inp)} nodes")
+row("INFO", "/sys/devices entries", ", ".join(sorted(os.listdir("/sys/devices"))[:8]) if os.path.isdir("/sys/devices") else "none")
+
+# A folder only counts as shared if it is a mount point. An empty folder can be left over in the private
+# home from when the share was on (bwrap creates it as the mount point), and that is not the real folder.
+mounts, fstypes = set(), {}
+try:
+    for ln in open("/proc/self/mountinfo"):
+        p = ln.split(); mp = p[4].replace("\\040", " "); mounts.add(mp)
+        if "-" in p: fstypes[mp] = p[p.index("-") + 1]
+except OSError: pass
+for k in ("Downloads", "Documents", "Pictures", "Music", "Videos", "Desktop"):
+    p = f"{H}/{k}"
+    if p in mounts:
+        row("ALLOWED", f"~/{k}", "read & write" if os.access(p, os.W_OK) else "read-only")
+    elif os.path.isdir(p):
+        row("blocked", f"~/{k}", "not shared (empty folder left in the private home)")
+    else:
+        row("blocked", f"~/{k}")
+def has_content(p):
+    try:
+        if os.path.isdir(p): return bool(os.listdir(p))
+        with open(p, "rb") as f: return bool(f.read(1))
+    except OSError: return False
+for k in (".ssh", ".gnupg", ".aws", ".config/sbx", ".sbx-homes", ".mozilla"):
+    row("EXPOSED" if has_content(f"{H}/{k}") else "hidden", f"~/{k}")
+try: names = sorted(n for n in os.listdir(H) if not n.startswith("."))
+except OSError: names = []
+row("INFO", "Visible in ~ (non-hidden)", ", ".join(names) or "nothing (private home only)")
+row("INFO", "Home storage", "temporary (tmpfs, erased on exit)" if fstypes.get(H) == "tmpfs" else "persistent private home")
+try: gecos = next(l.split(":")[4] for l in open("/etc/passwd") if l.split(":")[0] == os.environ.get("USER", ""))
+except Exception: gecos = ""
+row("EXPOSED" if gecos.strip(",") else "hidden", "Real name in /etc/passwd", gecos[:30])
+row("INFO", "Computer name", socket.gethostname())
+fonts = f"{H}/.local/share/fonts" in mounts or f"{H}/.fonts" in mounts
+row(yn(fonts), "Your fonts", "shown read-only (theme=1)" if fonts else "")
+for a in paths:
+    if os.path.exists(a):
+        row("ALLOWED", "File argument", f"{a} ({'rw' if os.access(a, os.W_OK) else 'ro'})")
+    else:
+        row("blocked", "File argument", f"{a} not visible")
+
+bus = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
+row(yn(bool(bus)), "Session bus", bus)
+if bus and shutil.which("gdbus"):
+    rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications", "--object-path",
+                "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify",
+                "sbx-report", "0", "", "sbx report", "If you see this, notifications work.", "[]", "{}", "5000"])
+    row(yn(rc == 0), "  Notifications", "popup sent" if rc == 0 else o[:70])
+    def portal(method, *args):
+        return sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Desktop", "--object-path",
+                   "/org/freedesktop/portal/desktop", "--method", method, *args])
+    def portal_version(iface):
+        rc, o = portal("org.freedesktop.DBus.Properties.Get", f"org.freedesktop.portal.{iface}", "version")
+        m = re.search(r"uint32 (\d+)", o)
+        return rc == 0, (f"v{m.group(1)}" if m else o[:60])
+    def denied(o): return "AccessDenied" in o or "not allowed" in o
+    ok, v = portal_version("Settings")
+    row(yn(ok), "  Desktop portal", v if ok or not denied(v) else "blocked by the proxy (portals=0)")
+    if ok:
+        # Only the version property is read, so no dialogs open. "not offered" means the desktop's portal
+        # backend doesn't implement that portal; the bus itself is reachable (Settings just answered).
+        for iface, label in (("OpenURI", "open links"), ("FileChooser", "file chooser"),
+                             ("Notification", "notifications"), ("Print", "printing"),
+                             ("Inhibit", "keep awake"), ("Background", "background"),
+                             ("Account", "account info"), ("Email", "email"), ("Trash", "trash"),
+                             ("NetworkMonitor", "network status"), ("ProxyResolver", "proxy settings"),
+                             ("GameMode", "game mode"), ("MemoryMonitor", "low-memory alerts"),
+                             ("PowerProfileMonitor", "power profile"), ("Realtime", "realtime scheduling")):
+            ok, v = portal_version(iface)
+            row("ALLOWED" if ok else "blocked" if denied(v) else "INFO", f"  Portal: {label}",
+                v if ok else "blocked by the proxy" if denied(v) else "not offered by this desktop")
+        # The extra portals sbx gates, each with its own setting (portal_NAME=1, camera=1 for the camera portal). Reading a
+        # version is always allowed, so a method is called with no arguments instead: the proxy answers AccessDenied if the
+        # portal is blocked, and the desktop answers InvalidArgs (without opening any dialog) if it is reachable.
+        # Reachable although you didn't say it is on (--portals=...) is EXPOSED.
+        for iface, method, label, key in (
+                ("Screenshot", "Screenshot", "screenshots", "screenshot"), ("ScreenCast", "CreateSession", "screen sharing", "screencast"),
+                ("Camera", "AccessCamera", "camera access", "camera"),
+                ("Location", "CreateSession", "location", "location"), ("GlobalShortcuts", "CreateSession", "global shortcuts", "shortcuts"),
+                ("RemoteDesktop", "CreateSession", "remote desktop", "remote_desktop"), ("InputCapture", "CreateSession", "input capture", "input_capture"),
+                ("Wallpaper", "SetWallpaperURI", "wallpaper", "wallpaper"), ("DynamicLauncher", "PrepareInstall", "dynamic launcher", "launcher"),
+                ("Secret", "RetrieveSecret", "secrets", "secret")):
+            on = key in on_portals
+            rc, o = portal(f"org.freedesktop.portal.{iface}.{method}")
+            if denied(o):
+                row("blocked", f"  Portal: {label}", "turned on but blocked by the proxy" if on else "blocked by the proxy")
+            elif "UnknownMethod" in o or "UnknownInterface" in o or "UnknownObject" in o:
+                row("INFO", f"  Portal: {label}", "not offered by this desktop")
+            elif not on:
+                row("EXPOSED", f"  Portal: {label}", "reachable (should be blocked; pass --portals=" + key + " if you turned it on)")
+            else:
+                row("ALLOWED", f"  Portal: {label}", "reachable (turned on)")
+        args = ("org.freedesktop.appearance", "color-scheme")
+        rc, o = portal("org.freedesktop.portal.Settings.Read", *args)
+        if rc != 0:
+            rc, o = portal("org.freedesktop.portal.Settings.ReadOne", *args)
+        m = re.search(r"uint32 (\d+)", o)
+        scheme = {"0": "no preference", "1": "prefers dark", "2": "prefers light"}
+        row(yn(rc == 0 and bool(m)), "  Portal call (dark mode)",
+            scheme.get(m.group(1), m.group(1)) if m else o[:60])
+    rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.secrets", "--object-path",
+                "/org/freedesktop/secrets", "--method", "org.freedesktop.DBus.Peer.Ping"])
+    row("blocked" if rc != 0 else "EXPOSED", "  Secret service (should be blocked)", "" if rc == 0 else o[:60])
+
+    # Documents portal: never allowed. Called with no arguments, so a reachable portal answers InvalidArgs (no dialog).
+    rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Documents", "--object-path",
+                "/org/freedesktop/portal/documents", "--method", "org.freedesktop.portal.Documents.GetMountPoint"])
+    if "AccessDenied" in o or "not allowed" in o:
+        row("blocked", "  Portal: documents", "blocked by the proxy")
+    elif "ServiceUnknown" in o or "NameHasNoOwner" in o or "UnknownMethod" in o:
+        row("INFO", "  Portal: documents", "not running on this desktop")
+    else:
+        row("EXPOSED", "  Portal: documents", "reachable (should be blocked)")
+
+    # Tray icon and media controls (tray=1). The proxy lets a program own org.kde.StatusNotifierItem-PID-1..3 for the PIDs
+    # 2..64 (its PID inside the sandbox) and org.mpris.MediaPlayer2.*, nothing else. Owning a name is tried for real;
+    # nothing stays registered after the call. Pass --tray if you turned it on.
+    tray_on = "2-64" if tray_flag else ""
+    tray_at = len(out)                 # the summary row is inserted here, above the detail rows
+    def own(name):
+        rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path",
+                    "/org/freedesktop/DBus", "--method", "org.freedesktop.DBus.RequestName", name, "0"])
+        return rc == 0 and "uint32" in o, o
+    mypid = os.getpid()
+    ok, o = own(f"org.kde.StatusNotifierItem-{mypid}-1")
+    t_ok = ok
+    if tray_on:
+        lo, _, hi = tray_on.partition("-")
+        inrange = lo.isdigit() and hi.isdigit() and int(lo) <= mypid <= int(hi)
+        row("ALLOWED" if ok else "blocked", "  Tray icon name (this PID)",
+            f"org.kde.StatusNotifierItem-{mypid}-1 " + ("can be owned" if ok else
+            f"refused: the sandbox PID {mypid} is " + ("inside" if inrange else "outside") + f" the allowed range {tray_on}"))
+    else:
+        row("EXPOSED" if ok else "blocked", "  Tray icon name (this PID)",
+            "can be owned although tray is off" if ok else "blocked (tray is off)")
+    ok, o = own("org.kde.sbx-selftest-other")
+    row("EXPOSED" if ok else "blocked", "  Other org.kde names (should be blocked)",
+        "any org.kde name can be owned (too broad)" if ok else "blocked")
+    ok, o = own("org.mpris.MediaPlayer2.sbx-selftest")
+    m_ok = ok
+    if tray_on: row("ALLOWED" if ok else "blocked", "  Media controls (MPRIS)", "can be owned" if ok else "refused although tray is on")
+    else: row("EXPOSED" if ok else "blocked", "  Media controls (MPRIS)", "can be owned although tray is off" if ok else "blocked (tray is off)")
+    rc, o = sh(["gdbus", "call", "--session", "--dest", "org.kde.StatusNotifierWatcher", "--object-path",
+                "/StatusNotifierWatcher", "--method", "org.freedesktop.DBus.Peer.Ping"])
+    if "AccessDenied" in o or "not allowed" in o:
+        row("blocked", "  Tray host (StatusNotifierWatcher)", "blocked by the proxy" if not tray_on else "refused although tray is on")
+    elif rc != 0:
+        row("INFO", "  Tray host (StatusNotifierWatcher)", "none running: icons show only with a tray host (GNOME needs the AppIndicator extension)")
+    else:
+        row("EXPOSED" if not tray_on else "ALLOWED", "  Tray host (StatusNotifierWatcher)", "reachable")
+    if tray_on:
+        state = "ALLOWED" if t_ok and m_ok else "blocked"
+        detail = ("tray icon and media controls can register" if t_ok and m_ok else
+                  "tray icon refused" if m_ok else "media controls refused" if t_ok else "both refused although tray is on")
+    else:
+        state = "EXPOSED" if t_ok or m_ok else "blocked"
+        detail = "reachable although tray is off" if t_ok or m_ok else "off"
+    out.insert(tray_at, f"{state:8} {'Tray icon and media keys':<26} {detail}")
+
+nr = {"x86_64": 298, "aarch64": 241}.get(platform.machine())
+if nr:
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall(nr, None, 0, -1, -1, 0)
+    e = ctypes.get_errno()
+    row("ACTIVE" if e == 1 else "off", "seccomp filter", "perf_event_open returns EPERM" if e == 1 else f"perf_event_open errno={e}")
+if platform.machine() in ("x86_64", "aarch64"):
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall(425, 0, None)       # io_uring_setup, same number on both architectures
+    e = ctypes.get_errno()
+    row("ACTIVE" if e == 1 else "off", "Extra syscalls blocked", "io_uring_setup returns EPERM (blocked unless allow_syscall=io_uring)" if e == 1 else f"io_uring_setup errno={e}")
+rc, o = sh(["unshare", "-U", "true"]) if shutil.which("unshare") else (127, "unshare missing")
+row(yn(rc == 0), "Nested sandboxes (userns)", "" if rc == 0 else o[:60])
+
+bad = [l for l in out if l.startswith("EXPOSED")]
+summary = (f"{len(bad)} row{'s' if len(bad) != 1 else ''} say EXPOSED: something is reachable that sbx normally hides. If you turned it on\n"
+           "on purpose, tell the report (--portals=..., --tray); otherwise look at that setting.") if bad else \
+          "Nothing EXPOSED: everything reachable is something a switch allows."
+text = "sbx report\n" + "=" * 10 + "\n" + "\n".join(out) + "\n\n" + summary + "\n"
+print(text)
+try: open(f"{H}/sbx-report.txt", "w").write(text)
+except OSError: pass
+if sys.stdin.isatty():
+    try: input("Press Enter to close...")
+    except EOFError: pass

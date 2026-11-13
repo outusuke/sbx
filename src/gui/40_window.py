@@ -12,12 +12,14 @@ class Win(Adw.ApplicationWindow):
         self.main = self.main_page()
         self.nav.push(self.main)
         self.nav.connect("popped", lambda *_: self.fill_apps())
+        self.connect("notify::is-active", lambda w, _p: w.is_active() and self.fill_apps())
 
-    def page(self, title, content, end=()):
+    def page(self, title, content, end=(), banner=None):
         view = Adw.ToolbarView()
         bar = Adw.HeaderBar()
         for b in end: bar.pack_end(b)
         view.add_top_bar(bar)
+        if banner: view.add_top_bar(banner)
         view.set_content(content)
         return Adw.NavigationPage(child=view, title=title)
 
@@ -26,6 +28,12 @@ class Win(Adw.ApplicationWindow):
         if child: d.set_extra_child(child)
         d.add_response("ok", "OK")
         d.present(self)
+
+    def copy_text(self, text, done="Copied"):
+        try: self.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(text))
+        except (TypeError, GLib.Error):
+            return self.toasts.add_toast(Adw.Toast(title="Couldn't copy"))
+        self.toasts.add_toast(Adw.Toast(title=done))
 
     def ask(self, heading, body, label, then):
         d = Adw.AlertDialog(heading=heading, body=body)
@@ -139,14 +147,20 @@ class Win(Adw.ApplicationWindow):
             show_hints()
         rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
         rb.connect("clicked", refresh)
+        cb = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy the health checks and the log, to paste when asking for help")
+        cb.connect("clicked", lambda *_: self.copy_text(hl.get_text() + "\n\n" + buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False),
+                                                       "Copied the checks and the log"))
         refresh()
-        self.nav.push(self.page("Troubleshooting", page, [rb]))
+        self.nav.push(self.page("Troubleshooting", page, [rb, cb]))
 
     def fill_apps(self):
         for r in self.app_rows: self.apps_group.remove(r)
         self.app_rows.clear()
         for n in app_names():
-            r = Adw.ActionRow(title=n, subtitle=summary(n), activatable=True, use_markup=False)
+            r = Adw.ActionRow(title=n, subtitle=("Running now · " if program_running(n) else "") + summary(n), activatable=True, use_markup=False)
+            play = Gtk.Button(icon_name="media-playback-start-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Run {n}")
+            play.connect("clicked", lambda _b, n=n: self.run_program(n))
+            r.add_suffix(play)
             r.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
             r.connect("activated", lambda _r, n=n: self.open(n))
             self.apps_group.add(r); self.app_rows.append(r)
@@ -161,10 +175,18 @@ class Win(Adw.ApplicationWindow):
         d.add_responses("cancel", "Cancel", "add", "Add")
         d.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
         d.set_default_response("add"); d.set_close_response("cancel")
+        d.set_response_enabled("add", False)
+        body = d.get_body()
+
+        def typing(*_):
+            name = program_name(entry.get_text())
+            d.set_response_enabled("add", bool(name))
+            d.set_body(body if name == entry.get_text().strip() or not name else f"It will be called “{name}”: only letters, digits, . _ and - are kept.")
+        entry.connect("changed", typing)
 
         def done(dlg, res):
             if dlg.choose_finish(res) != "add": return
-            name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(entry.get_text().strip())).lstrip("._-")[:64]
+            name = program_name(entry.get_text())
             if not name: return
             if not os.path.exists(path_for(name)): save(name, [])
             self.fill_apps(); self.open(name)
@@ -178,22 +200,71 @@ class Win(Adw.ApplicationWindow):
     def program_page(self, scope):
         page = Adw.PreferencesPage()
         page_rows = []
+        banner = None
+        if scope is not None:
+            # what you came to do comes first: run it, see how, stop it
+            banner = Adw.Banner(title="Running now. Changes apply the next time it starts.", revealed=program_running(scope))
+            rg = Adw.PreferencesGroup()
+            run = Adw.ActionRow(title=f"Run {scope}", activatable=True, use_markup=False)
+            run.add_suffix(Gtk.Image.new_from_icon_name("media-playback-start-symbolic"))
+            stop = Adw.ActionRow(title=f"Stop {scope}", subtitle="Ends every running copy", activatable=True, use_markup=False)
+            stop.add_suffix(Gtk.Image.new_from_icon_name("media-playback-stop-symbolic"))
+
+            def refresh_run(*_):
+                live = program_running(scope)
+                run.set_subtitle("Running now. Starts another copy with these settings" if live else "Starts it with these settings")
+                stop.set_visible(live)
+                banner.set_revealed(live)
+                return False                                                      # also used as a one-shot timeout
+
+            def start(*_):
+                self.run_program(scope)
+                GLib.timeout_add(2500, refresh_run)
+
+            def stop_it(*_):
+                try: r = subprocess.run([sbx_cmd(), "stop", scope], capture_output=True, text=True, timeout=10)
+                except (OSError, subprocess.SubprocessError) as e:
+                    return self.alert("Couldn't run sbx", str(e))
+                if r.returncode != 0: return self.alert(f"Couldn't stop {scope}", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
+                self.toasts.add_toast(Adw.Toast(title=f"Stopping {scope}…"))
+                GLib.timeout_add(1000, refresh_run)
+            run.connect("activated", start)
+            stop.connect("activated", stop_it)
+            rg.add(run); rg.add(stop)
+            refresh_run()
+            page.add(rg)
+        sg = Adw.PreferencesGroup()
+        search = Gtk.SearchEntry(placeholder_text="Search settings", hexpand=True)
+        sg.add(search)
+        page.add(sg)
+        found = []                                                                # (group, [(row, key)]) for the search
         for title, rows in GROUPS:
             g = Adw.PreferencesGroup(title=title)
-            for key, t, s, _d in rows: g.add(self.switch_row(scope, key, page_rows))
+            members = []
+            for key, t, s, _d in rows:
+                r = self.switch_row(scope, key, page_rows)
+                g.add(r); members.append((r, key))
             page.add(g)
+            found.append((g, members))
+
+        def filter_rows(entry):
+            words = entry.get_text().lower().split()
+            for g, members in found:
+                shown = 0
+                for r, key in members:
+                    hit = all(w in f"{r.get_title()} {r.get_subtitle() or ''} {key}".lower() for w in words)
+                    r.set_visible(hit); shown += hit
+                g.set_visible(shown > 0)
+        search.connect("search-changed", filter_rows)
         for grp in self.folders_group(scope): page.add(grp)
         if scope is not None:
-            rg = Adw.PreferencesGroup(title="Run")
-            run = Adw.ActionRow(title=f"Run {scope}", subtitle="Starts it with these settings", activatable=True, use_markup=False)
-            run.add_suffix(Gtk.Image.new_from_icon_name("media-playback-start-symbolic"))
-            run.connect("activated", lambda *_: self.run_program(scope))
+            rg = Adw.PreferencesGroup(title="More")
             cmd = Adw.ActionRow(title="Show command", subtitle="The bwrap command sbx would run", activatable=True)
             cmd.connect("activated", lambda *_: self.show_command(scope))
             lg = Adw.ActionRow(title="Show log", subtitle="Starts, exits and errors of this program", activatable=True)
             lg.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
             lg.connect("activated", lambda *_: self.open_trouble(scope))
-            rg.add(run); rg.add(cmd); rg.add(lg)
+            rg.add(cmd); rg.add(lg)
             page.add(rg)
             mg = Adw.PreferencesGroup(title="App menu")
             mg.add(self.app_menu_row(scope))
@@ -210,7 +281,7 @@ class Win(Adw.ApplicationWindow):
                                                         "Move to Trash", lambda: self.trash_home(scope, tr)))
             dg.add(tr)
         page.add(dg)
-        return self.page("Default settings" if scope is None else scope, page)
+        return self.page("Default settings" if scope is None else scope, page, banner=banner)
 
     def switch_row(self, scope, key, page_rows=None):
         """page_rows: the refresh functions of every switch on this page, so a switch others depend on can update them."""
@@ -231,8 +302,11 @@ class Win(Adw.ApplicationWindow):
             row.set_subtitle(sub)                                  # an overridden switch shows the undo button; no note on the rest
             undo.set_visible(scope is not None and own)
             undo.set_tooltip_text("Back to the default: " + ("on" if dsc.get(key, default) else "off"))
-            if key.startswith("portal_"):                          # the extra portals do nothing until portals itself is on
-                row.set_sensitive(portals_on(scope))
+            req = needs(key)                                       # e.g. the extra portals do nothing until portals itself is on
+            if req:
+                ok = any(is_on(scope, k) for k in req)
+                row.set_sensitive(ok)
+                row.set_tooltip_text(None if ok else "Turn on “" + "” or “".join(SWITCHES[k][0] for k in req if k in SWITCHES) + "” first")
 
         def changed():
             show()
@@ -242,7 +316,7 @@ class Win(Adw.ApplicationWindow):
             if not busy[0]: set_key(scope, key, row.get_active()); changed()
         row.connect("notify::active", toggled)
         undo.connect("clicked", lambda *_: (set_key(scope, key, None), changed()))
-        if page_rows is not None and (key == "portals" or key.startswith("portal_")): page_rows.append(show)
+        if page_rows is not None and needs(key): page_rows.append(show)
         show()
         return row
 
@@ -366,9 +440,15 @@ class Win(Adw.ApplicationWindow):
         try: r = subprocess.run([sbx_cmd(), "preview", name], capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.TimeoutExpired) as e:
             return self.alert("Couldn't run sbx", str(e))
-        lab = Gtk.Label(label=(r.stdout or r.stderr).strip(), wrap=True, selectable=True, xalign=0, css_classes=["monospace"])
+        text = (r.stdout or r.stderr).strip()
+        lab = Gtk.Label(label=text, wrap=True, selectable=True, xalign=0, css_classes=["monospace"])
         sw = Gtk.ScrolledWindow(min_content_height=220, min_content_width=420, child=lab)
-        self.alert("Command", "", sw)
+        d = Adw.AlertDialog(heading="Command")
+        d.set_extra_child(sw)
+        d.add_responses("close", "Close", "copy", "Copy")
+        d.set_response_appearance("copy", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("copy"); d.set_close_response("close")
+        d.choose(self, None, lambda dlg, res: dlg.choose_finish(res) == "copy" and self.copy_text(text))
 
     def open_defaults(self):
         CURRENT[:] = [None]

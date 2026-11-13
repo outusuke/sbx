@@ -13,8 +13,10 @@ def machine_id(name, create):
 
 def find_program(prog, noexec=False):
     path = os.path.abspath(prog) if "/" in prog else shutil.which(prog)
-    if not path or not os.path.isfile(path) or not (noexec or os.access(path, os.X_OK)):
-        die(f"'{prog}' not found or not executable")
+    if not path or not os.path.isfile(path):
+        if "/" not in prog and os.path.isfile(prog): die(f"'{prog}' is a file in this folder, but a bare name is looked up in your PATH. Write ./{prog}")
+        die(f"'{prog}' not found" + (" in your PATH" if "/" not in prog else ""))
+    if not (noexec or os.access(path, os.X_OK)): die(f"'{prog}' is not executable. Run: chmod +x {shlex.quote(prog)}")
     real = os.path.realpath(path)
     if real.startswith(DRIVES):
         die(f"'{prog}' is on another drive, which the sandbox hides. Copy it somewhere else first.")

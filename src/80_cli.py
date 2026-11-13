@@ -78,7 +78,11 @@ def parse_options(a):
                 if key == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): die(f"{k}: use NAME=VALUE")
                 if key == "allow_syscall" and not syscall_ok(v): die(f"{k}: '{v}' can't be allowed; choose from {', '.join(sorted(EXTRA_SYSCALLS))}, io_uring")
                 o.setdefault(key, []).append(v)
-        else: die(f"unknown option {f}\n{USAGE}")
+        elif k in VALUE_FLAGS: die(f"{k} needs a value: {k}=...")
+        elif eq and k in FLAGS: die(f"{k} doesn't take a value")
+        else:
+            near = difflib.get_close_matches(f, [x for x in FLAGS] + [x + "=" for x in VALUE_FLAGS], n=1, cutoff=0.6)
+            die(f"unknown option {f}" + (f" (did you mean {near[0]}?)" if near else "") + "\nsbx --help lists the options.")
     return o, a
 
 
