@@ -389,7 +389,10 @@ class Units(unittest.TestCase):
         env = {"DISPLAY": ":0", "XAUTHORITY": bad, "WAYLAND_DISPLAY": ""}
         with mock.patch.dict(os.environ, env):
             _, cmd, st = S["build"]("/bin/true", [], True, {"x11": True})
-        for fd in st["fds"]: os.close(fd)
+        for f in st["keep"]: f.close()
+        for fd in st["fds"]:
+            try: os.close(fd)                      # any descriptor the files above did not own
+            except OSError: pass
         self.assertFalse(any(cmd[i:i + 3] == ["--ro-bind", bad, bad] for i in range(len(cmd))), "the whole file was shared")
         self.assertNotIn("XAUTHORITY", cmd)
         self.assertTrue(any("XAUTHORITY" in w for w in self.warned), self.warned)
@@ -683,7 +686,9 @@ class Units(unittest.TestCase):
         S = self.S
         internal = {"--loader"}                       # set by sbx itself, not typed
         root = os.path.dirname(os.path.abspath(__file__))
-        text = {f: open(f"{root}/completions/{f}").read() for f in ("sbx.bash", "_sbx", "sbx.fish")}
+        text = {}
+        for f in ("sbx.bash", "_sbx", "sbx.fish"):
+            with open(f"{root}/completions/{f}") as fh: text[f] = fh.read()
         opts = [f for f in list(S["FLAGS"]) + list(S["VALUE_FLAGS"]) if f not in internal]
         for f, t in text.items():
             looped = {w for l in t.splitlines() if l.startswith("for ") for w in l.split()[3:]}      # sbx.fish: for d in camera alsa ...
@@ -714,7 +719,8 @@ class Units(unittest.TestCase):
 
     def test_mark_running_drops_stale_files_and_unmark_removes_ours(self):
         S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
-        os.makedirs(S["RUNNING"]); open(f"{S['RUNNING']}/999999", "w").write("gone\n123")
+        os.makedirs(S["RUNNING"])
+        with open(f"{S['RUNNING']}/999999", "w") as fh: fh.write("gone\n123")
         open(f"{S['RUNNING']}/notes.txt", "w").close()
         S["mark_running"]("app")
         self.assertEqual(sorted(os.listdir(S["RUNNING"])), sorted(["notes.txt", str(os.getpid())]))
@@ -842,7 +848,8 @@ class Units(unittest.TestCase):
         cfg = f"{self.tmp}/cfg"
         env = {"PATH": f"{bindir}:/usr/bin:/bin", "XDG_CONFIG_HOME": cfg}
         self.write(".local/share/applications/keep.desktop", "x")
-        os.makedirs(cfg); open(f"{cfg}/mimeapps.list", "w").write("[Default Applications]\ntext/plain=other.desktop;\n")
+        os.makedirs(cfg)
+        with open(f"{cfg}/mimeapps.list", "w") as fh: fh.write("[Default Applications]\ntext/plain=other.desktop;\n")
         out = io.StringIO()
         with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(out): S["cmd_opener"](True)
         dest = f"{h}/.local/share/applications/sbx-run.desktop"
