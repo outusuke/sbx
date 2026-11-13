@@ -61,7 +61,7 @@ def tee_stderr(fd, name):
             data = os.read(fd, 4096)
             text = CTRL.sub("", dec.decode(data, final=not data))
             try: sys.stderr.write(text); sys.stderr.flush()
-            except Exception: pass
+            except (OSError, ValueError): pass
             lines = (pend + text).split("\n"); pend = lines.pop()
             lines = [x + "\n" for x in lines]
             while len(pend) > LOG_LINE_MAX: lines.append(pend[:LOG_LINE_MAX] + "\n"); pend = pend[LOG_LINE_MAX:]

@@ -55,6 +55,6 @@ def stop_proxy(px, sock):
             px[0].terminate()
             try: px[0].wait(2)
             except subprocess.TimeoutExpired: px[0].kill(); px[0].wait(2)       # a stuck proxy must not outlive us
-        except Exception: pass
+        except (OSError, subprocess.SubprocessError): pass
     try: os.unlink(sock)
     except OSError: pass

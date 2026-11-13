@@ -132,6 +132,7 @@ def main(argv):
             print(f"build: {rel} already up to date")
         else:
             with open(out, "w") as f: f.write(text)         # an existing file keeps its mode
+            if current is None: os.chmod(out, 0o755)         # a new one is executable, like the git copy
             print(f"build: wrote {rel} ({text.count(chr(10))} lines from {count} fragments)")
     if stale: sys.exit(1)
 

@@ -76,7 +76,7 @@ def journal_tag(ident, sock=JOURNAL_SOCK):
             s.shutdown(socket.SHUT_RD)
             for f in (sys.stdout, sys.stderr):
                 try: f.flush()
-                except Exception: pass
+                except (OSError, ValueError): pass
             for fd in fds: os.dup2(s.fileno(), fd)
         st = os.fstat(fds[0])
         os.environ["JOURNAL_STREAM"] = f"{st.st_dev}:{st.st_ino}"

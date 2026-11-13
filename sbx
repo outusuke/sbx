@@ -159,7 +159,7 @@ def journal_tag(ident, sock=JOURNAL_SOCK):
             s.shutdown(socket.SHUT_RD)
             for f in (sys.stdout, sys.stderr):
                 try: f.flush()
-                except Exception: pass
+                except (OSError, ValueError): pass
             for fd in fds: os.dup2(s.fileno(), fd)
         st = os.fstat(fds[0])
         os.environ["JOURNAL_STREAM"] = f"{st.st_dev}:{st.st_ino}"
@@ -403,7 +403,7 @@ def gsettings_get(schema, key):
     gs = shutil.which("gsettings")
     if not gs: return None
     try: r = subprocess.run([gs, "get", schema, key], capture_output=True, text=True, timeout=3)
-    except Exception: return None
+    except (OSError, subprocess.SubprocessError, ValueError): return None
     return r.stdout.strip() if r.returncode == 0 else None
 
 
@@ -691,7 +691,7 @@ def stop_proxy(px, sock):
             px[0].terminate()
             try: px[0].wait(2)
             except subprocess.TimeoutExpired: px[0].kill(); px[0].wait(2)       # a stuck proxy must not outlive us
-        except Exception: pass
+        except (OSError, subprocess.SubprocessError): pass
     try: os.unlink(sock)
     except OSError: pass
 
@@ -1205,7 +1205,7 @@ def tee_stderr(fd, name):
             data = os.read(fd, 4096)
             text = CTRL.sub("", dec.decode(data, final=not data))
             try: sys.stderr.write(text); sys.stderr.flush()
-            except Exception: pass
+            except (OSError, ValueError): pass
             lines = (pend + text).split("\n"); pend = lines.pop()
             lines = [x + "\n" for x in lines]
             while len(pend) > LOG_LINE_MAX: lines.append(pend[:LOG_LINE_MAX] + "\n"); pend = pend[LOG_LINE_MAX:]

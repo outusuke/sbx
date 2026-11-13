@@ -138,7 +138,7 @@ def gsettings_get(schema, key):
     gs = shutil.which("gsettings")
     if not gs: return None
     try: r = subprocess.run([gs, "get", schema, key], capture_output=True, text=True, timeout=3)
-    except Exception: return None
+    except (OSError, subprocess.SubprocessError, ValueError): return None
     return r.stdout.strip() if r.returncode == 0 else None
 
 
