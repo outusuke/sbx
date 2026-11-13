@@ -484,7 +484,7 @@ class Win(Adw.ApplicationWindow):
 
     def ask(self, heading, body, label, then):
         d = Adw.AlertDialog(heading=heading, body=body)
-        d.add_responses("cancel", "Cancel", "go", label)
+        d.add_response("cancel", "Cancel"); d.add_response("go", label)
         d.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE)
         d.set_close_response("cancel")
         d.choose(self, None, lambda dlg, res: dlg.choose_finish(res) == "go" and then())
@@ -619,7 +619,7 @@ class Win(Adw.ApplicationWindow):
         entry = Gtk.Entry(placeholder_text="firefox", activates_default=True)
         d = Adw.AlertDialog(heading="Add a program", body="The name you type to start it, for example firefox.")
         d.set_extra_child(entry)
-        d.add_responses("cancel", "Cancel", "add", "Add")
+        d.add_response("cancel", "Cancel"); d.add_response("add", "Add")
         d.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
         d.set_default_response("add"); d.set_close_response("cancel")
         d.set_response_enabled("add", False)
@@ -933,7 +933,7 @@ class Win(Adw.ApplicationWindow):
         sw = Gtk.ScrolledWindow(min_content_height=220, min_content_width=420, child=lab)
         d = Adw.AlertDialog(heading="Command")
         d.set_extra_child(sw)
-        d.add_responses("close", "Close", "copy", "Copy")
+        d.add_response("close", "Close"); d.add_response("copy", "Copy")
         d.set_response_appearance("copy", Adw.ResponseAppearance.SUGGESTED)
         d.set_default_response("copy"); d.set_close_response("close")
         d.choose(self, None, lambda dlg, res: dlg.choose_finish(res) == "copy" and self.copy_text(text))
