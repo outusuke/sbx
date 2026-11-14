@@ -222,7 +222,7 @@ def log_hints(lines, current, lists=None):
     text = "\n".join(run_lines[-300:])[-200_000:]
     out, seen = [], set()
     for pat, key, want, title, why, needs in LOG_HINTS:
-        if (key or title) in seen: continue
+        if ((key, want) if key else title) in seen: continue
         if key in HINT_LISTS:                                     # already there (a setenv counts when the variable is set at all)
             have = (lists or {}).get(key, [])
             if want in have or (key == "setenv" and any(h.partition("=")[0] == want.partition("=")[0] for h in have)): continue
@@ -230,7 +230,7 @@ def log_hints(lines, current, lists=None):
         if any(current.get(k) != v for k, v in needs.items()): continue
         if re.search(pat, text, re.I):
             out.append((key, want, title, why))
-            seen.add(key or title)
+            seen.add((key, want) if key else title)
     return out
 
 

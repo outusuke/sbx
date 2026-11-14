@@ -81,10 +81,14 @@ LOG_HINTS = [
      "net", True, "Allow the network", "The program tried to use the network.", {}),
     (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
      "camera", True, "Allow the camera", "The program tried to open a camera.", {}),
-    # An iced program whose GPU renderer failed a shader check (the GPU or driver lacks a feature): iced can draw on the CPU instead.
+    # A wgpu program whose shader needs a feature the chosen graphics adapter lacks. Tried on a real case: OpenGL got past it and
+    # keeps the card; for iced programs the processor renderer is the second choice. Both are listed, OpenGL first.
+    (r"wgpu error: validation error[\s\S]*requires capability",
+     "setenv", "WGPU_BACKEND=gl", "Draw with OpenGL instead of Vulkan (a guess)",
+     "The program's graphics library chose a Vulkan device that lacks a feature the program needs. OpenGL keeps the graphics card and often works.", {}),
     (r"wgpu error: validation error[\s\S]*iced_wgpu|iced_wgpu[\s\S]*wgpu error: validation error",
-     "setenv", "ICED_BACKEND=tiny-skia", "Draw on the processor instead of the graphics card (a guess)",
-     "The program draws with iced, and its graphics-card renderer failed a check the card or driver could not pass. This makes it draw on the processor: slower, but it needs nothing from the card.", {}),
+     "setenv", "ICED_BACKEND=tiny-skia", "If that does not help: draw on the processor (a guess)",
+     "The program draws with iced, which can skip the graphics card entirely. Slower, but it needs nothing from the card.", {}),
     # A Rust panic on a file that is not there: sbx starts a program in its private home, so files it expects in the folder it was
     # started from are missing. --here is a command-line option only (it depends on where you start), so there is no button.
     (r"panicked at [^\n]*\n[^\n]*kind: NotFound",

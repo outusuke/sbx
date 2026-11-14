@@ -2446,11 +2446,14 @@ class Gui(unittest.TestCase):
     def test_an_iced_shader_failure_suggests_the_cpu_renderer_until_it_is_set(self):
         G = self.G
         lines = self.run_log(*self.WGPU, code=101)
-        got = G["log_hints"](lines, {}, {})
-        self.assertEqual([(k, w) for k, w, *_ in got], [("setenv", "ICED_BACKEND=tiny-skia")])
-        self.assertEqual(G["log_hints"](lines, {}, {"setenv": ["ICED_BACKEND=tiny-skia"]}), [])         # already set
-        self.assertEqual(G["log_hints"](lines, {}, {"setenv": ["ICED_BACKEND=wgpu"]}), [])              # chosen on purpose: leave it
-        plain = self.run_log("wgpu error: Validation Error", "something in another_crate", code=101)    # not iced: it would do nothing
+        keys = lambda lists: [w for _k, w, *_ in G["log_hints"](lines, {}, lists)]
+        self.assertEqual(keys({}), ["WGPU_BACKEND=gl", "ICED_BACKEND=tiny-skia"])                       # OpenGL first, the processor second
+        self.assertEqual(keys({"setenv": ["WGPU_BACKEND=gl"]}), ["ICED_BACKEND=tiny-skia"])             # still failing with it: the next one
+        self.assertEqual(keys({"setenv": ["WGPU_BACKEND=gl", "ICED_BACKEND=tiny-skia"]}), [])           # both set
+        self.assertEqual(keys({"setenv": ["WGPU_BACKEND=vulkan", "ICED_BACKEND=wgpu"]}), [])            # chosen on purpose: leave them
+        other = self.run_log("wgpu error: Validation Error", "Shader requires capability Capabilities(X)", code=101)   # wgpu but not iced
+        self.assertEqual([w for _k, w, *_ in G["log_hints"](other, {}, {})], ["WGPU_BACKEND=gl"])
+        plain = self.run_log("wgpu error: Validation Error", "something in another_crate", code=101)    # no capability message: nothing to say
         self.assertEqual(G["log_hints"](plain, {}, {}), [])
 
     def test_the_hint_button_adds_the_variable_to_the_programs_file_and_keeps_the_rest(self):
@@ -2460,7 +2463,7 @@ class Gui(unittest.TestCase):
         self.assertEqual(G["effective_lists"]("app"), {"setenv": ["A=1"]})
         self.assertTrue(G["add_item"]("app", "setenv", "ICED_BACKEND=tiny-skia")); G["add_item"]("app", "setenv", "ICED_BACKEND=tiny-skia")   # twice: once
         with open(f"{G['APPS']}/app.conf") as f: self.assertEqual(f.read(), "net=0\nsetenv=A=1\nsetenv=ICED_BACKEND=tiny-skia\n")
-        self.assertEqual(G["log_hints"](self.run_log(*self.WGPU, code=101), {}, G["effective_lists"]("app")), [])         # and the hint is gone
+        self.assertEqual([w for _k, w, *_ in G["log_hints"](self.run_log(*self.WGPU, code=101), {}, G["effective_lists"]("app"))], ["WGPU_BACKEND=gl"])      # that one is gone, the other stays
 
     def test_a_panic_on_a_missing_file_gives_advice_without_a_button(self):
         G = self.G
@@ -2469,7 +2472,7 @@ class Gui(unittest.TestCase):
         self.assertIn("--here", got[0][3])
         self.assertEqual(G["log_hints"](self.run_log("thread 'main' panicked at x.rs:1:1:", "index out of bounds", code=101), {}, {}), [])
         both = G["log_hints"](self.run_log(*self.NOTFOUND, *self.WGPU, code=101), {}, {})                # both can show, each once
-        self.assertEqual(sorted(str(k) for k, *_ in both), ["None", "setenv"])
+        self.assertEqual(sorted(str(k) for k, *_ in both), ["None", "setenv", "setenv"])
 
     def test_every_hint_names_a_real_switch(self):
         G = self.G
