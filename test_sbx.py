@@ -587,6 +587,7 @@ class Units(unittest.TestCase):
         S["die"] = die
         S["notify_click"] = lambda plain, clicked, label, args, urgency="critical": self.pinged.append((label, args))
         quiet = mock.patch.object(sys, "stdin", io.StringIO()); quiet.start(); self.addCleanup(quiet.stop)
+        nowl = mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}); nowl.start(); self.addCleanup(nowl.stop)     # a desktop's compositor adds warnings
 
     def origin(self, name, real, **kw):
         """Run check_origin: True if the program may start."""
@@ -1279,7 +1280,8 @@ class Units(unittest.TestCase):
     def test_clean_unused_deletes_only_those_homes_and_asks_first(self):
         S, h = self.S, self.home
         self._programs()
-        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit): S["cmd_clean"](["--unused"])     # no terminal: needs --yes
+        with mock.patch.object(sys, "stdin", io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+            S["cmd_clean"](["--unused"])                                                                                        # no terminal: needs --yes
         self.assertIn("--yes", err.getvalue()); self.assertTrue(os.path.isdir(f"{S['HOMES']}/seen"))
         out = io.StringIO()
         with contextlib.redirect_stdout(out): S["cmd_clean"](["--yes", "--unused"])
