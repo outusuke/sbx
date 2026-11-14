@@ -812,6 +812,19 @@ class Units(unittest.TestCase):
         with open(f"{HERE}/sbx.1") as f: man = f.read().replace("\\-", "-")
         for flag in ("--install-opener", "--remove-opener", "--install-menu", "--remove-menu", "--remove"): self.assertIn(flag, man)
 
+    def test_desktop_remove_finds_the_copy_kept_under_the_system_launcher_name(self):
+        S, h = self.S, self.home
+        sysdir = f"{h}/sysshare"; os.makedirs(f"{sysdir}/applications")
+        with open(f"{sysdir}/applications/org.mozilla.firefox.desktop", "w") as f: f.write("[Desktop Entry]\nName=Firefox\nExec=firefox %u\n")
+        dest = f"{h}/.local/share/applications/org.mozilla.firefox.desktop"
+        with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": sysdir}), contextlib.redirect_stdout(io.StringIO()): S["cmd_desktop"](["firefox"])
+        self.assertTrue(os.path.isfile(dest))
+        with contextlib.redirect_stdout(io.StringIO()): S["cmd_desktop"](["--remove", "firefox"])
+        self.assertFalse(os.path.exists(dest))
+        self.write(".local/share/applications/org.other.firefox.desktop", "[Desktop Entry]\nName=Mine\n")      # not made by sbx: left alone
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()): S["cmd_desktop"](["--remove", "firefox"])
+        self.assertTrue(os.path.exists(f"{h}/.local/share/applications/org.other.firefox.desktop"))
+
     def test_menu_commands(self):
         S, h = self.S, self.home
         desk = f"{h}/.local/share/applications/org.sbx.Gui.desktop"; icon = f"{h}/.local/share/icons/hicolor/scalable/apps/org.sbx.Gui.svg"

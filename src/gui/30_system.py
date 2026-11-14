@@ -102,10 +102,15 @@ def set_menu_entry(on):
 
 
 def launcher_is_ours(name):
-    """True if ~/.local/share/applications/NAME.desktop was made by `sbx desktop`."""
-    try:
-        with open(f"{HOME}/.local/share/applications/{name}.desktop") as f: return "X-Sbx-Sandboxed=true" in f.read()
-    except OSError: return False
+    """True if ~/.local/share/applications/NAME.desktop (or *.NAME.desktop, the name `sbx desktop` keeps from the system launcher,
+    e.g. org.mozilla.firefox for firefox) was made by `sbx desktop`."""
+    d = f"{HOME}/.local/share/applications"
+    for path in [f"{d}/{name}.desktop"] + sorted(glob.glob(f"{d}/*.{name}.desktop")):
+        try:
+            with open(path) as f:
+                if "X-Sbx-Sandboxed=true" in f.read(): return True
+        except OSError: pass
+    return False
 
 
 def sbx_cmd():

@@ -1471,11 +1471,22 @@ def cmd_desktop(a):
     if not re.fullmatch(r"[A-Za-z0-9._+-]+", ident) or ident.startswith("."): die(f"'{ident}' is not a launcher id")
     mine = f"{HOME}/.local/share/applications/{ident}.desktop"
     if remove:
-        try:
-            with open(mine) as f: ours = "X-Sbx-Sandboxed=true" in f.read()
-        except OSError: die(f"{tilde(mine)} doesn't exist")
-        if not ours: die(f"{tilde(mine)} was not made by sbx; not removing it")
-        os.unlink(mine); print(f"removed {tilde(mine)}"); return
+        if os.path.exists(mine):
+            try:
+                with open(mine) as f: ours = "X-Sbx-Sandboxed=true" in f.read()
+            except OSError: die(f"{tilde(mine)} doesn't exist")
+            if not ours: die(f"{tilde(mine)} was not made by sbx; not removing it")
+            os.unlink(mine); print(f"removed {tilde(mine)}"); return
+        # adding saves the copy under the system launcher's own name, which can be org.mozilla.firefox for NAME firefox
+        found = []
+        for p in sorted(glob.glob(f"{HOME}/.local/share/applications/*.{ident}.desktop")):
+            try:
+                with open(p) as f:
+                    if "X-Sbx-Sandboxed=true" in f.read(): found.append(p)
+            except OSError: pass
+        if not found: die(f"{tilde(mine)} doesn't exist, and no launcher made by sbx is called *.{ident}.desktop")
+        for p in found: os.unlink(p); print(f"removed {tilde(p)}")
+        return
     dirs = [d for d in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":") if d]
     cands = [f"{d}/applications/{ident}.desktop" for d in dirs]
     cands += [p for d in dirs for p in sorted(glob.glob(f"{d}/applications/*.{ident}.desktop"))]
