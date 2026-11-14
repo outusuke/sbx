@@ -57,7 +57,9 @@ SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
 SOURCE_RANK = {"System": 0, "Downloaded": 2}   # same order as `sbx list --all`: of the programs only run from the terminal, System first, Downloaded last
 LISTS = ("whitelist", "read_only")
-HINT_LISTS = ("setenv",)        # lists a troubleshooting hint may add to; the window edits no other list of sbx's (its lines are kept as they are)
+HINT_LISTS = ("setenv",)        # lists a troubleshooting hint may add to
+ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    # same as in sbx: env= and setenv= can't touch these
+# The window edits whitelist, read_only, setenv and env; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
        ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))

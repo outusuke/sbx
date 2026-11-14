@@ -371,6 +371,7 @@ class Win(Adw.ApplicationWindow):
                 g.set_visible(shown > 0)
         search.connect("search-changed", filter_rows)
         for grp in self.folders_group(scope, refresh_caps): page.add(grp)
+        page.add(self.env_group(scope))
         if scope is not None:
             rg = Adw.PreferencesGroup(title="More")
             cmd = Adw.ActionRow(title="Show command", subtitle="The bwrap command sbx would run", activatable=True)
@@ -634,6 +635,59 @@ class Win(Adw.ApplicationWindow):
         g.set_header_suffix(box)
         refill()
         return [g, inherited] if scope is not None else [g]
+
+    def env_group(self, scope):
+        """Environment variables: NAME=value ones the program starts with (setenv=), and names of your own variables to pass through (env=)."""
+        g = Adw.PreferencesGroup(title="Environment variables",
+                                 description="sbx starts the program with a clean environment. Add what it needs, for example SDL_VIDEODRIVER=x11.")
+        rows = []
+
+        def refill():
+            for r in rows: g.remove(r)
+            rows.clear()
+            for key in ("setenv", "env"):
+                for v in raw_list(scope, key):
+                    name, _, val = v.partition("=")
+                    sub = (val or "empty") if key == "setenv" else "Passed through from your own environment"
+                    r = Adw.ActionRow(title=name, subtitle=sub, use_markup=False)
+                    rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Remove {name}")
+                    rm.connect("clicked", lambda _b, key=key, v=v: (remove_item(scope, key, v), refill()))
+                    r.add_suffix(rm); g.add(r); rows.append(r)
+            if not rows:
+                r = Adw.ActionRow(title="None"); g.add(r); rows.append(r)
+
+        def ask(key):
+            name_e = Gtk.Entry(placeholder_text="NAME", activates_default=True)
+            val_e = Gtk.Entry(placeholder_text="value", activates_default=True)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            box.append(name_e)
+            if key == "setenv": box.append(val_e)
+            d = Adw.AlertDialog(heading="Set a variable" if key == "setenv" else "Pass a variable through",
+                                body="The program starts with this variable set to this value." if key == "setenv"
+                                     else "The program gets your own value of this variable when it starts.")
+            d.set_extra_child(box)
+            d.add_response("cancel", "Cancel"); d.add_response("add", "Add")
+            d.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+            d.set_default_response("add"); d.set_close_response("cancel")
+
+            def done(dlg, res):
+                if dlg.choose_finish(res) != "add": return
+                name, val = name_e.get_text().strip(), val_e.get_text().strip()
+                bad = env_problem(name, val if key == "setenv" else None)
+                if bad: return self.alert("Can't add that", bad)
+                for v in raw_list(scope, key):
+                    if v.partition("=")[0] == name: remove_item(scope, key, v)          # one value per variable: the new one replaces the old
+                add_item(scope, key, f"{name}={val}" if key == "setenv" else name)
+                refill()
+            d.choose(self, None, done)
+        box = Gtk.Box(spacing=6)
+        for label, key in (("Set…", "setenv"), ("Pass through…", "env")):
+            b = Gtk.Button(label=label, css_classes=["flat"])
+            b.connect("clicked", lambda _b, key=key: ask(key))
+            box.append(b)
+        g.set_header_suffix(box)
+        refill()
+        return g
 
     # -- actions --
     def run_program(self, name):

@@ -97,6 +97,14 @@ def remove_item(scope, key, v):
     save(scope, [l for l in read_lines(scope) if not (key_of(l) == key and strip(l).partition("=")[2].strip() == v)])
 
 
+def env_problem(name, value=None):
+    """Why this variable can't go into the settings file, or None. VALUE is None for a variable that is passed through (env=NAME)."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name): return "A variable name has letters, digits and _, and doesn't start with a digit."
+    if name in ENV_PROTECTED: return f"{name} can't be changed: sbx sets it itself."
+    if value is not None and re.search(r"(^|\s)#", value): return "A value can't contain ' #': sbx would read the rest as a comment."
+    return None
+
+
 def app_names():
     n = set()
     try: n |= {f[:-5] for f in os.listdir(APPS) if f.endswith(".conf")}

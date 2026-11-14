@@ -2578,6 +2578,20 @@ class Gui(unittest.TestCase):
             self.assertTrue(title and why)
             for k in needs: self.assertIn(k, self.S["SCALARS"])
 
+    def test_environment_variables_can_be_added_replaced_and_removed_from_the_window(self):
+        G, S = self.G, self.S
+        self.assertEqual(G["ENV_PROTECTED"], S["ENV_PROTECTED"], "sbx-gui and sbx must refuse the same variables")
+        for name, value, bad in (("SDL_VIDEODRIVER", "x11", False), ("_X1", "", False), ("1X", "a", True), ("A-B", "a", True), ("", "a", True),
+                                 ("HOME", "/x", True), ("SBX_ACTIVE", "1", True), ("FOO", "a #b", True), ("FOO", "a#b", False)):
+            self.assertEqual(bool(G["env_problem"](name, value)), bad, (name, value))
+        self.assertIsNone(G["env_problem"]("PATH")); self.assertTrue(G["env_problem"]("HOME"))          # passed through: no value to check
+        self.assertTrue(G["add_item"]("app", "setenv", "SDL_VIDEODRIVER=x11")); G["add_item"]("app", "env", "MY_TOKEN")
+        self.assertEqual(G["raw_list"]("app", "setenv"), ["SDL_VIDEODRIVER=x11"]); self.assertEqual(G["raw_list"]("app", "env"), ["MY_TOKEN"])
+        G["remove_item"]("app", "setenv", "SDL_VIDEODRIVER=x11")
+        self.assertEqual(G["raw_list"]("app", "setenv"), []); self.assertEqual(G["raw_list"]("app", "env"), ["MY_TOKEN"], "the other list is untouched")
+        G["set_key"]("app", "net", False)
+        self.assertEqual(G["raw_list"]("app", "env"), ["MY_TOKEN"], "a switch change keeps the variable lines")
+
     def test_the_folder_switch_has_wording_and_warns_when_the_folder_cannot_be_shared(self):
         G = self.G
         self.assertIn("folder", G["SWITCHES"]); self.assertIn("folder", G["SHORT"]); self.assertIn("folder", self.S["SCALARS"])
