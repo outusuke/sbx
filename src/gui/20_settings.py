@@ -105,6 +105,36 @@ def env_problem(name, value=None):
     return None
 
 
+def parse_env_entry(text):
+    """(list key, value, problem) for what is typed in a variable row: NAME=value sets a variable (setenv=), a bare NAME passes
+    your own value through (env=). The problem is None when it can be stored."""
+    name, eq, val = text.strip().partition("=")
+    name, val = name.strip(), val.strip()
+    if not name and not eq: return None, None, "Type NAME=value to set a variable, or just NAME to pass your own value through."
+    bad = env_problem(name, val if eq else None)
+    if bad: return None, None, bad
+    return ("setenv", f"{name}={val}", None) if eq else ("env", name, None)
+
+
+def set_env_entry(scope, text, old=None):
+    """Add the variable typed in a row, or, with old=(list key, value), change that entry where it stands in the file. One value
+    per variable: another entry of the same list with the same name is replaced too. Other lines stay as they are.
+    Returns why it can't be stored, or None."""
+    key, v, bad = parse_env_entry(text)
+    if bad: return bad
+    name = v.partition("=")[0]
+    out, placed = [], False
+    for l in read_lines(scope):
+        k, val = key_of(l), strip(l).partition("=")[2].strip()
+        if k in ("setenv", "env") and ((k, val) == old or (k == key and val.partition("=")[0] == name)):
+            if not placed: out.append(f"{key}={v}"); placed = True
+            continue
+        out.append(l)
+    if not placed: out.append(f"{key}={v}")
+    save(scope, out)
+    return None
+
+
 def app_names():
     n = set()
     try: n |= {f[:-5] for f in os.listdir(APPS) if f.endswith(".conf")}

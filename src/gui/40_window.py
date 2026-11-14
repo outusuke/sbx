@@ -637,55 +637,38 @@ class Win(Adw.ApplicationWindow):
         return [g, inherited] if scope is not None else [g]
 
     def env_group(self, scope):
-        """Environment variables: NAME=value ones the program starts with (setenv=), and names of your own variables to pass through (env=)."""
+        """Environment variables, one editable row each: NAME=value is set for the program (setenv=), a bare NAME passes your own
+        value through (env=). The row on top adds one; a row's text is changed where it stands (Enter or the check mark)."""
         g = Adw.PreferencesGroup(title="Environment variables",
-                                 description="sbx starts the program with a clean environment. Add what it needs, for example SDL_VIDEODRIVER=x11.")
+                                 description="sbx starts the program with a clean environment. NAME=value sets a variable for it, "
+                                             "for example SDL_VIDEODRIVER=x11. A bare NAME passes your own value through.")
         rows = []
+
+        def apply(row, old):
+            """old: (list key, value) of the entry this row shows, None for the row that adds."""
+            if old is not None and row.get_text().strip() == old[1]: return           # nothing changed
+            bad = set_env_entry(scope, row.get_text(), old)
+            if bad:
+                self.alert("Can't use that", bad)
+                if old is not None: row.set_text(old[1])
+                return
+            GLib.idle_add(refill)                                                      # not while the row is still handling its own signal
 
         def refill():
             for r in rows: g.remove(r)
             rows.clear()
+            new = Adw.EntryRow(title="New variable (NAME=value)", show_apply_button=True)
+            new.connect("apply", lambda r: apply(r, None))
+            g.add(new); rows.append(new)
             for key in ("setenv", "env"):
                 for v in raw_list(scope, key):
-                    name, _, val = v.partition("=")
-                    sub = (val or "empty") if key == "setenv" else "Passed through from your own environment"
-                    r = Adw.ActionRow(title=name, subtitle=sub, use_markup=False)
-                    rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Remove {name}")
-                    rm.connect("clicked", lambda _b, key=key, v=v: (remove_item(scope, key, v), refill()))
+                    r = Adw.EntryRow(title="Variable" if key == "setenv" else "Passed through from your own environment",
+                                     text=v, show_apply_button=True)
+                    r.connect("apply", lambda r, old=(key, v): apply(r, old))
+                    rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                                    tooltip_text=f"Remove {v.partition('=')[0]}")
+                    rm.connect("clicked", lambda _b, key=key, v=v: (remove_item(scope, key, v), GLib.idle_add(refill)))
                     r.add_suffix(rm); g.add(r); rows.append(r)
-            if not rows:
-                r = Adw.ActionRow(title="None"); g.add(r); rows.append(r)
-
-        def ask(key):
-            name_e = Gtk.Entry(placeholder_text="NAME", activates_default=True)
-            val_e = Gtk.Entry(placeholder_text="value", activates_default=True)
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            box.append(name_e)
-            if key == "setenv": box.append(val_e)
-            d = Adw.AlertDialog(heading="Set a variable" if key == "setenv" else "Pass a variable through",
-                                body="The program starts with this variable set to this value." if key == "setenv"
-                                     else "The program gets your own value of this variable when it starts.")
-            d.set_extra_child(box)
-            d.add_response("cancel", "Cancel"); d.add_response("add", "Add")
-            d.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
-            d.set_default_response("add"); d.set_close_response("cancel")
-
-            def done(dlg, res):
-                if dlg.choose_finish(res) != "add": return
-                name, val = name_e.get_text().strip(), val_e.get_text().strip()
-                bad = env_problem(name, val if key == "setenv" else None)
-                if bad: return self.alert("Can't add that", bad)
-                for v in raw_list(scope, key):
-                    if v.partition("=")[0] == name: remove_item(scope, key, v)          # one value per variable: the new one replaces the old
-                add_item(scope, key, f"{name}={val}" if key == "setenv" else name)
-                refill()
-            d.choose(self, None, done)
-        box = Gtk.Box(spacing=6)
-        for label, key in (("Set…", "setenv"), ("Pass through…", "env")):
-            b = Gtk.Button(label=label, css_classes=["flat"])
-            b.connect("clicked", lambda _b, key=key: ask(key))
-            box.append(b)
-        g.set_header_suffix(box)
         refill()
         return g
 

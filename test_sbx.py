@@ -2611,6 +2611,34 @@ class Gui(unittest.TestCase):
         G["set_key"]("app", "net", False)
         self.assertEqual(G["raw_list"]("app", "env"), ["MY_TOKEN"], "a switch change keeps the variable lines")
 
+    def test_an_environment_variable_can_be_edited_where_it_stands(self):
+        G = self.G
+        path = G["path_for"]("app"); os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f: f.write("net=0\n# keep me\nsetenv=A=1\nenv=TOKEN\nsetenv=B=2\nsound=0\n")
+        def lines():
+            with open(path) as f: return f.read().splitlines()
+        self.assertEqual(G["parse_env_entry"]("  X = a b "), ("setenv", "X=a b", None))
+        self.assertEqual(G["parse_env_entry"]("TOKEN"), ("env", "TOKEN", None))
+        self.assertEqual(G["parse_env_entry"]("X="), ("setenv", "X=", None))
+        for bad in ("", "  ", "=v", "1X=v", "HOME=/x", "HOME", "A B=c", "X=a #b"):
+            self.assertTrue(G["parse_env_entry"](bad)[2], bad)
+        self.assertIsNone(G["set_env_entry"]("app", "A=100", ("setenv", "A=1")))
+        self.assertEqual(lines(), ["net=0", "# keep me", "setenv=A=100", "env=TOKEN", "setenv=B=2", "sound=0"], "same line, nothing else touched")
+        self.assertIsNone(G["set_env_entry"]("app", "TOKEN=fixed", ("env", "TOKEN")))                # pass-through becomes a value, in place
+        self.assertEqual(lines()[3], "setenv=TOKEN=fixed")
+        self.assertIsNone(G["set_env_entry"]("app", "TOKEN", ("setenv", "TOKEN=fixed")))             # and back
+        self.assertEqual(lines()[3], "env=TOKEN")
+        self.assertIsNone(G["set_env_entry"]("app", "B=3"))                                          # typed in the top row: same name, replaced
+        self.assertEqual(G["raw_list"]("app", "setenv"), ["A=100", "B=3"])
+        self.assertIsNone(G["set_env_entry"]("app", "C=4"))                                          # a new name goes last
+        self.assertEqual(lines()[-1], "setenv=C=4")
+        before = lines()
+        self.assertTrue(G["set_env_entry"]("app", "HOME=/x", ("setenv", "A=100")))                   # refused: the file stays as it was
+        self.assertEqual(lines(), before)
+        self.assertIsNone(G["set_env_entry"]("app", "A=1", ("setenv", "A=100")))
+        self.assertIsNone(G["set_env_entry"]("app", "B=3", ("setenv", "A=1")))                       # renamed onto another entry: one remains
+        self.assertEqual(G["raw_list"]("app", "setenv"), ["B=3", "C=4"])
+
     def test_the_folder_switch_has_wording_and_warns_when_the_folder_cannot_be_shared(self):
         G = self.G
         self.assertIn("folder", G["SWITCHES"]); self.assertIn("folder", G["SHORT"]); self.assertIn("folder", self.S["SCALARS"])
