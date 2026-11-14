@@ -976,10 +976,10 @@ def origin_records():
     return recs
 
 
-def home_in_use(name):
-    """True if NAME has settings of its own (apps/NAME.conf) or a private home that holds more than a run leaves behind."""
+def home_has_data(name):
+    """True if NAME's private home is a link or holds more than a run leaves behind (see UNUSED_BYTES)."""
     home = f"{HOMES}/{name}"
-    return os.path.exists(f"{CONF}/apps/{name}.conf") or os.path.islink(home) or (os.path.isdir(home) and not home_is_small(name))
+    return os.path.islink(home) or (os.path.isdir(home) and not home_is_small(name))
 
 
 def file_owner(name, real):
@@ -989,7 +989,8 @@ def file_owner(name, real):
       - else the file has the size and SHA-256 of exactly one recorded program whose file is gone: that name. Only a file of a size
         that such a program had is read. A copy (the original is still there) is not a rename and stays a program of its own.
     Leftovers under NAME from an earlier run of this same file (an origin record, an unused private home) don't matter. NAME stays only
-    when it has settings of its own or a home with data in it: then nothing is mixed up, and the reason says how to join them."""
+    when it has settings of its own (apps/NAME.conf), or a home with data in it that no run of this file explains: then nothing is mixed
+    up, and the reason says how to join them. A home next to an origin record of this very file is that file's own leftover, however big."""
     try: st = os.stat(real)
     except OSError: return name, None, None
     if real.startswith(SYSTEM_PROGRAMS): return name, None, None
@@ -1003,7 +1004,9 @@ def file_owner(name, real):
     if not same or name in same: return name, None, None
     if len(same) > 1: return name, None, f"'{os.path.basename(real)}' has the content of several programs whose file is gone ({', '.join(same)}), so sbx does not pick one. --name=ONE does"
     other = recs.get(name)
-    if not (other and other[0] != real and os.path.isfile(other[0])) and home_in_use(name):      # NAME is not another program's, and it has data
+    theirs = bool(other) and other[0] != real and os.path.isfile(other[0])          # NAME is another program's: its data is none of our business
+    mine = bool(other) and other[0] == real                                          # NAME was recorded for this very file: its home is a leftover
+    if not theirs and (os.path.exists(f"{CONF}/apps/{name}.conf") or (not mine and home_has_data(name))):
         return name, None, f"'{name}' already has settings or data of its own, so '{os.path.basename(real)}' stays '{name}', although it is '{same[0]}' renamed. --name={same[0]} runs it as that"
     return same[0], recs[same[0]][0], None
 
@@ -1687,6 +1690,11 @@ def cmd_show(a):
     o, a = parse_options(a)
     if len(a) != 1: die("usage: sbx show [options] NAME")
     name = clean(o.get("name") or os.path.basename(a[0]))
+    if not o.get("name") and "/" in a[0] and os.path.isfile(a[0]):             # a file: the program it runs as (a renamed file keeps its old name)
+        owner, _old, why = file_owner(name, os.path.realpath(a[0]))
+        if owner != name: print(f"{tilde(os.path.abspath(a[0]))} is '{owner}' renamed (same size and SHA-256 as its recorded file)")
+        if why: print(why)
+        name = owner
     cfg, src = effective(name, o)
     home = f"{HOMES}/{name}"
     print(f"{name}   private home {tilde(home)} ({'exists' if os.path.isdir(home) else 'not created yet'})")

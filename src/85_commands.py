@@ -5,6 +5,11 @@ def cmd_show(a):
     o, a = parse_options(a)
     if len(a) != 1: die("usage: sbx show [options] NAME")
     name = clean(o.get("name") or os.path.basename(a[0]))
+    if not o.get("name") and "/" in a[0] and os.path.isfile(a[0]):             # a file: the program it runs as (a renamed file keeps its old name)
+        owner, _old, why = file_owner(name, os.path.realpath(a[0]))
+        if owner != name: print(f"{tilde(os.path.abspath(a[0]))} is '{owner}' renamed (same size and SHA-256 as its recorded file)")
+        if why: print(why)
+        name = owner
     cfg, src = effective(name, o)
     home = f"{HOMES}/{name}"
     print(f"{name}   private home {tilde(home)} ({'exists' if os.path.isdir(home) else 'not created yet'})")

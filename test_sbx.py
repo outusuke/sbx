@@ -1015,10 +1015,16 @@ class Units(unittest.TestCase):
         self.assertEqual((owner, was), ("CrashBandicoot", None)); self.assertIn("--name=CrashBandicoot-Linux", why)
         os.unlink(f"{S['CONF']}/apps/CrashBandicoot.conf")
         self._put(f"{S['HOMES']}/CrashBandicoot/save", "s" * 70000)
-        self.assertEqual(S["file_owner"]("CrashBandicoot", new)[0], "CrashBandicoot", "a home with data")
+        self.assertEqual(S["file_owner"]("CrashBandicoot", new)[0], "CrashBandicoot", "a home with data nothing explains")
+        S["write_origin"]("CrashBandicoot", new, S["fingerprint"](new))                  # ...but when an earlier run of this very file made it
+        self.assertEqual(S["file_owner"]("CrashBandicoot", new)[0], "CrashBandicoot-Linux", "the home is that run's leftover, however big")
+        os.unlink(f"{S['CONF']}/origins/CrashBandicoot")
         self.said.clear(); self.assertEqual(self._fresh_name(new), "CrashBandicoot"); self.assertIn("stays 'CrashBandicoot'", self.said[0])
         self._put(f"{S['HOMES']}/CrashBandicoot/save", "s")
         self.assertEqual(S["file_owner"]("CrashBandicoot", new)[0], "CrashBandicoot-Linux", "a nearly empty home is only a leftover")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_show"]([new])
+        self.assertIn("is 'CrashBandicoot-Linux' renamed", out.getvalue()); self.assertIn("CrashBandicoot-Linux   private home", out.getvalue())
         # settings that belong to another program of that name (its own file is there) don't stop this file being the renamed one
         other = self.write("Apps/CrashBandicoot", "different"); self.assertTrue(self.origin("CrashBandicoot", other, rebind=True))
         self._put(f"{S['CONF']}/apps/CrashBandicoot.conf", "net=1\n")
