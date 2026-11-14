@@ -2346,6 +2346,14 @@ class Gui(unittest.TestCase):
         finally: G["subprocess"] = real
         win.nav.push.assert_called_once()
 
+    def test_startup_arguments_say_which_page_a_second_start_shows(self):
+        pa = self.G["parse_args"]
+        self.assertEqual(pa([]), (False, None))
+        self.assertEqual(pa(["--default"]), (None, None))
+        self.assertEqual(pa(["firefox"]), ("firefox", None))
+        self.assertEqual(pa(["--log"]), (False, ""))                  # a notification click: the log of all programs...
+        self.assertEqual(pa(["--log", "firefox"]), (False, "firefox"))   # ...or of one, handed to the window that is already open
+
     def test_log_lines_are_split_and_classified_for_color(self):
         parts, ts = self.G["log_line_parts"], "[2026-11-11 20:39:24] "
         self.assertEqual(parts(ts + "[app] START allow=[net]"), (ts, "[app] ", "START allow=[net]", "info"))

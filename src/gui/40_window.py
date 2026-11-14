@@ -14,6 +14,16 @@ class Win(Adw.ApplicationWindow):
         self.nav.connect("popped", lambda *_: self.fill_apps())
         self.connect("notify::is-active", lambda w, _p: w.is_active() and self.fill_apps())
 
+    def show_trouble(self, scope):
+        """Called for a start from outside (a notification click): back to the main page first so Back never leads
+        through a stale page, then the log. Works the same whether the window was just created or was already open."""
+        self.nav.pop_to_page(self.main)
+        self.open_trouble(scope)
+
+    def show_program(self, scope):
+        self.nav.pop_to_page(self.main)
+        self.open(scope)
+
     def page(self, title, content, end=(), banner=None):
         view = Adw.ToolbarView()
         bar = Adw.HeaderBar()
@@ -79,22 +89,18 @@ class Win(Adw.ApplicationWindow):
         self.fill_apps()
         add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add a program")
         add.connect("clicked", lambda *_: self.add_program())
-        ts = Gtk.Button(icon_name="utilities-terminal-symbolic", tooltip_text="Troubleshooting")
+        ts = Gtk.Button(label="Log", tooltip_text="What happened when programs started or stopped, and the health checks")
         ts.connect("clicked", lambda *_: self.open_trouble(None))
         return self.page("sbx", page, [add, ts], banner=self.pending_banner)
 
     def open_trouble(self, scope):
         """Health checks (sbx doctor) and the recent log, for one program or all."""
         page = Adw.PreferencesPage()
-        hg = Adw.PreferencesGroup(title="Health", description="The checks of sbx doctor.")
         hl = Gtk.Label(xalign=0, wrap=True, selectable=True, margin_top=6, margin_bottom=6, css_classes=["monospace"])
-        hg.add(hl)
-        page.add(hg)
         sg = Adw.PreferencesGroup(title="Suggestions", description="Based on this program's last run, which ended with an error. "
                                   "Nothing changes until you press the button; it applies the next time the program starts.")
         sg.set_visible(False)
         sug_rows = []
-        page.add(sg)
 
         def show_hints():
             for r in sug_rows: sg.remove(r)
@@ -119,8 +125,13 @@ class Win(Adw.ApplicationWindow):
                                   description="Starts, exits, warnings, and what programs print when they have no terminal. Paste this when asking for help.")
         tv = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR,
                           left_margin=8, right_margin=8, top_margin=8, bottom_margin=8)
-        lg.add(Gtk.ScrolledWindow(min_content_height=320, child=tv, css_classes=["card"]))
+        sw = Gtk.ScrolledWindow(min_content_height=420, child=tv, css_classes=["card"])
+        lg.add(sw)
+        page.add(sg)                                      # what to change comes first, then the log it is based on
         page.add(lg)
+        hg = Adw.PreferencesGroup(title="Health", description="The checks of sbx doctor.")
+        hg.add(hl)
+        page.add(hg)
         buf = tv.get_buffer()
         tags = {k: buf.create_tag(k) for k in LOG_COLORS}
         for k in ("info", "exit_ok", "exit_err"): tags[k].set_property("weight", 700)
@@ -144,6 +155,7 @@ class Win(Adw.ApplicationWindow):
                 ts, name, text, kind = log_line_parts(line)
                 for chunk, tag in ((ts, "ts"), (name, "name"), (text + ("\n" if i < len(lines) - 1 else ""), kind)):
                     if chunk: buf.insert_with_tags(buf.get_end_iter(), chunk, tags[tag]) if tag else buf.insert(buf.get_end_iter(), chunk)
+            GLib.idle_add(lambda: sw.get_vadjustment().set_value(sw.get_vadjustment().get_upper()) and False)     # newest line in view
 
         def refresh(*_):
             try:
@@ -160,7 +172,7 @@ class Win(Adw.ApplicationWindow):
         cb.connect("clicked", lambda *_: self.copy_text(hl.get_text() + "\n\n" + buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False),
                                                        "Copied the checks and the log"))
         refresh()
-        self.nav.push(self.page("Troubleshooting", page, [rb, cb]))
+        self.nav.push(self.page("Log" + (f" · {scope}" if scope else ""), page, [rb, cb]))
 
     def app_row(self, n, waiting=False, linked=None, menu=None):
         r = Adw.ActionRow(title=n, subtitle=row_subtitle(n, waiting, linked, menu), activatable=True, use_markup=False)
@@ -287,7 +299,10 @@ class Win(Adw.ApplicationWindow):
                 GLib.timeout_add(1000, refresh_run)
             run.connect("activated", start)
             stop.connect("activated", stop_it)
-            rg.add(run); rg.add(stop)
+            lgr = Adw.ActionRow(title="Show log", subtitle="Starts, exits and errors of this program", activatable=True, use_markup=False)
+            lgr.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+            lgr.connect("activated", lambda *_: self.open_trouble(scope))
+            rg.add(run); rg.add(stop); rg.add(lgr)
             refresh_run()
             page.add(rg)
             srcg = self.source_group(scope)
@@ -329,10 +344,7 @@ class Win(Adw.ApplicationWindow):
             rg = Adw.PreferencesGroup(title="More")
             cmd = Adw.ActionRow(title="Show command", subtitle="The bwrap command sbx would run", activatable=True)
             cmd.connect("activated", lambda *_: self.show_command(scope))
-            lg = Adw.ActionRow(title="Show log", subtitle="Starts, exits and errors of this program", activatable=True)
-            lg.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
-            lg.connect("activated", lambda *_: self.open_trouble(scope))
-            rg.add(cmd); rg.add(lg)
+            rg.add(cmd)
             page.add(rg)
             mg = Adw.PreferencesGroup(title="Start through sbx")
             mg.add(self.app_menu_row(scope))
