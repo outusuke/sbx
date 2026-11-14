@@ -697,7 +697,7 @@ class Units(unittest.TestCase):
                 ok = (o in t or f"-l {name}" in t or name in looped
                       or (name.startswith("portal-") and name[7:] in looped))
                 self.assertTrue(ok, f"{f} doesn't offer {o}")
-            for c in ("preview", "show", "doctor", "clean", "reset", "desktop", "open", "list", "stop"): self.assertIn(c, t, f"{f} lacks {c}")
+            for c in ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "list", "stop"): self.assertIn(c, t, f"{f} lacks {c}")
 
     # -- running programs
     def running_file(self, pid, name, start="same"):
@@ -791,6 +791,74 @@ class Units(unittest.TestCase):
         with open(f"{HERE}/sbx.1") as f: man = f.read()
         with open(f"{HERE}/README.md") as f: readme = f.read()
         self.assertIn("sbx reset", man); self.assertIn("sbx reset", readme); self.assertIn("sbx reset", self.S["USAGE"]); self.assertIn("reset", self.S["COMMANDS"])
+
+    def test_link_makes_typing_the_name_start_the_program_through_sbx(self):
+        S, h = self.S, self.home
+        inst = f"{h}/inst"; bindir = f"{h}/bin"; os.makedirs(inst); os.makedirs(bindir)
+        for p in (f"{inst}/sbx", f"{bindir}/foo", f"{bindir}/bar"):
+            with open(p, "w") as f: f.write("#!/bin/sh\necho real\n")
+            os.chmod(p, 0o755)
+        mine = f"{h}/.local/bin"
+        env = {"PATH": f"{mine}:{bindir}:/usr/bin:/bin", "SBX_ACTIVE": ""}
+        def link(*a):
+            return self._link_with_env(S, inst, env, a[-1]) if len(a) == 1 else self._run_link(S, inst, env, a)
+        def fails(*a, **kw):
+            with mock.patch.dict(os.environ, kw.get("env", env)), mock.patch.object(sys, "argv", [f"{inst}/sbx"]), contextlib.redirect_stdout(io.StringIO()), \
+                 contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit, msg=a): S["cmd_link"](list(a))
+        os.environ.pop("SBX_ACTIVE", None)
+        self.assertEqual(link("foo"), "")                                                       # our folder is first: no warning
+        self.assertEqual(os.readlink(f"{mine}/foo"), f"{inst}/sbx"); self.assertTrue(S["is_sbx_link"](f"{mine}/foo"))
+        link("foo")                                                                             # again: fine
+        with mock.patch.dict(os.environ, env):
+            self.assertEqual(S["find_in_path"]("foo"), f"{bindir}/foo", "the link is not the program")
+            self.assertEqual(S["find_program"]("foo")[0], f"{bindir}/foo")                      # `sbx foo`, launchers and the GUI must not find the link
+            self.assertEqual(S["linked_name"](f"{mine}/foo"), "foo"); self.assertIsNone(S["linked_name"](f"{inst}/sbx"))
+        with open(f"{mine}/bar", "w") as f: f.write("mine\n")                                  # somebody else's file: never replaced
+        fails("bar")
+        with open(f"{mine}/bar") as f: self.assertEqual(f.read(), "mine\n")
+        fails("nosuchprogram"); fails("list"); fails("sbx-gui"); fails(".x"); fails("a/b"); fails(); fails("-x")
+        self.assertIn("not before", self._link_with_env(S, inst, {"PATH": f"{bindir}:{mine}:/usr/bin:/bin"}, "foo"))   # the real one comes first: say so
+        self.assertIn("not in your PATH", self._link_with_env(S, inst, {"PATH": f"{bindir}:/usr/bin:/bin"}, "foo"))
+        fails("--remove", "bar"); self.assertTrue(os.path.exists(f"{mine}/bar"))                  # not ours
+        link("--remove", "foo"); self.assertFalse(os.path.lexists(f"{mine}/foo"))
+        fails("--remove", "foo")
+        with mock.patch.dict(os.environ, {"SBX_ACTIVE": "1"}): fails("foo", env={**env, "SBX_ACTIVE": "1"})
+
+    def _run_link(self, S, inst, env, a):
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", [f"{inst}/sbx"]), contextlib.redirect_stdout(io.StringIO()):
+            S["cmd_link"](list(a))
+        return ""
+
+    def _link_with_env(self, S, inst, env, name):
+        del self.warned[:]
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", [f"{inst}/sbx"]), contextlib.redirect_stdout(io.StringIO()):
+            S["cmd_link"]([name])
+        return " ".join(self.warned)
+
+    def test_a_linked_start_runs_the_real_program_with_its_own_arguments(self):
+        S, h = self.S, self.home
+        inst = f"{h}/inst"; bindir = f"{h}/bin"; mine = f"{h}/.local/bin"
+        for d in (inst, bindir, mine): os.makedirs(d)
+        for p in (f"{inst}/sbx", f"{bindir}/foo"):
+            with open(p, "w") as f: f.write("#!/bin/sh\n")
+            os.chmod(p, 0o755)
+        os.symlink(f"{inst}/sbx", f"{mine}/foo")
+        env = {"PATH": f"{mine}:{bindir}:/usr/bin"}
+        calls = []
+        S["run"] = lambda prog, args, opts: calls.append((prog, args, opts))
+        with mock.patch.dict(os.environ, env):
+            os.environ.pop("SBX_ACTIVE", None)
+            S["run_linked"](f"{mine}/foo", ["--incognito", "--net=none", "x"])
+            self.assertEqual(calls, [("foo", ["--incognito", "--net=none", "x"], {})], "program flags are not sbx options")
+            with mock.patch("os.execv") as execv, mock.patch.dict(os.environ, {"SBX_ACTIVE": "1"}):
+                S["run_linked"](f"{mine}/foo", ["a"])
+            execv.assert_called_once_with(f"{bindir}/foo", ["foo", "a"]); self.assertEqual(len(calls), 1, "already sandboxed: not a second sandbox")
+            os.unlink(f"{bindir}/foo")
+            with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit): S["run_linked"](f"{mine}/foo", [])
+            self.assertIn("sbx link --remove foo", err.getvalue())
+        with open(f"{HERE}/sbx.1") as f: man = f.read()
+        with open(f"{HERE}/README.md") as f: readme = f.read()
+        self.assertIn("sbx link", man); self.assertIn("sbx link", readme); self.assertIn("sbx link", S["USAGE"])
 
     def test_install_hint(self):
         def hint(text):
@@ -1324,6 +1392,13 @@ class Gui(unittest.TestCase):
         self.assertEqual(G["settings_files"](), []); win.fill_apps.assert_called_once(); G["Adw"].Toast.assert_called_with(title="Reset 2 settings files")
         win.ask.reset_mock(); G["Win"].reset_all(win)
         win.ask.assert_not_called(); G["Adw"].Toast.assert_called_with(title="Nothing to reset")
+
+    def test_link_is_ours_only_for_links_to_sbx(self):
+        G = self.G; d = f"{G['HOME']}/.local/bin"; os.makedirs(d)
+        os.symlink("/usr/local/bin/sbx", f"{d}/mine"); os.symlink("/usr/bin/true", f"{d}/other")
+        with open(f"{d}/plain", "w") as f: f.write("x")
+        self.assertTrue(G["link_is_ours"]("mine"))
+        for n in ("other", "plain", "missing"): self.assertFalse(G["link_is_ours"](n), n)
 
     def test_switch_rows_do_not_carry_a_default_note(self):
         G = self.G

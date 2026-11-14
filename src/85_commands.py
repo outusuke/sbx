@@ -70,6 +70,50 @@ def cmd_reset(a):
     print(f"deleted {len(files)} settings file{'s' if len(files) != 1 else ''}; the built-in defaults apply again")
 
 
+def cmd_link(a):
+    """sbx link NAME | --remove NAME: a link ~/.local/bin/NAME to sbx, so typing NAME starts the program through sbx (firejail's firecfg)."""
+    remove = "--remove" in a
+    a = [x for x in a if x != "--remove"]
+    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx link NAME   |   sbx link --remove NAME")
+    if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
+    name = a[0]
+    if not re.fullmatch(r"[A-Za-z0-9._+-]+", name) or name.startswith(".") or name.startswith("sbx") or name in COMMANDS: die(f"'{name}' can't be a link name")
+    dest = f"{HOME}/.local/bin/{name}"
+    if remove:
+        if not os.path.lexists(dest): die(f"{tilde(dest)} doesn't exist")
+        if not is_sbx_link(dest): die(f"{tilde(dest)} was not made by sbx; not removing it")
+        os.unlink(dest); print(f"removed {tilde(dest)}; '{name}' starts directly again"); return
+    real = find_in_path(name)
+    if not real: die(f"'{name}' is not installed (no program of that name in your PATH)")
+    if os.path.lexists(dest) and not is_sbx_link(dest): die(f"{tilde(dest)} already exists and was not made by sbx; not touching it")
+    me = shutil.which("sbx") or os.path.realpath(sys.argv[0])
+    if os.path.basename(me) != "sbx": die("can't tell where sbx is installed; start this command by the name sbx")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if os.path.lexists(dest): os.unlink(dest)
+    os.symlink(me, dest)
+    print(f"linked {tilde(dest)}: typing '{name}' now starts {real} through sbx\nStarting it by its full path still skips sbx. Undo with: sbx link --remove {name}")
+    dirs = [os.path.realpath(d) for d in os.environ.get("PATH", "").split(":") if d]
+    mine, theirs = os.path.realpath(os.path.dirname(dest)), os.path.realpath(os.path.dirname(real))
+    if mine not in dirs: warn(f"{tilde(os.path.dirname(dest))} is not in your PATH, so '{name}' still starts directly. Add it, then open a new terminal")
+    elif theirs in dirs and dirs.index(theirs) < dirs.index(mine):
+        warn(f"{tilde(os.path.dirname(dest))} is not before {os.path.dirname(real)} in your PATH, so '{name}' still starts directly. Put it first, then open a new terminal")
+
+
+def linked_name(argv0):
+    """The program name when sbx was started through a link made by `sbx link`, else None."""
+    n = os.path.basename(argv0)
+    return n if is_sbx_link(argv0) and not n.startswith("sbx") else None
+
+
+def run_linked(argv0, args):
+    """Started through a link: run the real program of that name, sandboxed. Its arguments are its own, never sbx options."""
+    name = os.path.basename(argv0)
+    real = find_in_path(name)
+    if not real: die(f"'{name}' not found in your PATH, apart from this link. Remove it with: sbx link --remove {name}")
+    if os.environ.get("SBX_ACTIVE"): return os.execv(real, [name] + args)          # already in a sandbox (one program starting another)
+    run(name, args, {})
+
+
 def cmd_list(a):
     """Every program sbx knows (a private home or a settings file, or running now), and whether it is running."""
     if a: die("usage: sbx list")

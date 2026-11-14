@@ -25,6 +25,9 @@ sbx \- run a program in a bubblewrap sandbox
 .B sbx reset
 [\fB\-\-yes\fR] \fINAME\fR | \fB\-\-default\fR | \fB\-\-all\fR
 .br
+.B sbx link
+\fINAME\fR | \fB\-\-remove\fR \fINAME\fR
+.br
 .B sbx open
 \fIFILE\fR
 .br
@@ -85,6 +88,15 @@ machine\-ids and menu launchers are not touched; see
 .B sbx clean
 and
 .BR "sbx desktop \-\-remove" .
+.TP
+.B sbx link NAME | \-\-remove NAME
+Make typing NAME in a terminal start the program through sbx, like firejail's firecfg: a link
+.I ~/.local/bin/NAME
+to sbx, which runs the real program of that name from your PATH. Needs
+.I ~/.local/bin
+before the program's own folder in PATH (sbx warns if not). The program's arguments are its own, not sbx options; its
+settings are the ones for NAME. Starting the program by its full path still skips sbx. Inside a sandbox the link starts the
+program directly.
 .TP
 .B sbx open FILE
 Run a downloaded program with sensible defaults. This is what "Open with" calls; see

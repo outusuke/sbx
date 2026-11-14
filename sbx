@@ -276,8 +276,23 @@ def machine_id(name, create):
     return p
 
 
+def is_sbx_link(p):
+    """A link made by `sbx link`: a symbolic link to the sbx script."""
+    try: return os.path.islink(p) and os.path.basename(os.readlink(p)) == "sbx"
+    except OSError: return False
+
+
+def find_in_path(name):
+    """Like shutil.which, but links made by `sbx link` don't count: they are how sbx gets started, not the program."""
+    for d in os.environ.get("PATH", "").split(":"):
+        if not d: continue
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK) and not is_sbx_link(p): return p
+    return None
+
+
 def find_program(prog, noexec=False):
-    path = os.path.abspath(prog) if "/" in prog else shutil.which(prog)
+    path = os.path.abspath(prog) if "/" in prog else find_in_path(prog)
     if not path or not os.path.isfile(path):
         if "/" not in prog and os.path.isfile(prog): die(f"'{prog}' is a file in this folder, but a bare name is looked up in your PATH. Write ./{prog}")
         die(f"'{prog}' not found" + (" in your PATH" if "/" not in prog else ""))
@@ -1277,7 +1292,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
                "--loader": "loader"}
-COMMANDS = ("preview", "show", "doctor", "clean", "reset", "desktop", "open", "schema", "list", "stop")
+COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop")
 
 USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx preview [options] PROGRAM [args]   print the command instead of running it\n"
@@ -1287,6 +1302,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx stop NAME                          stop a running program\n"
          "sbx clean [--yes] NAME                 delete a program's private home and machine-id (not while it runs)\n"
          "sbx reset [--yes] NAME|--default|--all  delete settings so the built-in defaults apply again (data stays)\n"
+         "sbx link NAME | --remove NAME         make typing NAME in a terminal start it through sbx (a link in ~/.local/bin)\n"
          "sbx open FILE                          run a downloaded program with sensible defaults (for \"Open with\")\n"
          "sbx desktop NAME | --remove NAME       make a launcher (NAME.desktop) start the program through sbx\n"
          "sbx desktop --install-opener           add \"Run in sbx\" to your file manager's Open With (--remove-opener undoes it)\n"
@@ -1426,6 +1442,50 @@ def cmd_reset(a):
         if input("Reset? [y/N] ").strip().lower() not in ("y", "yes"): die("nothing deleted", 0)
     for p in files: os.unlink(p)
     print(f"deleted {len(files)} settings file{'s' if len(files) != 1 else ''}; the built-in defaults apply again")
+
+
+def cmd_link(a):
+    """sbx link NAME | --remove NAME: a link ~/.local/bin/NAME to sbx, so typing NAME starts the program through sbx (firejail's firecfg)."""
+    remove = "--remove" in a
+    a = [x for x in a if x != "--remove"]
+    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx link NAME   |   sbx link --remove NAME")
+    if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
+    name = a[0]
+    if not re.fullmatch(r"[A-Za-z0-9._+-]+", name) or name.startswith(".") or name.startswith("sbx") or name in COMMANDS: die(f"'{name}' can't be a link name")
+    dest = f"{HOME}/.local/bin/{name}"
+    if remove:
+        if not os.path.lexists(dest): die(f"{tilde(dest)} doesn't exist")
+        if not is_sbx_link(dest): die(f"{tilde(dest)} was not made by sbx; not removing it")
+        os.unlink(dest); print(f"removed {tilde(dest)}; '{name}' starts directly again"); return
+    real = find_in_path(name)
+    if not real: die(f"'{name}' is not installed (no program of that name in your PATH)")
+    if os.path.lexists(dest) and not is_sbx_link(dest): die(f"{tilde(dest)} already exists and was not made by sbx; not touching it")
+    me = shutil.which("sbx") or os.path.realpath(sys.argv[0])
+    if os.path.basename(me) != "sbx": die("can't tell where sbx is installed; start this command by the name sbx")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if os.path.lexists(dest): os.unlink(dest)
+    os.symlink(me, dest)
+    print(f"linked {tilde(dest)}: typing '{name}' now starts {real} through sbx\nStarting it by its full path still skips sbx. Undo with: sbx link --remove {name}")
+    dirs = [os.path.realpath(d) for d in os.environ.get("PATH", "").split(":") if d]
+    mine, theirs = os.path.realpath(os.path.dirname(dest)), os.path.realpath(os.path.dirname(real))
+    if mine not in dirs: warn(f"{tilde(os.path.dirname(dest))} is not in your PATH, so '{name}' still starts directly. Add it, then open a new terminal")
+    elif theirs in dirs and dirs.index(theirs) < dirs.index(mine):
+        warn(f"{tilde(os.path.dirname(dest))} is not before {os.path.dirname(real)} in your PATH, so '{name}' still starts directly. Put it first, then open a new terminal")
+
+
+def linked_name(argv0):
+    """The program name when sbx was started through a link made by `sbx link`, else None."""
+    n = os.path.basename(argv0)
+    return n if is_sbx_link(argv0) and not n.startswith("sbx") else None
+
+
+def run_linked(argv0, args):
+    """Started through a link: run the real program of that name, sandboxed. Its arguments are its own, never sbx options."""
+    name = os.path.basename(argv0)
+    real = find_in_path(name)
+    if not real: die(f"'{name}' not found in your PATH, apart from this link. Remove it with: sbx link --remove {name}")
+    if os.environ.get("SBX_ACTIVE"): return os.execv(real, [name] + args)          # already in a sandbox (one program starting another)
+    run(name, args, {})
 
 
 def cmd_list(a):
@@ -1717,6 +1777,7 @@ def doctor():
 
 def main(argv=None):
     a = list(sys.argv[1:] if argv is None else argv)
+    if argv is None and linked_name(sys.argv[0]): return run_linked(sys.argv[0], a)
     if not a or a[0] in ("-h", "--help", "help"): print(USAGE); return
     if a[0] in ("-V", "--version", "version"): print(f"sbx {VERSION}"); return
     cmd = a.pop(0) if a[0] in COMMANDS else None
@@ -1724,6 +1785,7 @@ def main(argv=None):
     if cmd == "schema": print(json.dumps(schema(), indent=1)); return
     if cmd == "clean": return cmd_clean(a)
     if cmd == "reset": return cmd_reset(a)
+    if cmd == "link": return cmd_link(a)
     if cmd == "list": return cmd_list(a)
     if cmd == "stop": return cmd_stop(a)
     if cmd == "desktop": return cmd_desktop(a)

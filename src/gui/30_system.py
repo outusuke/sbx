@@ -113,6 +113,13 @@ def launcher_is_ours(name):
     return False
 
 
+def link_is_ours(name):
+    """True if ~/.local/bin/NAME is a link made by `sbx link`."""
+    p = f"{HOME}/.local/bin/{name}"
+    try: return os.path.islink(p) and os.path.basename(os.readlink(p)) == "sbx"
+    except OSError: return False
+
+
 def sbx_cmd():
     return shutil.which("sbx") or "/usr/local/bin/sbx"
 

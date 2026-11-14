@@ -66,6 +66,7 @@ sbx doctor                               check bubblewrap, helpers, Wayland supp
 sbx list                                 the programs sbx knows, and which are running
 sbx stop NAME                            stop a running program
 sbx clean [--yes] NAME                   delete a private home and its machine-id (refused while the program runs)
+sbx link NAME | --remove NAME            typing NAME in a terminal starts it through sbx (a link in ~/.local/bin, like firecfg)
 sbx reset [--yes] NAME|--default|--all      delete settings files so the built-in defaults apply again (data stays)
 sbx open FILE                            run a downloaded program with sensible defaults (what "Open with" calls)
 sbx desktop NAME                         make a launcher (.desktop file) start the program through sbx
@@ -109,6 +110,12 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | `--rebind` | accept that this file is the same program as the one that first used its name (see the last point under Limits) |
 
 Shared paths must be inside your home (not the home itself), on `/mnt`, `/media` or `/run/media`, or in `/tmp`. `~/.config/sbx` and `~/.sbx-homes` can never be shared. A folder is mounted before what is inside it, so `whitelist=~/a/b` stays writable even with `read_only=~/a`. Shared folders that don't exist yet in the private home are created as empty mountpoints for the run and removed again afterwards if nothing was written to them.
+
+## Typing the name always uses sbx
+
+`sbx link firefox` puts a link called `firefox` in `~/.local/bin`. Typing `firefox` then starts the real Firefox through sbx, with the settings for `firefox`, and arguments such as `firefox --private-window` go to the program, not to sbx. This is what firejail's `firecfg` does. `sbx link --remove firefox` undoes it, and `sbx-gui` has the same thing as a switch on the program's page.
+
+It only works while `~/.local/bin` comes before the program's own folder in your `PATH` (sbx warns when it doesn't; most distros put it first). Starting the program by its full path (`/usr/bin/firefox`) skips sbx, and so does anything that doesn't use your `PATH`. A launcher needs `sbx desktop` as well. Inside a sandbox a linked program starts directly.
 
 ## Downloaded programs
 
@@ -197,6 +204,7 @@ sbx ./sbx-report                 # a readable overview of what the program can r
 - A read-write share (`--here`, `whitelist=`) lets the program plant files that later run outside the sandbox: git hooks, Makefiles, `.envrc`, scripts. Share only what it needs, and prefer `read_only=` where you can.
 - Each program name has one private home, so `sbx python3 a.py` and `sbx python3 b.py` share it; use `--name` to separate them.
 - A program name is tied to the file that first ran under it (recorded in `~/.config/sbx/origins/NAME`). A different file under the same name is refused, so a download called `firefox` can't pick up firefox's settings and private home. Moves between system folders (`/usr`, `/opt`, `/snap`, ...) are fine; for a program you moved yourself use `--rebind`, for a different one `--name=OTHER`. The first run after upgrading records whatever is there now.
+- `sbx link` is a convenience, not enforcement: a full path, a launcher that doesn't use your `PATH`, or a different `PATH` skips it.
 - Programs on another drive (`/mnt`, `/media`, `/run/media`) can't be started; copy them elsewhere first.
 - Not for root; `sbx` refuses to run as root or inside another `sbx` sandbox.
 

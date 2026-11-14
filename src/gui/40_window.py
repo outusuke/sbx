@@ -281,8 +281,9 @@ class Win(Adw.ApplicationWindow):
             lg.connect("activated", lambda *_: self.open_trouble(scope))
             rg.add(cmd); rg.add(lg)
             page.add(rg)
-            mg = Adw.PreferencesGroup(title="App menu")
+            mg = Adw.PreferencesGroup(title="Start through sbx")
             mg.add(self.app_menu_row(scope))
+            mg.add(self.link_row(scope))
             page.add(mg)
         dg = Adw.PreferencesGroup(title="Reset")
         rs = Adw.ActionRow(title="Reset to defaults", activatable=True, use_markup=False,
@@ -389,6 +390,30 @@ class Win(Adw.ApplicationWindow):
                 return self.alert("Couldn't change the app menu", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
             self.toasts.add_toast(Adw.Toast(title="Added to the app menu" if want else "Removed from the app menu"))
         set_active(launcher_is_ours(scope))
+        row.connect("notify::active", toggled)
+        return row
+
+    def link_row(self, scope):
+        """Switch that makes typing the program's name in a terminal start it through sbx too, through `sbx link NAME`."""
+        row = Adw.SwitchRow(title="Also when typed in a terminal", use_markup=False,
+                            subtitle=f"Makes ~/.local/bin/{scope} a link to sbx, so typing {scope} starts it in the sandbox (like firejail's firecfg)")
+        busy = [False]
+
+        def set_active(v):
+            busy[0] = True; row.set_active(v); busy[0] = False
+
+        def toggled(*_):
+            if busy[0]: return
+            want = row.get_active()
+            try: r = subprocess.run([sbx_cmd(), "link"] + ([] if want else ["--remove"]) + [scope], capture_output=True, text=True, timeout=15)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                set_active(not want); return self.alert("Couldn't run sbx", str(e))
+            if r.returncode != 0:
+                set_active(link_is_ours(scope))
+                return self.alert("Couldn't change the link", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
+            if r.stderr.strip(): self.alert("Done, but check this", r.stderr.strip()[-700:])
+            else: self.toasts.add_toast(Adw.Toast(title="Typing the name now uses sbx" if want else "Typing the name starts it directly again"))
+        set_active(link_is_ours(scope))
         row.connect("notify::active", toggled)
         return row
 

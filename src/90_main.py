@@ -3,6 +3,7 @@
 
 def main(argv=None):
     a = list(sys.argv[1:] if argv is None else argv)
+    if argv is None and linked_name(sys.argv[0]): return run_linked(sys.argv[0], a)
     if not a or a[0] in ("-h", "--help", "help"): print(USAGE); return
     if a[0] in ("-V", "--version", "version"): print(f"sbx {VERSION}"); return
     cmd = a.pop(0) if a[0] in COMMANDS else None
@@ -10,6 +11,7 @@ def main(argv=None):
     if cmd == "schema": print(json.dumps(schema(), indent=1)); return
     if cmd == "clean": return cmd_clean(a)
     if cmd == "reset": return cmd_reset(a)
+    if cmd == "link": return cmd_link(a)
     if cmd == "list": return cmd_list(a)
     if cmd == "stop": return cmd_stop(a)
     if cmd == "desktop": return cmd_desktop(a)

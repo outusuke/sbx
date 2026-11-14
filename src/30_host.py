@@ -11,8 +11,23 @@ def machine_id(name, create):
     return p
 
 
+def is_sbx_link(p):
+    """A link made by `sbx link`: a symbolic link to the sbx script."""
+    try: return os.path.islink(p) and os.path.basename(os.readlink(p)) == "sbx"
+    except OSError: return False
+
+
+def find_in_path(name):
+    """Like shutil.which, but links made by `sbx link` don't count: they are how sbx gets started, not the program."""
+    for d in os.environ.get("PATH", "").split(":"):
+        if not d: continue
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK) and not is_sbx_link(p): return p
+    return None
+
+
 def find_program(prog, noexec=False):
-    path = os.path.abspath(prog) if "/" in prog else shutil.which(prog)
+    path = os.path.abspath(prog) if "/" in prog else find_in_path(prog)
     if not path or not os.path.isfile(path):
         if "/" not in prog and os.path.isfile(prog): die(f"'{prog}' is a file in this folder, but a bare name is looked up in your PATH. Write ./{prog}")
         die(f"'{prog}' not found" + (" in your PATH" if "/" not in prog else ""))
