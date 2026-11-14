@@ -81,10 +81,15 @@ def set_key(scope, key, val):
     save(scope, lines)
 
 
+def raw_list(scope, key):
+    """The values of the KEY= lines of a settings file, for lists that parse() does not keep (setenv)."""
+    return [strip(l).partition("=")[2].strip() for l in read_lines(scope) if key_of(l) == key]
+
+
 def add_item(scope, key, v):
     lines = read_lines(scope)
     if re.search(r"(^|\s)#", v): return False        # sbx would read the rest as a comment
-    if v not in parse(scope)[1][key]: save(scope, lines + [f"{key}={v}"])
+    if v not in raw_list(scope, key): save(scope, lines + [f"{key}={v}"])
     return True
 
 
@@ -186,6 +191,11 @@ def effective_switches(scope):
     return v
 
 
+def effective_lists(scope):
+    """The list values a program runs with: default.conf and the program's own file add up."""
+    return {k: raw_list(None, k) + (raw_list(scope, k) if scope is not None else []) for k in HINT_LISTS}
+
+
 def last_run(lines):
     """(lines of the most recent run, its exit code or None). A run starts at a START line and ends at an EXIT line."""
     start = 0
@@ -203,19 +213,24 @@ def last_run(lines):
     return run_lines, code
 
 
-def log_hints(lines, current):
+def log_hints(lines, current, lists=None):
     """Suggestions for a program, as [(setting, wanted value, title, why)]. Only for a last run that ended with an error;
-    LINES are that program's log lines, CURRENT its effective switches (see effective_switches)."""
+    LINES are that program's log lines, CURRENT its effective switches (see effective_switches), LISTS its effective lists
+    (see effective_lists). Setting None is advice with no button."""
     run_lines, code = last_run(lines)
     if code in (None, 0): return []
     text = "\n".join(run_lines[-300:])[-200_000:]
     out, seen = [], set()
     for pat, key, want, title, why, needs in LOG_HINTS:
-        if key in seen or current.get(key) == want: continue
+        if (key or title) in seen: continue
+        if key in HINT_LISTS:                                     # already there (a setenv counts when the variable is set at all)
+            have = (lists or {}).get(key, [])
+            if want in have or (key == "setenv" and any(h.partition("=")[0] == want.partition("=")[0] for h in have)): continue
+        elif key is not None and current.get(key) == want: continue
         if any(current.get(k) != v for k, v in needs.items()): continue
         if re.search(pat, text, re.I):
             out.append((key, want, title, why))
-            seen.add(key)
+            seen.add(key or title)
     return out
 
 

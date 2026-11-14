@@ -2438,11 +2438,47 @@ class Gui(unittest.TestCase):
         big = run(*(["x" * 5000] * 2000) + ["No usable sandbox!"])
         self.assertEqual(self.hint_keys(big, userns=False), [("userns", True)])
 
+    WGPU = ["wgpu error: Validation Error", "Caused by:", "  In Device::create_shader_module, label = 'iced_wgpu.quad.solid.shader'",
+            "Shader requires capability Capabilities(SHADER_FLOAT16_IN_FLOAT32)"]
+    NOTFOUND = ["thread 'main' (2) panicked at src/lang.rs:10:89:",
+                "called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: \"No such file or directory\" }"]
+
+    def test_an_iced_shader_failure_suggests_the_cpu_renderer_until_it_is_set(self):
+        G = self.G
+        lines = self.run_log(*self.WGPU, code=101)
+        got = G["log_hints"](lines, {}, {})
+        self.assertEqual([(k, w) for k, w, *_ in got], [("setenv", "ICED_BACKEND=tiny-skia")])
+        self.assertEqual(G["log_hints"](lines, {}, {"setenv": ["ICED_BACKEND=tiny-skia"]}), [])         # already set
+        self.assertEqual(G["log_hints"](lines, {}, {"setenv": ["ICED_BACKEND=wgpu"]}), [])              # chosen on purpose: leave it
+        plain = self.run_log("wgpu error: Validation Error", "something in another_crate", code=101)    # not iced: it would do nothing
+        self.assertEqual(G["log_hints"](plain, {}, {}), [])
+
+    def test_the_hint_button_adds_the_variable_to_the_programs_file_and_keeps_the_rest(self):
+        G = self.G
+        os.makedirs(G["APPS"], exist_ok=True)
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("net=0\nsetenv=A=1\n")
+        self.assertEqual(G["effective_lists"]("app"), {"setenv": ["A=1"]})
+        self.assertTrue(G["add_item"]("app", "setenv", "ICED_BACKEND=tiny-skia")); G["add_item"]("app", "setenv", "ICED_BACKEND=tiny-skia")   # twice: once
+        with open(f"{G['APPS']}/app.conf") as f: self.assertEqual(f.read(), "net=0\nsetenv=A=1\nsetenv=ICED_BACKEND=tiny-skia\n")
+        self.assertEqual(G["log_hints"](self.run_log(*self.WGPU, code=101), {}, G["effective_lists"]("app")), [])         # and the hint is gone
+
+    def test_a_panic_on_a_missing_file_gives_advice_without_a_button(self):
+        G = self.G
+        got = G["log_hints"](self.run_log(*self.NOTFOUND, code=101), {}, {})
+        self.assertEqual([(k, w) for k, w, *_ in got], [(None, None)])
+        self.assertIn("--here", got[0][3])
+        self.assertEqual(G["log_hints"](self.run_log("thread 'main' panicked at x.rs:1:1:", "index out of bounds", code=101), {}, {}), [])
+        both = G["log_hints"](self.run_log(*self.NOTFOUND, *self.WGPU, code=101), {}, {})                # both can show, each once
+        self.assertEqual(sorted(str(k) for k, *_ in both), ["None", "setenv"])
+
     def test_every_hint_names_a_real_switch(self):
         G = self.G
         for pat, key, want, title, why, needs in G["LOG_HINTS"]:
             re.compile(pat)
-            self.assertIn(key, self.S["SCALARS"]); self.assertIsInstance(want, bool); self.assertTrue(title and why)
+            if key is None: self.assertIsNone(want)                                   # advice, no button
+            elif key in self.S["LISTS"]: self.assertRegex(want, r"^[A-Za-z_][A-Za-z0-9_]*=.+$")      # setenv=NAME=value
+            else: self.assertIn(key, self.S["SCALARS"]); self.assertIsInstance(want, bool)
+            self.assertTrue(title and why)
             for k in needs: self.assertIn(k, self.S["SCALARS"])
 
     def test_effective_switches_layers_defaults_then_default_conf_then_the_program(self):

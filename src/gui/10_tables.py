@@ -55,13 +55,15 @@ SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
 SOURCE_RANK = {"System": 0, "Downloaded": 2}   # same order as `sbx list --all`: of the programs only run from the terminal, System first, Downloaded last
 LISTS = ("whitelist", "read_only")
+HINT_LISTS = ("setenv",)        # lists a troubleshooting hint may add to; the window edits no other list of sbx's (its lines are kept as they are)
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
        ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))
 NEEDS = {"net_private": ("net",), "gpu_render_only": ("gpu", "rocm")}      # key -> switches of which one must be on for it to do anything (portal_* need portals, see needs())
 # Troubleshooting hints: a pattern in a failed run's log -> the one setting that usually fixes it. Each entry is
 # (pattern, setting, wanted value, title, why, only while these hold). A hint is shown only if the setting is not already as wanted.
-# Nothing is ever changed without a click.
+# SETTING is a switch (WANTED True/False), a list key such as "setenv" (WANTED "NAME=value", added by the button), or None for
+# advice with no button (WANTED None: something sbx cannot save as a setting). Nothing is ever changed without a click.
 LOG_HINTS = [
     (r"no usable sandbox|suid sandbox|setuid sandbox|failed to move to a new (user )?namespace|clone.{0,40}operation not permitted",
      "userns", True, "Allow the program's own sandbox",
@@ -79,6 +81,15 @@ LOG_HINTS = [
      "net", True, "Allow the network", "The program tried to use the network.", {}),
     (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
      "camera", True, "Allow the camera", "The program tried to open a camera.", {}),
+    # An iced program whose GPU renderer failed a shader check (the GPU or driver lacks a feature): iced can draw on the CPU instead.
+    (r"wgpu error: validation error[\s\S]*iced_wgpu|iced_wgpu[\s\S]*wgpu error: validation error",
+     "setenv", "ICED_BACKEND=tiny-skia", "Draw on the processor instead of the graphics card (a guess)",
+     "The program draws with iced, and its graphics-card renderer failed a check the card or driver could not pass. This makes it draw on the processor: slower, but it needs nothing from the card.", {}),
+    # A Rust panic on a file that is not there: sbx starts a program in its private home, so files it expects in the folder it was
+    # started from are missing. --here is a command-line option only (it depends on where you start), so there is no button.
+    (r"panicked at [^\n]*\n[^\n]*kind: NotFound",
+     None, None, "Start it from its own folder with --here (a guess)",
+     "The program looked for a file and it was not there. A program starts in its private home, so files next to it are missed. In a terminal, go to the program's folder and run: sbx --here ./NAME", {}),
     # A silent crash (segfault, abort, trap) while user namespaces are off: Chrome, Chromium and Electron die like this when they
     # cannot make their own sandbox, often with only a core dump and no message. Shown only while "userns" is off.
     (r"\] EXIT code=(13[2-6]|139|159)\b",

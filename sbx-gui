@@ -73,13 +73,15 @@ SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
 SOURCE_RANK = {"System": 0, "Downloaded": 2}   # same order as `sbx list --all`: of the programs only run from the terminal, System first, Downloaded last
 LISTS = ("whitelist", "read_only")
+HINT_LISTS = ("setenv",)        # lists a troubleshooting hint may add to; the window edits no other list of sbx's (its lines are kept as they are)
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
        ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))
 NEEDS = {"net_private": ("net",), "gpu_render_only": ("gpu", "rocm")}      # key -> switches of which one must be on for it to do anything (portal_* need portals, see needs())
 # Troubleshooting hints: a pattern in a failed run's log -> the one setting that usually fixes it. Each entry is
 # (pattern, setting, wanted value, title, why, only while these hold). A hint is shown only if the setting is not already as wanted.
-# Nothing is ever changed without a click.
+# SETTING is a switch (WANTED True/False), a list key such as "setenv" (WANTED "NAME=value", added by the button), or None for
+# advice with no button (WANTED None: something sbx cannot save as a setting). Nothing is ever changed without a click.
 LOG_HINTS = [
     (r"no usable sandbox|suid sandbox|setuid sandbox|failed to move to a new (user )?namespace|clone.{0,40}operation not permitted",
      "userns", True, "Allow the program's own sandbox",
@@ -97,6 +99,15 @@ LOG_HINTS = [
      "net", True, "Allow the network", "The program tried to use the network.", {}),
     (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
      "camera", True, "Allow the camera", "The program tried to open a camera.", {}),
+    # An iced program whose GPU renderer failed a shader check (the GPU or driver lacks a feature): iced can draw on the CPU instead.
+    (r"wgpu error: validation error[\s\S]*iced_wgpu|iced_wgpu[\s\S]*wgpu error: validation error",
+     "setenv", "ICED_BACKEND=tiny-skia", "Draw on the processor instead of the graphics card (a guess)",
+     "The program draws with iced, and its graphics-card renderer failed a check the card or driver could not pass. This makes it draw on the processor: slower, but it needs nothing from the card.", {}),
+    # A Rust panic on a file that is not there: sbx starts a program in its private home, so files it expects in the folder it was
+    # started from are missing. --here is a command-line option only (it depends on where you start), so there is no button.
+    (r"panicked at [^\n]*\n[^\n]*kind: NotFound",
+     None, None, "Start it from its own folder with --here (a guess)",
+     "The program looked for a file and it was not there. A program starts in its private home, so files next to it are missed. In a terminal, go to the program's folder and run: sbx --here ./NAME", {}),
     # A silent crash (segfault, abort, trap) while user namespaces are off: Chrome, Chromium and Electron die like this when they
     # cannot make their own sandbox, often with only a core dump and no message. Shown only while "userns" is off.
     (r"\] EXIT code=(13[2-6]|139|159)\b",
@@ -205,10 +216,15 @@ def set_key(scope, key, val):
     save(scope, lines)
 
 
+def raw_list(scope, key):
+    """The values of the KEY= lines of a settings file, for lists that parse() does not keep (setenv)."""
+    return [strip(l).partition("=")[2].strip() for l in read_lines(scope) if key_of(l) == key]
+
+
 def add_item(scope, key, v):
     lines = read_lines(scope)
     if re.search(r"(^|\s)#", v): return False        # sbx would read the rest as a comment
-    if v not in parse(scope)[1][key]: save(scope, lines + [f"{key}={v}"])
+    if v not in raw_list(scope, key): save(scope, lines + [f"{key}={v}"])
     return True
 
 
@@ -310,6 +326,11 @@ def effective_switches(scope):
     return v
 
 
+def effective_lists(scope):
+    """The list values a program runs with: default.conf and the program's own file add up."""
+    return {k: raw_list(None, k) + (raw_list(scope, k) if scope is not None else []) for k in HINT_LISTS}
+
+
 def last_run(lines):
     """(lines of the most recent run, its exit code or None). A run starts at a START line and ends at an EXIT line."""
     start = 0
@@ -327,19 +348,24 @@ def last_run(lines):
     return run_lines, code
 
 
-def log_hints(lines, current):
+def log_hints(lines, current, lists=None):
     """Suggestions for a program, as [(setting, wanted value, title, why)]. Only for a last run that ended with an error;
-    LINES are that program's log lines, CURRENT its effective switches (see effective_switches)."""
+    LINES are that program's log lines, CURRENT its effective switches (see effective_switches), LISTS its effective lists
+    (see effective_lists). Setting None is advice with no button."""
     run_lines, code = last_run(lines)
     if code in (None, 0): return []
     text = "\n".join(run_lines[-300:])[-200_000:]
     out, seen = [], set()
     for pat, key, want, title, why, needs in LOG_HINTS:
-        if key in seen or current.get(key) == want: continue
+        if (key or title) in seen: continue
+        if key in HINT_LISTS:                                     # already there (a setenv counts when the variable is set at all)
+            have = (lists or {}).get(key, [])
+            if want in have or (key == "setenv" and any(h.partition("=")[0] == want.partition("=")[0] for h in have)): continue
+        elif key is not None and current.get(key) == want: continue
         if any(current.get(k) != v for k, v in needs.items()): continue
         if re.search(pat, text, re.I):
             out.append((key, want, title, why))
-            seen.add(key)
+            seen.add(key or title)
     return out
 
 
@@ -801,27 +827,29 @@ class Win(Adw.ApplicationWindow):
         page = Adw.PreferencesPage()
         hl = Gtk.Label(xalign=0, wrap=True, selectable=True, margin_top=6, margin_bottom=6, css_classes=["monospace"])
         sg = Adw.PreferencesGroup(title="Suggestions", description="Based on this program's last run, which ended with an error. "
-                                  "Nothing changes until you press the button; it applies the next time the program starts.")
+                                  "Nothing changes until you press a button; it applies the next time the program starts.")
         sg.set_visible(False)
         sug_rows = []
 
         def show_hints():
             for r in sug_rows: sg.remove(r)
             sug_rows.clear()
-            hints = log_hints(log_lines(scope), effective_switches(scope)) if scope else []
+            hints = log_hints(log_lines(scope), effective_switches(scope), effective_lists(scope)) if scope else []
             for key, want, title, why in hints:
                 row = Adw.ActionRow(title=title, subtitle=why, use_markup=False)
-                btn = Gtk.Button(label="Turn on" if want else "Turn off", valign=Gtk.Align.CENTER)
+                if key is not None:                                   # advice with no setting behind it has no button
+                    btn = Gtk.Button(label="Add" if key in HINT_LISTS else "Turn on" if want else "Turn off", valign=Gtk.Align.CENTER)
 
-                def apply(_b, key=key, want=want):
-                    try:
-                        set_key(scope, key, want)
-                        self.toasts.add_toast(Adw.Toast(title="Saved. It applies the next time the program starts."))
-                    except OSError as e:
-                        self.toasts.add_toast(Adw.Toast(title=f"Could not save: {e.strerror or e}"))
-                    show_hints()
-                btn.connect("clicked", apply)
-                row.add_suffix(btn)
+                    def apply(_b, key=key, want=want):
+                        try:
+                            if key in HINT_LISTS: add_item(scope, key, want)
+                            else: set_key(scope, key, want)
+                            self.toasts.add_toast(Adw.Toast(title="Saved. It applies the next time the program starts."))
+                        except OSError as e:
+                            self.toasts.add_toast(Adw.Toast(title=f"Could not save: {e.strerror or e}"))
+                        show_hints()
+                    btn.connect("clicked", apply)
+                    row.add_suffix(btn)
                 sg.add(row); sug_rows.append(row)
             sg.set_visible(bool(hints))
         lg = Adw.PreferencesGroup(title="Recent activity" + (f" · {scope}" if scope else ""),
