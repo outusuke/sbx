@@ -80,6 +80,77 @@ def source_text(s):
     return text + (f", {'copied' if s['moved_exists'] else 'moved'} from {tilde(s['moved'])}" if s["moved"] else "")
 
 
+UNUSED_BYTES = 64 * 1024        # a private home with no more than this in files, and nobody having set the program up, counts as unused
+
+
+def home_is_small(name, limit=UNUSED_BYTES):
+    """True if the private home holds at most LIMIT bytes in files (links are not followed; a folder that can't be read counts as not small)."""
+    total, unreadable = 0, []
+    for d, _dirs, files in os.walk(f"{HOMES}/{name}", onerror=unreadable.append):
+        for f in files:
+            try: total += os.lstat(f"{d}/{f}").st_size
+            except OSError: unreadable.append(f)
+            if total > limit or unreadable: return False
+    return not unreadable
+
+
+
+# ---------------------------------------------------------------- a renamed file is still the same program
+def origin_records():
+    """{name: (path, meta, moved)} for everything recorded in origins/."""
+    try: names = os.listdir(f"{CONF}/origins")
+    except OSError: return {}
+    recs = {}
+    for n in names:
+        rec = re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", n) and not n.endswith(".tmp") and read_origin(n)
+        if rec: recs[n] = rec
+    return recs
+
+
+def home_in_use(name):
+    """True if NAME has settings of its own (apps/NAME.conf) or a private home that holds more than a run leaves behind."""
+    home = f"{HOMES}/{name}"
+    return os.path.exists(f"{CONF}/apps/{name}.conf") or os.path.islink(home) or (os.path.isdir(home) and not home_is_small(name))
+
+
+def file_owner(name, real):
+    """(program name, the file it had before or None, a reason it was not taken or None) for the file REAL that would run as NAME (its file name).
+    Looked up by content FIRST, before NAME is considered: a file that is a recorded program's renamed file keeps that program's name.
+      - a record that already followed this very file here (moved or renamed by an earlier run) wins;
+      - else the file has the size and SHA-256 of exactly one recorded program whose file is gone: that name. Only a file of a size
+        that such a program had is read. A copy (the original is still there) is not a rename and stays a program of its own.
+    Leftovers under NAME from an earlier run of this same file (an origin record, an unused private home) don't matter. NAME stays only
+    when it has settings of its own or a home with data in it: then nothing is mixed up, and the reason says how to join them."""
+    try: st = os.stat(real)
+    except OSError: return name, None, None
+    if real.startswith(SYSTEM_PROGRAMS): return name, None, None
+    recs = origin_records()
+    here = [n for n, r in recs.items() if r[0] == real and r[2]]
+    if len(here) == 1: return here[0], None, None
+    gone = {n: r[1][2] for n, r in recs.items() if r[1] and r[1][0] == st.st_size and not os.path.isfile(r[0])}
+    if not gone: return name, None, None                          # nothing of this size to compare with: the file is not read
+    sha = (fingerprint(real) or (0, 0, None))[2]
+    same = sorted(n for n, s in gone.items() if sha and s == sha)
+    if not same or name in same: return name, None, None
+    if len(same) > 1: return name, None, f"'{os.path.basename(real)}' has the content of several programs whose file is gone ({', '.join(same)}), so sbx does not pick one. --name=ONE does"
+    other = recs.get(name)
+    if not (other and other[0] != real and os.path.isfile(other[0])) and home_in_use(name):      # NAME is not another program's, and it has data
+        return name, None, f"'{name}' already has settings or data of its own, so '{os.path.basename(real)}' stays '{name}', although it is '{same[0]}' renamed. --name={same[0]} runs it as that"
+    return same[0], recs[same[0]][0], None
+
+
+def took_over(name, owner, real, old):
+    """REAL runs as OWNER, not as NAME: say so in one line, and drop NAME's record of this same file (a second claim on it). A private home
+    NAME got meanwhile is not touched: it may hold something, and it is named in that line so you can delete it."""
+    rec = read_origin(name)
+    if rec and rec[0] == real:
+        try: os.unlink(f"{CONF}/origins/{name}")
+        except OSError: pass
+    left = f"{HOMES}/{name}"
+    warn(f"'{os.path.basename(real)}' is '{owner}' renamed (same size and SHA-256 as {tilde(old)}): it uses the settings and private home of '{owner}'"
+         + (f". {tilde(left)} is left over from running it as '{name}'; delete it with: sbx clean {name}" if os.path.lexists(left) else ""))
+
+
 # ---------------------------------------------------------------- decisions waiting for you
 def pending_path(name):
     return f"{CONF}/pending/{name}"

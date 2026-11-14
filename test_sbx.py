@@ -941,6 +941,108 @@ class Units(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()): S["cmd_rebind"](["game"])
         self.assertEqual(open(f"{S['HOMES']}/game/Games/settings.json").read(), "s")
 
+    # -- a renamed file is still its program: looked up by content before its file name counts (file_owner)
+    def _renamed(self):
+        """CrashBandicoot-Linux ran once and was renamed to CrashBandicoot; the renamed file was run too, so leftovers of that name exist."""
+        self._origins(); S = self.S
+        old = self.write("Downloads/test/CrashBandicoot-Linux", "the game " * 50); os.chmod(old, 0o755)
+        self.assertTrue(self.origin("CrashBandicoot-Linux", old))
+        self._put(f"{S['CONF']}/apps/CrashBandicoot-Linux.conf", "net=0\n")
+        self._put(f"{S['HOMES']}/CrashBandicoot-Linux/save", "slot 1" * 3000)
+        new = f"{self.home}/Downloads/test/CrashBandicoot"; os.rename(old, new)
+        return old, new
+
+    def _put(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f: f.write(text)
+
+    def _fresh_name(self, new, **kw):
+        """The name build() runs the file under, with the cleanup of a live run (and what it said)."""
+        S = self.S
+        name, _cmd, st = S["build"](new, [], True, kw)
+        S["teardown"](st)
+        return name
+
+    def test_a_renamed_file_keeps_its_program_even_when_its_new_name_has_leftovers(self):
+        old, new = self._renamed(); S = self.S
+        leftover = f"{S['HOMES']}/CrashBandicoot"; os.makedirs(leftover)                  # an earlier run of the renamed file
+        S["write_origin"]("CrashBandicoot", new, S["fingerprint"](new))                  # with the same hash
+        self.said.clear()
+        self.assertEqual(S["file_owner"]("CrashBandicoot", new), ("CrashBandicoot-Linux", old, None))
+        self.assertEqual(self._fresh_name(new), "CrashBandicoot-Linux")
+        self.assertEqual(S["read_origin"]("CrashBandicoot-Linux")[0], new, "the record follows the file")
+        self.assertIsNone(S["read_origin"]("CrashBandicoot"), "the second record of the same file is dropped")
+        self.assertTrue(os.path.isdir(leftover), "an unused home is left alone, not deleted")
+        self.assertEqual(len(self.said), 1, self.said)
+        self.assertIn("'CrashBandicoot' is 'CrashBandicoot-Linux' renamed", self.said[0]); self.assertIn("sbx clean CrashBandicoot", self.said[0])
+        self.assertTrue(os.path.exists(f"{S['CONF']}/apps/CrashBandicoot-Linux.conf"), "its settings stay")
+        self.assertEqual(os.path.getsize(f"{S['HOMES']}/CrashBandicoot-Linux/save"), 6 * 3000)
+        self.said.clear()
+        self.assertEqual(self._fresh_name(new), "CrashBandicoot-Linux", "and the next run finds it again, quietly")
+        self.assertEqual(self.said, []); self.assertEqual(self.pinged, [])
+
+    def test_a_renamed_file_without_any_leftovers_and_a_preview_change_nothing(self):
+        old, new = self._renamed(); S = self.S
+        name, _cmd, _st = S["build"](new, [], False, {})                                   # a preview only looks
+        self.assertEqual(name, "CrashBandicoot-Linux"); self.assertEqual(self.said, [])
+        self.assertEqual(S["read_origin"]("CrashBandicoot-Linux")[0], old, "nothing recorded by a preview")
+        self.assertEqual(self._fresh_name(new), "CrashBandicoot-Linux")
+        self.assertNotIn("left over", self.said[0])
+
+    def test_a_copy_a_named_run_and_other_programs_keep_their_own_name(self):
+        old, new = self._renamed(); S = self.S
+        self.assertEqual(S["file_owner"]("x", "/bin/sh"), ("x", None, None), "system programs are never looked up")
+        os.rename(new, old)                                                               # back where it was: the original is there
+        copy = self.write("Downloads/test/CrashBandicoot", "the game " * 50); os.chmod(copy, 0o755)
+        self.assertEqual(S["file_owner"]("CrashBandicoot", copy), ("CrashBandicoot", None, None), "a copy is a program of its own")
+        os.unlink(old)
+        self.assertEqual(self._fresh_name(copy, name="mine"), "mine", "--name is never overridden")
+        other = self.write("Downloads/test/Other", "x" * len("the game " * 50))            # same size, other content
+        self.assertEqual(S["file_owner"]("Other", other), ("Other", None, None))
+
+    def test_only_files_of_a_recorded_size_are_read(self):
+        old, new = self._renamed(); S = self.S
+        hashed = []
+        real_fp = S["fingerprint"]; S["fingerprint"] = lambda p: (hashed.append(p), real_fp(p))[1]
+        other = self.write("Downloads/test/Big", "other size")
+        self.assertEqual(S["file_owner"]("Big", other)[0], "Big"); self.assertEqual(hashed, [])
+        self.assertEqual(S["file_owner"]("CrashBandicoot", new)[0], "CrashBandicoot-Linux"); self.assertEqual(hashed, [new])
+
+    def test_a_new_name_with_settings_or_data_of_its_own_is_not_taken_over(self):
+        old, new = self._renamed(); S = self.S
+        self._put(f"{S['CONF']}/apps/CrashBandicoot.conf", "net=1\n")
+        owner, was, why = S["file_owner"]("CrashBandicoot", new)
+        self.assertEqual((owner, was), ("CrashBandicoot", None)); self.assertIn("--name=CrashBandicoot-Linux", why)
+        os.unlink(f"{S['CONF']}/apps/CrashBandicoot.conf")
+        self._put(f"{S['HOMES']}/CrashBandicoot/save", "s" * 70000)
+        self.assertEqual(S["file_owner"]("CrashBandicoot", new)[0], "CrashBandicoot", "a home with data")
+        self.said.clear(); self.assertEqual(self._fresh_name(new), "CrashBandicoot"); self.assertIn("stays 'CrashBandicoot'", self.said[0])
+        self._put(f"{S['HOMES']}/CrashBandicoot/save", "s")
+        self.assertEqual(S["file_owner"]("CrashBandicoot", new)[0], "CrashBandicoot-Linux", "a nearly empty home is only a leftover")
+        # settings that belong to another program of that name (its own file is there) don't stop this file being the renamed one
+        other = self.write("Apps/CrashBandicoot", "different"); self.assertTrue(self.origin("CrashBandicoot", other, rebind=True))
+        self._put(f"{S['CONF']}/apps/CrashBandicoot.conf", "net=1\n")
+        self.assertEqual(S["file_owner"]("CrashBandicoot", new)[0], "CrashBandicoot-Linux")
+
+    def test_a_file_that_matches_several_gone_programs_is_not_guessed(self):
+        old, new = self._renamed(); S = self.S
+        twin = self.write("Downloads/test/Twin", "the game " * 50); self.assertTrue(self.origin("Twin", twin)); os.unlink(twin)
+        owner, was, why = S["file_owner"]("CrashBandicoot", new)
+        self.assertEqual((owner, was), ("CrashBandicoot", None)); self.assertIn("CrashBandicoot-Linux, Twin", why)
+
+    def test_open_with_a_renamed_file_uses_the_settings_of_the_old_name(self):
+        old, new = self._renamed(); S = self.S
+        calls = []
+        S["subprocess"] = mock.Mock(run=lambda cmd, **kw: (calls.append(cmd), mock.Mock(returncode=0))[1], DEVNULL=-3, TimeoutExpired=Exception)
+        S["sys"] = mock.Mock(argv=["/nonexistent/sbx"], executable=sys.executable, stderr=io.StringIO(), exit=sys.exit, stdin=io.StringIO())
+        S["shutil"] = mock.Mock(which=lambda n: "/usr/bin/sbx")
+        for conf, extra in ((True, False), (False, True)):
+            if not conf: os.unlink(f"{S['CONF']}/apps/CrashBandicoot-Linux.conf")
+            calls.clear()
+            with mock.patch.object(os, "chdir"), self.assertRaises(SystemExit): S["cmd_open"]([new])
+            flags = calls[0][2:-1]
+            self.assertEqual(("--here" in flags, "--input" in flags), (extra, extra), "a settings file under the old name means no extras")
+
     def test_rebind_is_documented(self):
         with open(f"{HERE}/sbx.1") as f: man = f.read()
         with open(f"{HERE}/README.md") as f: readme = f.read()

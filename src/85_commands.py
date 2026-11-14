@@ -23,9 +23,6 @@ def cmd_show(a):
         for v in o.get(flag, []): print(f"  {k:<16} = {v}   [flag]")
 
 
-UNUSED_BYTES = 64 * 1024        # a private home with no more than this in files, and nobody having set the program up, counts as unused
-
-
 def home_problem(name):
     """Why NAME's private home can't be deleted, or None."""
     home = f"{HOMES}/{name}"
@@ -44,17 +41,6 @@ def wipe_home(name):
     for gone in (f"{CONF}/ids/{name}", f"{CONF}/origins/{name}", pending_path(name)):
         try: os.unlink(gone)
         except OSError: pass
-
-
-def home_is_small(name, limit=UNUSED_BYTES):
-    """True if the private home holds at most LIMIT bytes in files (links are not followed; a folder that can't be read counts as not small)."""
-    total, unreadable = 0, []
-    for d, _dirs, files in os.walk(f"{HOMES}/{name}", onerror=unreadable.append):
-        for f in files:
-            try: total += os.lstat(f"{d}/{f}").st_size
-            except OSError: unreadable.append(f)
-            if total > limit or unreadable: return False
-    return not unreadable
 
 
 def linked_programs():
@@ -449,6 +435,7 @@ def cmd_open(a):
     if len(a) != 1 or a[0].startswith("-"): die("usage: sbx open FILE")
     f = os.path.abspath(a[0])
     name = clean(os.path.basename(f))
+    if os.path.isfile(f): name = file_owner(name, os.path.realpath(f))[0]       # a renamed file is its old program: its settings decide below
     journal_tag(name)
     if not os.path.isfile(f): notify(f"Can't open {name}", "no such file"); sys.exit(1)
     flags = []

@@ -20,7 +20,15 @@ def build(prog, args, live=False, o=None):
     cwd = share_dir(os.getcwd()) if o.get("here") else None
     name = clean(o.get("name") or os.path.basename(path))       # the name you typed, not the file behind a link
     if o.get("name") and name != o["name"]: warn(f"--name: using '{name}' (letters, digits and . _ - only)")
-    if live: check_origin(name, real, o.get("rebind", False))
+    renamed = None
+    if not o.get("name") and "/" in prog:                       # a file, not a name from PATH: a renamed file is still its program (by content, before its file name counts)
+        owner, old, why = file_owner(name, real)
+        if why and live: warn(why)
+        if old: renamed = (name, old)                           # claimed just now (else it was claimed by an earlier run: nothing to say)
+        name = owner
+    if live:
+        check_origin(name, real, o.get("rebind", False))
+        if renamed: took_over(renamed[0], name, real, renamed[1])
     cfg, src = effective(name, o)
     ok = cfg["allow_sensitive"]
     rw = [p for p in [share_path(x, False, ok) for x in cfg["whitelist"]] + [share_path(x, True, ok) for x in o.get("whitelist", [])] if p]
