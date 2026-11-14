@@ -89,7 +89,7 @@ machine\-ids and menu launchers are not touched; see
 and
 .BR "sbx desktop \-\-remove" .
 .TP
-.B sbx link NAME | \-\-remove NAME
+.B sbx link NAME [\-\-desktop] | \-\-remove NAME [\-\-desktop]
 Make typing NAME in a terminal start the program through sbx, like firejail's firecfg: a link
 .I ~/.local/bin/NAME
 to sbx, which runs the real program of that name from your PATH. Needs
@@ -97,6 +97,12 @@ to sbx, which runs the real program of that name from your PATH. Needs
 before the program's own folder in PATH (sbx warns if not). The program's arguments are its own, not sbx options; its
 settings are the ones for NAME. Starting the program by its full path still skips sbx. Inside a sandbox the link starts the
 program directly.
+.B \-\-desktop
+also does what
+.B sbx desktop
+does for every app\-menu launcher whose Exec line starts NAME; with
+.B \-\-remove
+it takes those out again. Without it, sbx only says when such a launcher exists.
 .TP
 .B sbx open FILE
 Run a downloaded program with sensible defaults. This is what "Open with" calls; see
@@ -105,7 +111,9 @@ Run a downloaded program with sensible defaults. This is what "Open with" calls;
 .B sbx desktop NAME
 Make a launcher (a
 .I .desktop
-file) start the program through sbx.
+file) start the program through sbx. NAME is the launcher's id (firefox, org.mozilla.firefox) or, when no launcher has that id, the program the launcher starts (google\-chrome\-stable). A launcher in
+.I ~/.local/share/applications
+that sbx did not make is never replaced.
 .B \-\-remove
 undoes that.
 .TP

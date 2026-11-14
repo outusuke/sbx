@@ -66,10 +66,11 @@ sbx doctor                               check bubblewrap, helpers, Wayland supp
 sbx list                                 the programs sbx knows, and which are running
 sbx stop NAME                            stop a running program
 sbx clean [--yes] NAME                   delete a private home and its machine-id (refused while the program runs)
-sbx link NAME | --remove NAME            typing NAME in a terminal starts it through sbx (a link in ~/.local/bin, like firecfg)
+sbx link NAME [--desktop]                typing NAME in a terminal starts it through sbx (a link in ~/.local/bin, like firecfg); --desktop covers its app-menu launchers too
+sbx link --remove NAME [--desktop]       undo that
 sbx reset [--yes] NAME|--default|--all      delete settings files so the built-in defaults apply again (data stays)
 sbx open FILE                            run a downloaded program with sensible defaults (what "Open with" calls)
-sbx desktop NAME                         make a launcher (.desktop file) start the program through sbx
+sbx desktop NAME                         make a launcher (.desktop file) start the program through sbx; NAME is its id or the program it starts
 sbx desktop --remove NAME                undo that
 sbx desktop --install-opener             add "Run in sbx" to your file manager's Open With (--remove-opener undoes it)
 sbx desktop --install-menu               add sbx-gui to your app menu (--remove-menu undoes it; needs sbx-gui installed in /usr/local/bin)
@@ -115,7 +116,7 @@ Shared paths must be inside your home (not the home itself), on `/mnt`, `/media`
 
 `sbx link firefox` puts a link called `firefox` in `~/.local/bin`. Typing `firefox` then starts the real Firefox through sbx, with the settings for `firefox`, and arguments such as `firefox --private-window` go to the program, not to sbx. This is what firejail's `firecfg` does. `sbx link --remove firefox` undoes it, and `sbx-gui` has the same thing as a switch on the program's page.
 
-It only works while `~/.local/bin` comes before the program's own folder in your `PATH` (sbx warns when it doesn't; most distros put it first). Starting the program by its full path (`/usr/bin/firefox`) skips sbx, and so does anything that doesn't use your `PATH`. A launcher needs `sbx desktop` as well. Inside a sandbox a linked program starts directly.
+It only works while `~/.local/bin` comes before the program's own folder in your `PATH` (sbx warns when it doesn't; most distros put it first). Starting the program by its full path (`/usr/bin/firefox`) skips sbx, and so does anything that doesn't use your `PATH`. A launcher needs `sbx desktop` as well: `sbx link NAME` says when it finds one that starts NAME, and `sbx link NAME --desktop` does both (`--remove NAME --desktop` undoes both). Launchers are found by the program their `Exec=` line starts, so `sbx link google-chrome-stable --desktop` finds `google-chrome.desktop`. `sbx desktop` never replaces a launcher in `~/.local/share/applications` that sbx didn't make. Inside a sandbox a linked program starts directly.
 
 ## Downloaded programs
 

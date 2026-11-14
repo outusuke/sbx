@@ -1302,9 +1302,9 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx stop NAME                          stop a running program\n"
          "sbx clean [--yes] NAME                 delete a program's private home and machine-id (not while it runs)\n"
          "sbx reset [--yes] NAME|--default|--all  delete settings so the built-in defaults apply again (data stays)\n"
-         "sbx link NAME | --remove NAME         make typing NAME in a terminal start it through sbx (a link in ~/.local/bin)\n"
+         "sbx link NAME [--desktop] | --remove NAME [--desktop]  make typing NAME in a terminal start it through sbx (a link in ~/.local/bin); --desktop covers its app-menu launchers too\n"
          "sbx open FILE                          run a downloaded program with sensible defaults (for \"Open with\")\n"
-         "sbx desktop NAME | --remove NAME       make a launcher (NAME.desktop) start the program through sbx\n"
+         "sbx desktop NAME | --remove NAME       make a launcher start the program through sbx (NAME = its id, or the program it starts)\n"
          "sbx desktop --install-opener           add \"Run in sbx\" to your file manager's Open With (--remove-opener undoes it)\n"
          "sbx desktop --install-menu             add sbx-gui to your app menu (--remove-menu undoes it)\n"
          "options (before the program; most also exist as a setting, e.g. net=0, x11=1):\n"
@@ -1445,18 +1445,25 @@ def cmd_reset(a):
 
 
 def cmd_link(a):
-    """sbx link NAME | --remove NAME: a link ~/.local/bin/NAME to sbx, so typing NAME starts the program through sbx (firejail's firecfg)."""
-    remove = "--remove" in a
-    a = [x for x in a if x != "--remove"]
-    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx link NAME   |   sbx link --remove NAME")
+    """sbx link NAME [--desktop] | --remove NAME [--desktop]: a link ~/.local/bin/NAME to sbx, so typing NAME starts the program through sbx
+    (firejail's firecfg). --desktop does the same for the app-menu launchers that start NAME (what `sbx desktop` does)."""
+    remove, both = "--remove" in a, "--desktop" in a
+    a = [x for x in a if x not in ("--remove", "--desktop")]
+    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx link NAME [--desktop]   |   sbx link --remove NAME [--desktop]")
     if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
     name = a[0]
     if not re.fullmatch(r"[A-Za-z0-9._+-]+", name) or name.startswith(".") or name.startswith("sbx") or name in COMMANDS: die(f"'{name}' can't be a link name")
     dest = f"{HOME}/.local/bin/{name}"
     if remove:
-        if not os.path.lexists(dest): die(f"{tilde(dest)} doesn't exist")
-        if not is_sbx_link(dest): die(f"{tilde(dest)} was not made by sbx; not removing it")
-        os.unlink(dest); print(f"removed {tilde(dest)}; '{name}' starts directly again"); return
+        did = False
+        if os.path.lexists(dest):
+            if not is_sbx_link(dest): die(f"{tilde(dest)} was not made by sbx; not removing it")
+            os.unlink(dest); print(f"removed {tilde(dest)}; '{name}' starts directly again"); did = True
+        if both:
+            for p in our_launchers(name, by_program=True): os.unlink(p); print(f"removed {tilde(p)}"); did = True
+        elif our_launchers(name, by_program=True): print(f"An app-menu launcher still starts it through sbx. Undo with: sbx link --remove {name} --desktop")
+        if not did: die(f"{tilde(dest)} doesn't exist" + (f", and no launcher made by sbx starts {name}" if both else ""))
+        return
     real = find_in_path(name)
     if not real: die(f"'{name}' is not installed (no program of that name in your PATH)")
     if os.path.lexists(dest) and not is_sbx_link(dest): die(f"{tilde(dest)} already exists and was not made by sbx; not touching it")
@@ -1471,6 +1478,14 @@ def cmd_link(a):
     if mine not in dirs: warn(f"{tilde(os.path.dirname(dest))} is not in your PATH, so '{name}' still starts directly. Add it, then open a new terminal")
     elif theirs in dirs and dirs.index(theirs) < dirs.index(mine):
         warn(f"{tilde(os.path.dirname(dest))} is not before {os.path.dirname(real)} in your PATH, so '{name}' still starts directly. Put it first, then open a new terminal")
+    if both:
+        found = launchers_starting(name)
+        if not found: print(f"no app-menu launcher starts '{name}'; nothing to add there")
+        for p in found: add_launcher(p, name)
+        return
+    ids = [os.path.basename(p)[:-8] for p in launchers_starting(name) if not os.path.lexists(f"{user_launchers()}/{os.path.basename(p)}")]
+    if len(ids) == 1: print(f"The app-menu launcher {ids[0]} still starts it directly. Cover it too with: sbx desktop {ids[0]}")
+    elif ids: print(f"The app-menu launchers {', '.join(ids)} still start it directly. Cover them too with: sbx link {name} --desktop")
 
 
 def linked_name(argv0):
@@ -1548,43 +1563,96 @@ def cmd_menu(install):
     die("sbx-gui is not installed (a root-owned copy is needed). Install it first: sudo install -m755 sbx-gui /usr/local/bin/")
 
 
+def user_launchers():
+    return f"{HOME}/.local/share/applications"
+
+
+def exec_program(value):
+    """The program an Exec= value starts: the base name of its first word, past a leading sbx. None when it can't tell."""
+    try: w = shlex.split(value)
+    except ValueError: return None
+    if w and os.path.basename(w[0]) == "sbx": w = w[1:]
+    return os.path.basename(w[0]) if w else None
+
+
+def launcher_text(path):
+    try:
+        with open(path, errors="replace") as f: return f.read()
+    except OSError: return ""
+
+
+def launcher_program(path):
+    """The program the main Exec= line of a .desktop file starts (see exec_program), or None."""
+    group = ""
+    for line in launcher_text(path).splitlines():
+        if line.startswith("["): group = line
+        elif group == "[Desktop Entry]" and line.startswith("Exec="): return exec_program(line[5:])
+    return None
+
+
+def launchers_starting(name):
+    """System launchers whose Exec= starts a program called NAME. Of two with the same file name the first in XDG_DATA_DIRS wins, as in the menu."""
+    seen, out = set(), []
+    for d in [d for d in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":") if d]:
+        for p in sorted(glob.glob(f"{d}/applications/*.desktop")):
+            b = os.path.basename(p)
+            if b in seen: continue
+            seen.add(b)
+            if launcher_program(p) == name: out.append(p)
+    return out
+
+
+def system_launchers(ident):
+    """What `sbx desktop IDENT` changes: the launcher with that id (IDENT.desktop, or *.IDENT.desktop), else every one that starts a program called IDENT."""
+    dirs = [d for d in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":") if d]
+    cands = [f"{d}/applications/{ident}.desktop" for d in dirs]
+    cands += [p for d in dirs for p in sorted(glob.glob(f"{d}/applications/*.{ident}.desktop"))]
+    first = next((p for p in cands if os.path.isfile(p)), None)
+    return [first] if first else launchers_starting(ident)
+
+
+def our_launchers(ident, by_program=False):
+    """Launchers in ~/.local/share/applications made by `sbx desktop` for IDENT: the one called IDENT.desktop, else *.IDENT.desktop
+    (the name kept from the system launcher), else those that start a program called IDENT. by_program skips to the last."""
+    d = user_launchers()
+    ours = lambda p: "X-Sbx-Sandboxed=true" in launcher_text(p)
+    if not by_program:
+        found = [p for p in [f"{d}/{ident}.desktop"] if ours(p)] or [p for p in sorted(glob.glob(f"{d}/*.{ident}.desktop")) if ours(p)]
+        if found: return found
+    return [p for p in sorted(glob.glob(f"{d}/*.desktop")) if ours(p) and launcher_program(p) == ident]
+
+
+def add_launcher(src, ident):
+    """Write the sbx copy of the system launcher SRC to ~/.local/share/applications. Never replaces a file sbx didn't make."""
+    dest = f"{user_launchers()}/{os.path.basename(src)}"
+    if os.path.lexists(dest) and "X-Sbx-Sandboxed=true" not in launcher_text(dest):
+        warn(f"{tilde(dest)} already exists and was not made by sbx; not touching it"); return False
+    text, notes = rewrite_desktop(launcher_text(src), shutil.which("sbx") or os.path.realpath(sys.argv[0]))
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(dest, "w") as f: f.write(text)
+    for n in notes: warn(n)
+    print(f"wrote {tilde(dest)}: the launcher now starts the program through sbx.\nUndo with: sbx desktop --remove {ident}")
+    return True
+
+
 def cmd_desktop(a):
     if a in (["--install-opener"], ["--remove-opener"]): return cmd_opener(a[0] == "--install-opener")
     if a in (["--install-menu"], ["--remove-menu"]): return cmd_menu(a[0] == "--install-menu")
     remove = "--remove" in a
     a = [x for x in a if x != "--remove"]
-    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx desktop NAME   |   sbx desktop --remove NAME   (NAME = the launcher's id, e.g. firefox or org.mozilla.firefox)")
+    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx desktop NAME   |   sbx desktop --remove NAME   (NAME = the launcher's id, e.g. firefox or org.mozilla.firefox, or the program it starts, e.g. google-chrome-stable)")
     ident = a[0][:-8] if a[0].endswith(".desktop") else a[0]
     if not re.fullmatch(r"[A-Za-z0-9._+-]+", ident) or ident.startswith("."): die(f"'{ident}' is not a launcher id")
-    mine = f"{HOME}/.local/share/applications/{ident}.desktop"
+    mine = f"{user_launchers()}/{ident}.desktop"
     if remove:
-        if os.path.exists(mine):
-            try:
-                with open(mine) as f: ours = "X-Sbx-Sandboxed=true" in f.read()
-            except OSError: die(f"{tilde(mine)} doesn't exist")
-            if not ours: die(f"{tilde(mine)} was not made by sbx; not removing it")
-            os.unlink(mine); print(f"removed {tilde(mine)}"); return
-        # adding saves the copy under the system launcher's own name, which can be org.mozilla.firefox for NAME firefox
-        found = []
-        for p in sorted(glob.glob(f"{HOME}/.local/share/applications/*.{ident}.desktop")):
-            try:
-                with open(p) as f:
-                    if "X-Sbx-Sandboxed=true" in f.read(): found.append(p)
-            except OSError: pass
-        if not found: die(f"{tilde(mine)} doesn't exist, and no launcher made by sbx is called *.{ident}.desktop")
+        if os.path.exists(mine) and "X-Sbx-Sandboxed=true" not in launcher_text(mine): die(f"{tilde(mine)} was not made by sbx; not removing it")
+        found = our_launchers(ident)
+        if not found: die(f"{tilde(mine)} doesn't exist, and no launcher made by sbx is called *.{ident}.desktop or starts {ident}")
         for p in found: os.unlink(p); print(f"removed {tilde(p)}")
         return
-    dirs = [d for d in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":") if d]
-    cands = [f"{d}/applications/{ident}.desktop" for d in dirs]
-    cands += [p for d in dirs for p in sorted(glob.glob(f"{d}/applications/*.{ident}.desktop"))]
-    found = next((p for p in cands if os.path.isfile(p)), None)
-    if not found: die(f"no launcher called {ident}.desktop in {', '.join(d + '/applications' for d in dirs)}")
-    with open(found) as f: text, notes = rewrite_desktop(f.read(), shutil.which("sbx") or os.path.realpath(sys.argv[0]))
-    dest = f"{HOME}/.local/share/applications/{os.path.basename(found)}"
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    with open(dest, "w") as f: f.write(text)
-    for n in notes: warn(n)
-    print(f"wrote {tilde(dest)}: the launcher now starts the program through sbx.\nUndo with: sbx desktop --remove {ident}")
+    found = system_launchers(ident)
+    if not found: die(f"no launcher called {ident}.desktop, and none that starts {ident}, in the applications folders of XDG_DATA_DIRS")
+    if not any([add_launcher(p, ident) for p in found]): sys.exit(1)
 
 
 # ---------------------------------------------------------------- opening downloaded programs

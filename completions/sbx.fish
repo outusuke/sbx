@@ -18,6 +18,7 @@ complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l default -d "Reset t
 complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l all -d "Reset every settings file"
 complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l yes -d "Don't ask"
 complete -c sbx -f -n "__fish_seen_subcommand_from link" -l remove -d "Remove a link made by sbx"
+complete -c sbx -f -n "__fish_seen_subcommand_from link" -l desktop -d "Also the app-menu launchers that start it"
 complete -c sbx -f -n "__fish_seen_subcommand_from link" -a "(__fish_complete_command)"
 complete -c sbx -f -n "__fish_seen_subcommand_from stop" -a "(__sbx_homes)"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l install-opener -d "Add \"Run in sbx\" to Open With"

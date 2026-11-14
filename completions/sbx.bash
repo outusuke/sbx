@@ -15,7 +15,7 @@ _sbx() {
             preview|show) [[ $word == show ]] && { COMPREPLY=($(compgen -W "$(ls ~/.config/sbx/apps 2>/dev/null | sed 's/\.conf$//')" -- "$cur")); return; } ;;
             clean) COMPREPLY=($(compgen -W "$(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
             reset) COMPREPLY=($(compgen -W "--yes --default --all $(ls ~/.config/sbx/apps 2>/dev/null | sed 's/\.conf$//')" -- "$cur")); return ;;
-            link) COMPREPLY=($(compgen -W "--remove" -- "$cur") $(compgen -c -- "$cur")); return ;;
+            link) COMPREPLY=($(compgen -W "--remove --desktop" -- "$cur") $(compgen -c -- "$cur")); return ;;
             stop) COMPREPLY=($(compgen -W "$(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
             doctor|schema|list) return ;;
             desktop) COMPREPLY=($(compgen -W "--install-opener --remove-opener --install-menu --remove-menu --remove" -- "$cur")); return ;;

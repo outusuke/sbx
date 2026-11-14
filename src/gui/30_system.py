@@ -102,15 +102,30 @@ def set_menu_entry(on):
 
 
 def launcher_is_ours(name):
-    """True if ~/.local/share/applications/NAME.desktop (or *.NAME.desktop, the name `sbx desktop` keeps from the system launcher,
-    e.g. org.mozilla.firefox for firefox) was made by `sbx desktop`."""
+    """True if a launcher in ~/.local/share/applications made by `sbx desktop` belongs to NAME: NAME.desktop, *.NAME.desktop (the name
+    kept from the system launcher, e.g. org.mozilla.firefox for firefox), or one that starts a program called NAME (google-chrome.desktop
+    for google-chrome-stable)."""
     d = f"{HOME}/.local/share/applications"
-    for path in [f"{d}/{name}.desktop"] + sorted(glob.glob(f"{d}/*.{name}.desktop")):
+    for path in [f"{d}/{name}.desktop"] + sorted(glob.glob(f"{d}/*.{name}.desktop")) + sorted(glob.glob(f"{d}/*.desktop")):
         try:
-            with open(path) as f:
-                if "X-Sbx-Sandboxed=true" in f.read(): return True
-        except OSError: pass
+            with open(path, errors="replace") as f: text = f.read()
+        except OSError: continue
+        if "X-Sbx-Sandboxed=true" not in text: continue
+        if os.path.basename(path) == f"{name}.desktop" or path.endswith(f".{name}.desktop") or launcher_program(text) == name: return True
     return False
+
+
+def launcher_program(text):
+    """The program the main Exec= line of a .desktop file starts, past a leading sbx (same rule as sbx's own launcher matching)."""
+    group = ""
+    for line in text.splitlines():
+        if line.startswith("["): group = line
+        elif group == "[Desktop Entry]" and line.startswith("Exec="):
+            try: w = shlex.split(line[5:])
+            except ValueError: return None
+            if w and os.path.basename(w[0]) == "sbx": w = w[1:]
+            return os.path.basename(w[0]) if w else None
+    return None
 
 
 def link_is_ours(name):

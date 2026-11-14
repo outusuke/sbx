@@ -1006,6 +1006,107 @@ class Units(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(base)), ["Kept"])
         self.assertTrue(os.path.exists(f"{base}/Kept/data"))
 
+    def test_exec_lines_name_the_program_they_start(self):
+        ep = self.S["exec_program"]
+        self.assertEqual(ep("/usr/bin/google-chrome-stable %U"), "google-chrome-stable")
+        self.assertEqual(ep("firefox --new-window %u"), "firefox")
+        self.assertEqual(ep("/usr/local/bin/sbx /usr/bin/x %U"), "x")                  # a launcher sbx already rewrote
+        self.assertEqual(ep('"/opt/my tools/sbx" app %f'), "app")
+        self.assertEqual(ep("env FOO=1 app"), "env")                                    # not the program: rewrite_desktop warns about these
+        self.assertIsNone(ep("")); self.assertIsNone(ep('app "unterminated'))
+
+    def _launcher_share(self, *files):
+        share = f"{self.home}/sysshare"; os.makedirs(f"{share}/applications", exist_ok=True)
+        for name, text in files:
+            with open(f"{share}/applications/{name}", "w") as f: f.write(text)
+        return share
+
+    def test_desktop_finds_a_launcher_by_the_program_it_starts_and_removes_it_the_same_way(self):
+        S, h = self.S, self.home
+        share = self._launcher_share(("google-chrome.desktop", "[Desktop Entry]\nName=Chrome\nExec=/usr/bin/google-chrome-stable %U\n\n[Desktop Action x]\nExec=/usr/bin/other\n"),
+                                     ("unrelated.desktop", "[Desktop Entry]\nName=Other\nExec=other\n"))
+        dest = f"{h}/.local/share/applications/google-chrome.desktop"
+        with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": share}), mock.patch.object(sys, "argv", ["/usr/local/bin/sbx"]), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(S["system_launchers"]("google-chrome-stable"), [f"{share}/applications/google-chrome.desktop"])
+            self.assertEqual(S["system_launchers"]("google-chrome"), [f"{share}/applications/google-chrome.desktop"])      # by id, as before
+            S["cmd_desktop"](["google-chrome-stable"])
+            self.assertEqual(S["launcher_program"](dest), "google-chrome-stable")                                         # looks past the sbx we added
+            self.assertEqual(S["our_launchers"]("google-chrome-stable"), [dest]); self.assertEqual(S["our_launchers"]("google-chrome"), [dest])
+            self.assertEqual(S["our_launchers"]("other"), [], "an action's Exec= is not the launcher's program")
+            S["cmd_desktop"](["--remove", "google-chrome-stable"])
+        self.assertFalse(os.path.exists(dest))
+        with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": share}), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["cmd_desktop"](["nosuchprogram"])
+
+    def test_the_launcher_with_that_id_wins_over_one_that_merely_starts_the_program(self):
+        share = self._launcher_share(("foo.desktop", "[Desktop Entry]\nExec=foo-real\n"), ("other.desktop", "[Desktop Entry]\nExec=foo\n"))
+        with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": share}):
+            self.assertEqual(self.S["system_launchers"]("foo"), [f"{share}/applications/foo.desktop"])
+            self.assertEqual(self.S["launchers_starting"]("foo"), [f"{share}/applications/other.desktop"])
+
+    def test_desktop_never_replaces_a_launcher_sbx_did_not_make(self):
+        S = self.S
+        share = self._launcher_share(("app.desktop", "[Desktop Entry]\nName=App\nExec=app\n"))
+        mine = self.write(".local/share/applications/app.desktop", "[Desktop Entry]\nName=My own\nExec=app --my-flag\n")
+        with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": share}), contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit): S["cmd_desktop"](["app"])
+        with open(mine) as f: self.assertIn("My own", f.read())
+        self.assertTrue(any("not touching it" in w for w in self.warned))
+
+    def _linkable(self, *launchers):
+        """A fake installed sbx and program 'chrome-bin' in front of the system's, with system launchers made from LAUNCHERS."""
+        h = self.home; inst = f"{h}/inst"; bindir = f"{h}/bin"; os.makedirs(inst); os.makedirs(bindir)
+        for p in (f"{inst}/sbx", f"{bindir}/chrome-bin"):
+            with open(p, "w") as f: f.write("#!/bin/sh\necho real\n")
+            os.chmod(p, 0o755)
+        share = self._launcher_share(*[(n, f"[Desktop Entry]\nName=Chrome\nExec={bindir}/chrome-bin %U\n") for n in launchers])
+        env = {"PATH": f"{h}/.local/bin:{bindir}:/usr/bin:/bin", "SBX_ACTIVE": "", "XDG_DATA_DIRS": share}
+        def run(*a):
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", [f"{inst}/sbx"]), contextlib.redirect_stdout(out): self.S["cmd_link"](list(a))
+            return out.getvalue()
+        return run
+
+    def test_link_says_when_an_app_menu_launcher_still_skips_sbx(self):
+        run = self._linkable("google-chrome.desktop")
+        out = run("chrome-bin")
+        self.assertIn("sbx desktop google-chrome", out)
+        self.assertFalse(os.path.exists(f"{self.home}/.local/share/applications/google-chrome.desktop"), "without --desktop nothing is written")
+        with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": f"{self.home}/sysshare"}), mock.patch.object(sys, "argv", [f"{self.home}/inst/sbx"]), \
+             contextlib.redirect_stdout(io.StringIO()): self.S["cmd_desktop"](["chrome-bin"])
+        self.assertNotIn("sbx desktop", run("chrome-bin"), "already covered: no hint")
+        self.assertIn("--remove chrome-bin --desktop", run("--remove", "chrome-bin"), "removing only the link says the launcher is still there")
+
+    def test_link_with_two_launchers_for_one_program_points_at_the_flag(self):
+        run = self._linkable("a.desktop", "b.desktop")
+        out = run("chrome-bin")
+        self.assertIn("a, b", out); self.assertIn("sbx link chrome-bin --desktop", out)
+
+    def test_link_desktop_covers_the_launchers_and_remove_desktop_undoes_both(self):
+        h = self.home
+        run = self._linkable("a.desktop", "b.desktop")
+        apps = f"{h}/.local/share/applications"
+        run("chrome-bin", "--desktop")
+        self.assertTrue(os.path.islink(f"{h}/.local/bin/chrome-bin"))
+        self.assertEqual(sorted(os.listdir(apps)), ["a.desktop", "b.desktop"])
+        for n in ("a.desktop", "b.desktop"): self.assertEqual(self.S["launcher_program"](f"{apps}/{n}"), "chrome-bin")
+        run("--remove", "chrome-bin", "--desktop")
+        self.assertFalse(os.path.lexists(f"{h}/.local/bin/chrome-bin")); self.assertEqual(os.listdir(apps), [])
+        run("chrome-bin", "--desktop"); os.unlink(f"{h}/.local/bin/chrome-bin")          # the link is gone, the launchers are not
+        run("--remove", "chrome-bin", "--desktop"); self.assertEqual(os.listdir(apps), [])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): run("--remove", "chrome-bin", "--desktop")      # nothing left of either
+        self.assertIn("no app-menu launcher starts 'nothing'", self._linkable_none())
+
+    def _linkable_none(self):
+        h = self.home; out = io.StringIO()
+        with open(f"{h}/bin/nothing", "w") as f: f.write("#!/bin/sh\n")
+        os.chmod(f"{h}/bin/nothing", 0o755)
+        env = {"PATH": f"{h}/.local/bin:{h}/bin:/usr/bin:/bin", "SBX_ACTIVE": "", "XDG_DATA_DIRS": f"{h}/sysshare"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", [f"{h}/inst/sbx"]), contextlib.redirect_stdout(out): self.S["cmd_link"](["nothing", "--desktop"])
+        return out.getvalue()
+
+    def test_completions_offer_link_desktop(self):
+        for f, want in (("sbx.bash", "--remove --desktop"), ("_sbx", "--remove --desktop"), ("sbx.fish", "-l desktop")):
+            with open(f"{HERE}/completions/{f}") as fh: self.assertIn(want, fh.read(), f)
+
     def test_launcher_rewriting(self):
         src = ("[Desktop Entry]\nName=Firefox\nName[de]=Feuerfuchs\nExec=firefox %u\nDBusActivatable=true\nTryExec=firefox\n\n"
                "[Desktop Action new-window]\nName=Open a New Window\nExec=firefox --new-window %u\n")
@@ -1399,6 +1500,16 @@ class Gui(unittest.TestCase):
         with open(f"{d}/plain", "w") as f: f.write("x")
         self.assertTrue(G["link_is_ours"]("mine"))
         for n in ("other", "plain", "missing"): self.assertFalse(G["link_is_ours"](n), n)
+
+    def test_launcher_is_ours_by_id_or_by_the_program_it_starts(self):
+        G = self.G; d = f"{G['HOME']}/.local/share/applications"; os.makedirs(d)
+        def put(name, text):
+            with open(f"{d}/{name}", "w") as f: f.write(text)
+        put("google-chrome.desktop", "[Desktop Entry]\nX-Sbx-Sandboxed=true\nName=Chrome (sbx)\nExec=/usr/local/bin/sbx /usr/bin/google-chrome-stable %U\n")
+        put("org.mozilla.firefox.desktop", "[Desktop Entry]\nX-Sbx-Sandboxed=true\nExec=\"/opt/my tools/sbx\" firefox %u\n")
+        put("mine.desktop", "[Desktop Entry]\nExec=/usr/bin/mine\n")                      # not made by sbx
+        for n in ("google-chrome-stable", "google-chrome", "firefox", "org.mozilla.firefox"): self.assertTrue(G["launcher_is_ours"](n), n)
+        for n in ("chrome", "mine", "missing", "fire"): self.assertFalse(G["launcher_is_ours"](n), n)
 
     def test_switch_rows_do_not_carry_a_default_note(self):
         G = self.G

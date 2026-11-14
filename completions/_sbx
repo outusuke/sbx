@@ -23,7 +23,7 @@ _sbx() {
             show) (( CURRENT == i + 1 )) && _sbx_apps; return ;;
             clean) (( CURRENT == i + 1 )) && _sbx_homes; return ;;
             reset) compadd -- --yes --default --all; _sbx_apps; return ;;
-            link) compadd -- --remove; _command_names -e; return ;;
+            link) compadd -- --remove --desktop; _command_names -e; return ;;
             stop) (( CURRENT == i + 1 )) && _sbx_homes; return ;;
             doctor|schema|list) return ;;
             desktop) compadd -- --install-opener --remove-opener --install-menu --remove-menu --remove; return ;;
