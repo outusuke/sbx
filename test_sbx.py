@@ -2845,7 +2845,7 @@ class Isolation(unittest.TestCase):
         good, evil = f"{self.home}/good/pinned", f"{self.home}/evil/pinned"
         for p in (good, evil):
             os.makedirs(os.path.dirname(p), exist_ok=True)
-            with open(p, "w") as f: f.write("#!/bin/sh\necho ran-$0\n")
+            with open(p, "w") as f: f.write("#!/bin/sh\necho ran-$0\n" + ("# a different program\n" if p == evil else ""))     # same content would be the same program
             os.chmod(p, 0o755)
         env = {"PATH": "/usr/local/bin:/usr/bin:/bin"}
         r = self.sbx_run(good, env=env); self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("ran-", r.stdout)
