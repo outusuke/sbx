@@ -1451,12 +1451,13 @@ class Units(unittest.TestCase):
         S, h = self.S, self.home
         self.write(".config/user-dirs.dirs", 'XDG_DOWNLOAD_DIR="$HOME/Transferências"\nXDG_DESKTOP_DIR="$HOME/Área de Trabalho"\n# x\n')
         of = S["opener_folder"]
-        self.assertEqual(of(f"{h}/Games/Crash/game"), f"{h}/Games/Crash")
-        self.assertEqual(of(f"{h}/Downloads/Crash/game"), f"{h}/Downloads/Crash", "a subfolder of Downloads is the program's own")
-        for bad in (f"{h}/game", f"{h}/Downloads/game", f"{h}/Desktop/game", f"{h}/Transferências/game", f"{h}/Área de Trabalho/game",
-                    f"{h}/.local/bin/game", f"{h}/.cache/x/game", "/usr/bin/game", "/tmp/game", "/opt/x/game"):
-            self.assertIsNone(of(bad), bad)
-        self.assertEqual(of("/tmp/x/game"), "/tmp/x")
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": f"{h}/.config"}):                      # CI sets its own XDG_CONFIG_HOME
+            self.assertEqual(of(f"{h}/Games/Crash/game"), f"{h}/Games/Crash")
+            self.assertEqual(of(f"{h}/Downloads/Crash/game"), f"{h}/Downloads/Crash", "a subfolder of Downloads is the program's own")
+            for bad in (f"{h}/game", f"{h}/Downloads/game", f"{h}/Desktop/game", f"{h}/Transferências/game", f"{h}/Área de Trabalho/game",
+                        f"{h}/.local/bin/game", f"{h}/.cache/x/game", "/usr/bin/game", "/tmp/game", "/opt/x/game"):
+                self.assertIsNone(of(bad), bad)
+            self.assertEqual(of("/tmp/x/game"), "/tmp/x")
 
     def test_man_page_documents_the_desktop_options(self):
         with open(f"{HERE}/sbx.1") as f: man = f.read().replace("\\-", "-")
