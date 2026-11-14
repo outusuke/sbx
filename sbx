@@ -198,6 +198,35 @@ def notify_click(plain, clicked, label, gui_args, urgency="critical"):
         os._exit(0)
 
 
+# Signals that mean the program itself crashed (nobody stopped it), and how a notification says it.
+CRASH_SIGNALS = {"SIGSEGV": "segmentation fault", "SIGABRT": "aborted", "SIGBUS": "bus error", "SIGILL": "illegal instruction",
+                 "SIGFPE": "arithmetic error", "SIGTRAP": "trap", "SIGSYS": "bad system call"}
+STOP_CODES = (129, 130, 143)    # shell exit codes of SIGHUP, SIGINT, SIGTERM: someone stopped it, nothing went wrong
+
+
+def crash_signal(rc):
+    """The name of the crash signal (SIGSEGV, SIGABRT, ...) that killed the program, or None. RC is the wait status of what
+    sbx started: negative when a signal killed it directly, 128 + the signal when bwrap reports it for the program inside."""
+    sig = -rc if rc < 0 else rc - 128 if rc > 128 else 0
+    try: name = signal.Signals(sig).name
+    except ValueError: return None
+    return name if name in CRASH_SIGNALS else None
+
+
+def notify_crash(name, sig):
+    """A critical notification that the program crashed (killed by SIG), however long it had been running. Where
+    notify-send can do actions, clicking it opens sbx-gui on this program's log."""
+    what = f"crashed ({CRASH_SIGNALS[sig]}, {sig})"
+    notify_click(f"{name} {what}. See the log in sbx-gui.", f"{name} {what}. Click to open the log.", "Open log", ["--log", name])
+
+
+def notify_ended(name, code):
+    """A normal-urgency notification that a program started without a terminal (app menu, file manager) ended with an
+    error after running for a while. Where it can, clicking it opens the log."""
+    what = f"stopped with an error (exit code {code})"
+    notify_click(f"{name} {what}. See the log in sbx-gui.", f"{name} {what}. Click to open the log.", "Open log", ["--log", name], "normal")
+
+
 def notify_failure(name, reason=""):
     """A critical notification that the program stopped right after starting, with the REASON when there is one. Where
     notify-send can do actions, clicking it opens sbx-gui on this program's log."""
@@ -1596,9 +1625,13 @@ def run(prog, args, opts):
         if t: t.join(2)
     finally:
         unmark_running(); teardown(st); undo_exec_bit(prog, restore)
-    log(f"EXIT code={exit_code(rc)}", name)
-    if rc != 0 and not stopped[0] and time.time() - start < 10 and not os.environ.get("SBX_NO_POPUP"): notify_failure(name)
-    sys.exit(exit_code(rc))
+    code, sig = exit_code(rc), crash_signal(rc)
+    log(f"EXIT code={code}" + (f" ({sig})" if sig else ""), name)
+    if not stopped[0] and not os.environ.get("SBX_NO_POPUP"):
+        if sig: notify_crash(name, sig)                                  # at any time, not only right after starting
+        elif rc != 0 and time.time() - start < 10: notify_failure(name)
+        elif rc != 0 and piped: notify_ended(name, code)                 # no terminal to show the error, so say it
+    sys.exit(code)
 
 
 # ---------------------------------------------------------------- command line
@@ -2158,10 +2191,13 @@ def cmd_open(a):
     err.seek(0)
     text = err.read().decode(errors="replace")
     sys.stderr.write(text)
-    if rc != 0 and time.monotonic() - t0 < 15 and not read_pending(name):      # it never really started (a decision waiting has its own notification)
+    sig = crash_signal(rc)
+    if sig and not read_pending(name): notify_crash(name, sig)                 # a crash says so, however soon or late it came
+    elif rc != 0 and time.monotonic() - t0 < 15 and not read_pending(name):    # it never really started (a decision waiting has its own notification)
         why = failure_reason(text, rc)
         warn(f"{name} didn't start: {why}")
         notify_failure(name, why)                                  # clicking it opens the log, like a start from the menu
+    elif rc != 0 and exit_code(rc) not in STOP_CODES and not read_pending(name): notify_ended(name, exit_code(rc))      # not when you stopped it
     sys.exit(exit_code(rc))
 
 

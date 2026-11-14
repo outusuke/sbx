@@ -97,6 +97,11 @@ LOG_HINTS = [
      "net", True, "Allow the network", "The program tried to use the network.", {}),
     (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
      "camera", True, "Allow the camera", "The program tried to open a camera.", {}),
+    # A silent crash (segfault, abort, trap) while user namespaces are off: Chrome, Chromium and Electron die like this when they
+    # cannot make their own sandbox, often with only a core dump and no message. Shown only while "userns" is off.
+    (r"\] EXIT code=(13[2-6]|139|159)\b",
+     "userns", True, "Allow the program's own sandbox (a guess)",
+     "The program crashed and left no reason in the log. Chrome, Chromium and Electron crash like this when they cannot create their own sandbox, and user namespaces are off for this program.", {"userns": False}),
     # A guess, last so any specific X11 message above wins: a crash right after start, with nothing in the log saying why
     # (installers often send stderr to /dev/null). A GUI that only speaks X11 dies like this.
     (r"aborted \(core dumped\)|\] EXIT code=134\b",

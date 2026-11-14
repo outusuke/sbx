@@ -458,10 +458,13 @@ def cmd_open(a):
     err.seek(0)
     text = err.read().decode(errors="replace")
     sys.stderr.write(text)
-    if rc != 0 and time.monotonic() - t0 < 15 and not read_pending(name):      # it never really started (a decision waiting has its own notification)
+    sig = crash_signal(rc)
+    if sig and not read_pending(name): notify_crash(name, sig)                 # a crash says so, however soon or late it came
+    elif rc != 0 and time.monotonic() - t0 < 15 and not read_pending(name):    # it never really started (a decision waiting has its own notification)
         why = failure_reason(text, rc)
         warn(f"{name} didn't start: {why}")
         notify_failure(name, why)                                  # clicking it opens the log, like a start from the menu
+    elif rc != 0 and exit_code(rc) not in STOP_CODES and not read_pending(name): notify_ended(name, exit_code(rc))      # not when you stopped it
     sys.exit(exit_code(rc))
 
 

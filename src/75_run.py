@@ -116,6 +116,10 @@ def run(prog, args, opts):
         if t: t.join(2)
     finally:
         unmark_running(); teardown(st); undo_exec_bit(prog, restore)
-    log(f"EXIT code={exit_code(rc)}", name)
-    if rc != 0 and not stopped[0] and time.time() - start < 10 and not os.environ.get("SBX_NO_POPUP"): notify_failure(name)
-    sys.exit(exit_code(rc))
+    code, sig = exit_code(rc), crash_signal(rc)
+    log(f"EXIT code={code}" + (f" ({sig})" if sig else ""), name)
+    if not stopped[0] and not os.environ.get("SBX_NO_POPUP"):
+        if sig: notify_crash(name, sig)                                  # at any time, not only right after starting
+        elif rc != 0 and time.time() - start < 10: notify_failure(name)
+        elif rc != 0 and piped: notify_ended(name, code)                 # no terminal to show the error, so say it
+    sys.exit(code)

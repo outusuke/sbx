@@ -1934,6 +1934,21 @@ class Logging(unittest.TestCase):
             S["notify_failure"]("app", "it aborted")
         self.assertTrue(any("app stopped right after starting. it aborted" in x for x in run.call_args_list[-1].args[0]))
 
+    def test_a_crash_is_told_by_its_signal_whenever_it_happens(self):
+        S = self.S
+        cs = S["crash_signal"]
+        self.assertEqual(cs(139), "SIGSEGV"); self.assertEqual(cs(134), "SIGABRT"); self.assertEqual(cs(-11), "SIGSEGV")      # bwrap's 128+n, or a direct signal
+        for rc in (0, 1, 2, 128, 130, 143, -15, 255, 300): self.assertIsNone(cs(rc))                                          # exits, Ctrl-C, SIGTERM: not crashes
+        sent = []
+        for call in (lambda: S["notify_crash"]("chrome", "SIGSEGV"), lambda: S["notify_ended"]("chrome", 1)):
+            with mock.patch("shutil.which", side_effect=lambda x: "/usr/bin/notify-send" if x == "notify-send" else None), \
+                 mock.patch("subprocess.run", return_value=types.SimpleNamespace(stdout="no actions")) as run:
+                call()
+            sent.append(run.call_args_list[-1].args[0])
+        crash, ended = sent
+        self.assertIn("critical", crash); self.assertTrue(any("chrome crashed (segmentation fault, SIGSEGV)" in x for x in crash))
+        self.assertIn("normal", ended); self.assertTrue(any("chrome stopped with an error (exit code 1)" in x for x in ended))
+
     def test_failure_notification_without_actions_is_a_plain_popup(self):
         S = self.S
         with mock.patch("shutil.which", return_value=None), mock.patch("subprocess.run") as run:
@@ -2353,6 +2368,16 @@ class Gui(unittest.TestCase):
         self.assertEqual(pa(["firefox"]), ("firefox", None))
         self.assertEqual(pa(["--log"]), (False, ""))                  # a notification click: the log of all programs...
         self.assertEqual(pa(["--log", "firefox"]), (False, "firefox"))   # ...or of one, handed to the window that is already open
+
+    def test_a_silent_crash_hints_at_user_namespaces_only_while_they_are_off(self):
+        crash = self.run_log(code=139)                                # a core dump and nothing printed: only the exit line
+        self.assertIn(("userns", True), self.hint_keys(crash, userns=False, x11=True))
+        self.assertEqual(self.hint_keys(crash, userns=True, x11=True), [])             # on already: not the cause, nothing to suggest
+        self.assertIn(("userns", True), self.hint_keys(self.run_log(code=134), userns=False))
+        self.assertEqual(self.hint_keys(crash, userns=False, x11=False)[0], ("userns", True))      # before the X11 guess
+        self.assertEqual(self.hint_keys(self.run_log(code=1), userns=False, x11=True), [])         # an ordinary error is not a crash
+        marked = [self.START, "[2026-11-11 20:00:05] [app] EXIT code=139 (SIGSEGV)"]                 # the line run() writes now
+        self.assertIn(("userns", True), self.hint_keys(marked, userns=False, x11=True))
 
     def test_log_lines_are_split_and_classified_for_color(self):
         parts, ts = self.G["log_line_parts"], "[2026-11-11 20:39:24] "

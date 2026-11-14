@@ -115,6 +115,35 @@ def notify_click(plain, clicked, label, gui_args, urgency="critical"):
         os._exit(0)
 
 
+# Signals that mean the program itself crashed (nobody stopped it), and how a notification says it.
+CRASH_SIGNALS = {"SIGSEGV": "segmentation fault", "SIGABRT": "aborted", "SIGBUS": "bus error", "SIGILL": "illegal instruction",
+                 "SIGFPE": "arithmetic error", "SIGTRAP": "trap", "SIGSYS": "bad system call"}
+STOP_CODES = (129, 130, 143)    # shell exit codes of SIGHUP, SIGINT, SIGTERM: someone stopped it, nothing went wrong
+
+
+def crash_signal(rc):
+    """The name of the crash signal (SIGSEGV, SIGABRT, ...) that killed the program, or None. RC is the wait status of what
+    sbx started: negative when a signal killed it directly, 128 + the signal when bwrap reports it for the program inside."""
+    sig = -rc if rc < 0 else rc - 128 if rc > 128 else 0
+    try: name = signal.Signals(sig).name
+    except ValueError: return None
+    return name if name in CRASH_SIGNALS else None
+
+
+def notify_crash(name, sig):
+    """A critical notification that the program crashed (killed by SIG), however long it had been running. Where
+    notify-send can do actions, clicking it opens sbx-gui on this program's log."""
+    what = f"crashed ({CRASH_SIGNALS[sig]}, {sig})"
+    notify_click(f"{name} {what}. See the log in sbx-gui.", f"{name} {what}. Click to open the log.", "Open log", ["--log", name])
+
+
+def notify_ended(name, code):
+    """A normal-urgency notification that a program started without a terminal (app menu, file manager) ended with an
+    error after running for a while. Where it can, clicking it opens the log."""
+    what = f"stopped with an error (exit code {code})"
+    notify_click(f"{name} {what}. See the log in sbx-gui.", f"{name} {what}. Click to open the log.", "Open log", ["--log", name], "normal")
+
+
 def notify_failure(name, reason=""):
     """A critical notification that the program stopped right after starting, with the REASON when there is one. Where
     notify-send can do actions, clicking it opens sbx-gui on this program's log."""
