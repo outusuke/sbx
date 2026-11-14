@@ -2473,6 +2473,19 @@ class Gui(unittest.TestCase):
         finally: G["subprocess"] = real
         win.nav.push.assert_called_once()
 
+    def test_a_hint_applied_on_the_log_page_rebuilds_the_program_page_below_it(self):
+        G = self.G
+        main, old, trouble = object(), object(), object()
+        stack = [main, old, trouble]
+        nav = mock.MagicMock()
+        nav.get_navigation_stack.return_value = types.SimpleNamespace(get_n_items=lambda: len(stack), get_item=lambda i: stack[i])
+        win = types.SimpleNamespace(nav=nav, program_pages={"app": old}, program_page=mock.MagicMock(return_value="new"))
+        G["Win"].refresh_program_page(win, "app")
+        nav.replace.assert_called_once_with([main, "new", trouble])               # only that page is swapped; the log page stays on top
+        nav.replace.reset_mock(); win.program_pages["app"] = object()             # a page that is not in the stack (opened from a notification)
+        G["Win"].refresh_program_page(win, "app")
+        nav.replace.assert_not_called()
+
     def test_startup_arguments_say_which_page_a_second_start_shows(self):
         pa = self.G["parse_args"]
         self.assertEqual(pa([]), (False, None))

@@ -813,6 +813,7 @@ class Win(Adw.ApplicationWindow):
         self.nav = Adw.NavigationView()
         self.toasts.set_child(self.nav)
         self.set_content(self.toasts)
+        self.program_pages = {}                  # scope -> the program page last built for it (see refresh_program_page)
         self.main = self.main_page()
         self.nav.push(self.main)
         self.nav.connect("popped", lambda *_: self.fill_apps())
@@ -827,6 +828,20 @@ class Win(Adw.ApplicationWindow):
     def show_program(self, scope):
         self.nav.pop_to_page(self.main)
         self.open(scope)
+
+    def refresh_program_page(self, scope):
+        """Build SCOPE's program page again if it is in the page stack. A page reads the settings file once, when it is built, so a
+        setting changed from another page (a suggestion on the log page) would otherwise stay invisible there, with the old value
+        shown under the switch. The pages above it stay as they are. Nothing happens when the page is not open (a notification
+        click opens the log with no program page below it)."""
+        mine = self.program_pages.get(scope)
+        stack = self.nav.get_navigation_stack()
+        pages = [stack.get_item(i) for i in range(stack.get_n_items())]
+        if mine is None or mine not in pages: return
+        keep = list(CURRENT)
+        new = self.program_page(scope)                                            # registers itself in program_pages
+        CURRENT[:] = keep
+        self.nav.replace([new if p is mine else p for p in pages])
 
     def page(self, title, content, end=(), banner=None):
         view = Adw.ToolbarView()
@@ -919,6 +934,7 @@ class Win(Adw.ApplicationWindow):
                         try:
                             if key in HINT_LISTS: add_item(scope, key, want)
                             else: set_key(scope, key, want)
+                            self.refresh_program_page(scope)                  # the page below shows the new value when you go back
                             self.toasts.add_toast(Adw.Toast(title="Saved. It applies the next time the program starts."))
                         except OSError as e:
                             self.toasts.add_toast(Adw.Toast(title=f"Could not save: {e.strerror or e}"))
@@ -1208,7 +1224,9 @@ class Win(Adw.ApplicationWindow):
             rm = Adw.ActionRow(title="Remove from the list", subtitle="Deletes its settings and moves its private home to the Trash", activatable=True, use_markup=False)
             rm.connect("activated", lambda *_: self.ask(f"Remove {scope}?", body, "Remove", lambda: self.remove_program(scope)))
             xg.add(rm); page.add(xg)
-        return self.page("Default settings" if scope is None else scope, page, banner=banner)
+        pg = self.page("Default settings" if scope is None else scope, page, banner=banner)
+        self.program_pages[scope] = pg
+        return pg
 
     def source_group(self, scope):
         """Where the program comes from, as sbx recorded it when it first ran (None when it never ran through sbx)."""
