@@ -30,6 +30,15 @@ def build(prog, args, live=False, o=None):
         check_origin(name, real, o.get("rebind", False))
         if renamed: took_over(renamed[0], name, real, renamed[1])
     cfg, src = effective(name, o)
+    if cwd is None and cfg["folder"]:                         # folder=1: start in the folder the program file sits in, like --here from there
+        cwd, why = own_folder(real)
+        if cwd is None and live:
+            warn(f"folder=1: not shared, {name} starts in its private home. {why}. Put the program in a folder of its own (a subfolder, e.g. ~/Games/{name}/) and run it from there.")
+    elif cwd is None and src["folder"] == "default":          # folder not set by you anywhere: a program in a folder named after it gets that folder
+        d, _ = own_folder(real)
+        if d and folder_named_like(name, d):
+            cwd = d
+            if live: warn(f"{name} starts in {tilde(d)} and shares it read-write, because the folder is named after the program. Turn off with folder=0 (apps/{name}.conf, or sbx-gui).")
     ok = cfg["allow_sensitive"]
     rw = [p for p in [share_path(x, False, ok) for x in cfg["whitelist"]] + [share_path(x, True, ok) for x in o.get("whitelist", [])] if p]
     ro = [p for p in [share_path(x, False, ok) for x in cfg["read_only"]] + [share_path(x, True, ok) for x in o.get("read_only", [])] if p]

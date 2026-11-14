@@ -300,10 +300,24 @@ memory=2G
 .PP
 Switches take 0 or 1. Defaults: net=1, net_private=0, wayland=1, wayland_strict=0, x11=0, gpu=1, gpu_render_only=0, sound=1, portals=0, private=0,
 hostname=0, privacy=0, userns=1, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
-allow_sensitive=0, compat=0, tray=0, and the extra portals portal_screenshot, portal_screencast, portal_location,
+allow_sensitive=0, compat=0, tray=0, folder=0, and the extra portals portal_screenshot, portal_screencast, portal_location,
 portal_shortcuts, portal_wallpaper, portal_launcher, portal_remote_desktop, portal_input_capture and
 portal_secret (all 0, and only used when portals=1). Anything else, such as net=maybe, is reported with its file
 and line number and ignored.
+.PP
+.B folder=1
+starts the program in the folder its file sits in and shares that folder read\-write, like
+.B \-\-here
+run from there, but kept in the settings file (and a switch in sbx\-gui). It is for programs that read or create files in
+the folder they start in. Only a folder of its own works: a program in your home, Downloads, Desktop, Documents or another
+general folder, in a hidden folder, or outside your home and /tmp, starts in its private home as before and sbx warns why.
+Put such a program in a subfolder. An explicit
+.B \-\-here
+wins over it.
+.PP
+If folder is not set anywhere, a program whose folder name starts with the program's name (ignoring case and punctuation,
+e.g. G\-Diffuser\-v1.2.3\-linux\-x64 for G\-Diffuser) gets folder=1 automatically, with the same limits, and sbx says so
+on start. folder=0 turns that off.
 .PP
 Lists that add up across the two files: whitelist, read_only, env, setenv, allow_syscall. Limits: memory, tasks,
 cpu; an empty value in a program's file cancels the default's. Command\-line flags beat the files.
@@ -321,9 +335,12 @@ After
 .B sbx desktop \-\-install\-opener
 a program file can be started from the file manager with Open With, Run in sbx, or from a shell with
 .BR "sbx open FILE" .
-A program with no settings file of its own starts with these defaults: its own folder, read\-write, and it starts
-there (generic folders such as your home, Downloads, Desktop and Documents, and hidden folders, are never shared
-this way); game controllers (/dev/input); and the usual network, GPU, sound and Wayland. It runs even without the
+A program with no settings file of its own starts with these defaults: game controllers (/dev/input) and the usual
+network, GPU, sound and Wayland. Its own folder is not shared, so it starts in its private home. A program that works on
+files next to itself fails with a file not found; sbx then says to turn on
+.B folder=1
+(a switch in sbx\-gui), which shares the folder the file sits in and starts there. That works only from a folder of its
+own, never your home, Downloads, Desktop, Documents or a hidden folder. It runs even without the
 execute bit if it is a dynamically linked ELF program: the bit is set only while it runs and then put back. If a
 settings file exists for that name, it is used exactly as written and none of these defaults apply.
 .PP

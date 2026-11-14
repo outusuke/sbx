@@ -473,7 +473,8 @@ class Win(Adw.ApplicationWindow):
             busy[0] = True
             row.set_active(sc[key] if own else dsc.get(key, default))
             busy[0] = False
-            row.set_subtitle(sub)                                  # an overridden switch shows the undo button; no note on the rest
+            prob = folder_problem(scope) if key == "folder" and scope is not None and row.get_active() else None
+            row.set_subtitle(sub + (f"\n⚠ {prob}" if prob else ""))      # an overridden switch shows the undo button; a folder that can't be shared says why
             undo.set_visible(scope is not None and own)
             undo.set_tooltip_text("Back to the default: " + ("on" if dsc.get(key, default) else "off"))
             req = needs(key)                                       # e.g. the extra portals do nothing until portals itself is on

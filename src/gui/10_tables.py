@@ -36,6 +36,8 @@ GROUPS = [
         ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access. Works only when “Notifications, links and file chooser” is on", False),
         ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access. Works only when “Notifications, links and file chooser” is on", False),
         ("tray", "Tray icon and media keys", "Lets the program show a tray icon and answer media keys. Needs xdg-dbus-proxy", False)]),
+    ("Files", [
+        ("folder", "Start in the program's own folder", "For programs that read or create files in the folder they start in. The folder the program file sits in is shared read-write and the program starts there. Put the program in a folder of its own, or a subfolder: your home, Downloads, Desktop, Documents and hidden folders are never shared. On by itself when the folder is named after the program; switch it off here", False)]),
     ("Privacy and safety", [
         ("private", "Private home erased on exit", "Nothing the program saves in its home is kept", False),
         ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),
@@ -50,7 +52,7 @@ SHORT = {"net": "network", "net_private": "this computer private", "wayland": "W
          "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
          "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",
          "tray": "tray icon", "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
-         "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets"}
+         "folder": "own folder", "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
 SOURCE_RANK = {"System": 0, "Downloaded": 2}   # same order as `sbx list --all`: of the programs only run from the terminal, System first, Downloaded last
@@ -90,10 +92,10 @@ LOG_HINTS = [
      "setenv", "ICED_BACKEND=tiny-skia", "If that does not help: draw on the processor (a guess)",
      "The program draws with iced, which can skip the graphics card entirely. Slower, but it needs nothing from the card.", {}),
     # A Rust panic on a file that is not there: sbx starts a program in its private home, so files it expects in the folder it was
-    # started from are missing. --here is a command-line option only (it depends on where you start), so there is no button.
-    (r"panicked at [^\n]*\n[^\n]*kind: NotFound",
-     None, None, "Start it from its own folder with --here (a guess)",
-     "The program looked for a file and it was not there. A program starts in its private home, so files next to it are missed. In a terminal, go to the program's folder and run: sbx --here ./NAME", {}),
+    # started from are missing. "folder" starts it in the folder its file sits in (never Downloads or the home folder).
+    (r"panicked at [^\n]*\n[^\n]*kind: NotFound|no such file or directory",
+     "folder", True, "Start it in the program's own folder (a guess)",
+     "The program looked for a file and it was not there. A program starts in its private home, so files next to it are missed. This starts it in the folder its file sits in, which only works from a folder of its own (a subfolder): your home, Downloads and hidden folders are never shared. In a terminal, sbx --here ./NAME starts it in the folder you are in.", {}),
     # A silent crash (segfault, abort, trap) while user namespaces are off: Chrome, Chromium and Electron die like this when they
     # cannot make their own sandbox, often with only a core dump and no message. Shown only while "userns" is off.
     (r"\] EXIT code=(13[2-6]|139|159)\b",

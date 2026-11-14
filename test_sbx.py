@@ -1069,7 +1069,16 @@ class Units(unittest.TestCase):
             calls.clear()
             with mock.patch.object(os, "chdir"), self.assertRaises(SystemExit): S["cmd_open"]([new])
             flags = calls[0][2:-1]
-            self.assertEqual(("--here" in flags, "--input" in flags), (extra, extra), "a settings file under the old name means no extras")
+            self.assertEqual("--input" in flags, extra, "a settings file under the old name means no extras")
+            self.assertNotIn("--here", flags, "the program's folder is never shared unless folder=1 says so")
+
+    def test_a_missing_file_failure_points_at_the_folder_setting(self):
+        S = self.S
+        for text in ("thread 'main' panicked at src/lang.rs:10:89:\ncalled `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: \"No such file or directory\" }",
+                     "FileNotFoundError: [Errno 2] No such file or directory: 'x'"):
+            self.assertIn("folder=1", S["missing_file_hint"](text), text)
+            self.assertIn("not Downloads", S["missing_file_hint"](text))
+        self.assertEqual(S["missing_file_hint"]("segmentation fault"), "")
 
     def test_rebind_is_documented(self):
         with open(f"{HERE}/sbx.1") as f: man = f.read()
@@ -1460,6 +1469,90 @@ class Units(unittest.TestCase):
                         f"{h}/.local/bin/game", f"{h}/.cache/x/game", "/usr/bin/game", "/tmp/game", "/opt/x/game"):
                 self.assertIsNone(of(bad), bad)
             self.assertEqual(of("/tmp/x/game"), "/tmp/x")
+
+    def start_in(self, rel, opts, conf=None):
+        """build() live for an executable at HOME/REL; returns (the --chdir folder, the bound paths, what was warned)."""
+        S, h = self.S, self.home
+        prog = self.write(rel, "#!/bin/sh\n"); os.chmod(prog, 0o755)
+        if conf: self.write(f".config/sbx/apps/{os.path.basename(rel)}.conf", conf)
+        os.makedirs(f"{self.tmp}/run", exist_ok=True)
+        S["runtime_dir"] = lambda: f"{self.tmp}/run"
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": f"{h}/.config", "WAYLAND_DISPLAY": "", "DISPLAY": ""}):
+            _, cmd, st = S["build"](prog, [], True, opts)
+        for f in st["keep"]: f.close()
+        for fd in st["fds"]:
+            try: os.close(fd)
+            except OSError: pass
+        binds = [cmd[i + 1] for i in range(len(cmd) - 2) if cmd[i] == "--bind"]
+        return cmd[cmd.index("--chdir") + 1], binds, self.warned
+
+    def test_folder_starts_the_program_in_its_own_folder_and_shares_it(self):
+        h = self.home
+        self.assertEqual(self.start_in("Games/Crash/game", {})[0], h, "off by default: the private home")
+        cwd, binds, warned = self.start_in("Games/Crash2/game", {"folder": True})
+        self.assertEqual(cwd, f"{h}/Games/Crash2"); self.assertIn(f"{h}/Games/Crash2", binds)
+        self.assertFalse([w for w in warned if "folder=1" in w], warned)
+
+    def test_folder_from_the_settings_file_survives_other_settings(self):
+        h = self.home
+        cwd, binds, _ = self.start_in("Games/Crash3/game", {}, "net=0\nfolder=1\nsound=0\n")
+        self.assertEqual(cwd, f"{h}/Games/Crash3"); self.assertIn(f"{h}/Games/Crash3", binds)
+
+    def test_folder_refuses_downloads_and_the_home_folder_and_says_why(self):
+        h = self.home
+        for rel in ("game", "Downloads/game", "Desktop/game", ".local/bin/game"):
+            self.warned.clear()
+            cwd, binds, warned = self.start_in(rel, {"folder": True})
+            self.assertEqual(cwd, h, rel)
+            self.assertNotIn(os.path.dirname(f"{h}/{rel}"), binds, rel)
+            self.assertTrue([w for w in warned if "folder=1" in w and "folder of its own" in w], (rel, warned))
+
+    def test_a_folder_named_after_the_program_is_shared_by_default(self):
+        h = self.home
+        for folder in ("G-Diffuser", "G-Diffuser-v1.2.3-linux-x64", "gdiffuser_1.2"):
+            self.warned.clear()
+            cwd, binds, warned = self.start_in(f"Games/{folder}/G-Diffuser", {})
+            self.assertEqual(cwd, f"{h}/Games/{folder}", folder); self.assertIn(f"{h}/Games/{folder}", binds)
+            self.assertTrue([w for w in warned if "folder=0" in w], (folder, warned))
+
+    def test_a_folder_not_named_after_the_program_is_not_shared_by_default(self):
+        h = self.home
+        cwd, binds, warned = self.start_in("Games/Stuff/G-Diffuser", {})
+        self.assertEqual(cwd, h); self.assertNotIn(f"{h}/Games/Stuff", binds)
+        self.assertFalse([w for w in warned if "folder=0" in w], warned)
+
+    def test_the_named_folder_default_never_reaches_downloads_or_home(self):
+        h = self.home
+        for rel in ("G-Diffuser", "Downloads/G-Diffuser"):
+            cwd, binds, _ = self.start_in(rel, {})
+            self.assertEqual(cwd, h, rel)
+
+    def test_folder_0_turns_the_named_folder_default_off(self):
+        h = self.home
+        cwd, binds, warned = self.start_in("Games/G-Diffuser/G-Diffuser", {}, "folder=0\n")
+        self.assertEqual(cwd, h); self.assertNotIn(f"{h}/Games/G-Diffuser", binds)
+        self.assertFalse([w for w in warned if "folder=0" in w], warned)
+
+    def test_folder_named_like(self):
+        f = self.S["folder_named_like"]
+        for n, d, ok in (("G-Diffuser", "/x/G-Diffuser-v1.2.3-linux-x64", True), ("G-Diffuser", "/x/gdiffuser", True),
+                         ("G-Diffuser", "/x/Stuff", False), ("", "/x/Stuff", False), ("game", "/x/linux-x64-game", False)):
+            self.assertEqual(f(n, d), ok, (n, d))
+
+    def test_the_here_flag_still_wins_over_folder(self):
+        h = self.home
+        os.makedirs(f"{h}/Work/proj")
+        self.S["share_dir"] = lambda d: f"{h}/Work/proj"
+        cwd, binds, _ = self.start_in("Games/Crash4/game", {"folder": True, "here": True})
+        self.assertEqual(cwd, f"{h}/Work/proj")
+
+    def test_own_folder_gives_the_reason(self):
+        S, h = self.S, self.home
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": f"{h}/.config"}):
+            self.assertEqual(S["own_folder"](f"{h}/Games/x/game"), (f"{h}/Games/x", None))
+            for bad, word in ((f"{h}/Downloads/game", "Downloads"), (f"{h}/.cache/x/game", "hidden"), ("/usr/bin/game", "not inside")):
+                d, why = S["own_folder"](bad)
+                self.assertIsNone(d); self.assertIn(word, why)
 
     def test_man_page_documents_the_desktop_options(self):
         with open(f"{HERE}/sbx.1") as f: man = f.read().replace("\\-", "-")
@@ -2465,14 +2558,15 @@ class Gui(unittest.TestCase):
         with open(f"{G['APPS']}/app.conf") as f: self.assertEqual(f.read(), "net=0\nsetenv=A=1\nsetenv=ICED_BACKEND=tiny-skia\n")
         self.assertEqual([w for _k, w, *_ in G["log_hints"](self.run_log(*self.WGPU, code=101), {}, G["effective_lists"]("app"))], ["WGPU_BACKEND=gl"])      # that one is gone, the other stays
 
-    def test_a_panic_on_a_missing_file_gives_advice_without_a_button(self):
+    def test_a_panic_on_a_missing_file_offers_to_start_in_the_programs_own_folder(self):
         G = self.G
         got = G["log_hints"](self.run_log(*self.NOTFOUND, code=101), {}, {})
-        self.assertEqual([(k, w) for k, w, *_ in got], [(None, None)])
-        self.assertIn("--here", got[0][3])
+        self.assertEqual([(k, w) for k, w, *_ in got], [("folder", True)])
+        self.assertIn("--here", got[0][3]); self.assertIn("Downloads", got[0][3])
+        self.assertEqual(G["log_hints"](self.run_log(*self.NOTFOUND, code=101), {"folder": True}, {}), [], "already on: nothing to suggest")
         self.assertEqual(G["log_hints"](self.run_log("thread 'main' panicked at x.rs:1:1:", "index out of bounds", code=101), {}, {}), [])
         both = G["log_hints"](self.run_log(*self.NOTFOUND, *self.WGPU, code=101), {}, {})                # both can show, each once
-        self.assertEqual(sorted(str(k) for k, *_ in both), ["None", "setenv", "setenv"])
+        self.assertEqual(sorted(str(k) for k, *_ in both), ["folder", "setenv", "setenv"])
 
     def test_every_hint_names_a_real_switch(self):
         G = self.G
@@ -2483,6 +2577,19 @@ class Gui(unittest.TestCase):
             else: self.assertIn(key, self.S["SCALARS"]); self.assertIsInstance(want, bool)
             self.assertTrue(title and why)
             for k in needs: self.assertIn(k, self.S["SCALARS"])
+
+    def test_the_folder_switch_has_wording_and_warns_when_the_folder_cannot_be_shared(self):
+        G = self.G
+        self.assertIn("folder", G["SWITCHES"]); self.assertIn("folder", G["SHORT"]); self.assertIn("folder", self.S["SCALARS"])
+        h = G["HOME"]
+        os.makedirs(f"{h}/Games/Crash", exist_ok=True); os.makedirs(f"{h}/Downloads", exist_ok=True)
+        for rel, bad in (("Games/Crash/game", False), ("Downloads/game", True), ("game", True)):
+            p = f"{h}/{rel}"
+            with open(p, "w") as f: f.write("x")
+            os.makedirs(f"{G['CONF']}/origins", exist_ok=True)
+            with open(f"{G['CONF']}/origins/game", "w") as f: f.write(f"{p}\n")
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": f"{h}/.config"}):
+                self.assertEqual(bool(G["folder_problem"]("game")), bad, rel)
 
     def test_effective_switches_layers_defaults_then_default_conf_then_the_program(self):
         G = self.G

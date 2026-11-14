@@ -80,3 +80,42 @@ def hint_args(args, here, shared):
         warn(f"'{v}' exists here, but the program won't find it ({why}). Use --here, or --whitelist=PATH / --read-only=PATH.")
         said += 1
         if said == 3: break
+
+
+def generic_folders():
+    """Folders that hold all sorts of things (Downloads, Desktop...), never shared as a program's own folder."""
+    out = {HOME}
+    for n in ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "Public", "Templates"): out.add(f"{HOME}/{n}")
+    try:
+        with open(f"{os.environ.get('XDG_CONFIG_HOME') or HOME + '/.config'}/user-dirs.dirs") as f:       # translated names
+            for m in re.finditer(r'^XDG_\w+_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M): out.add(f"{HOME}/{m[1]}".rstrip("/"))
+    except OSError:
+        pass
+    return out
+
+
+def own_folder(real):
+    """(folder, why not): the folder a program file sits in, which a program may be started in (its game data, saves, files it
+    makes in the current folder), or (None, reason) when that folder is your home, a hidden folder, a general-purpose one
+    like Downloads, or not one sbx shares."""
+    d = os.path.dirname(real)
+    if d in generic_folders(): return None, f"{tilde(d)} holds all sorts of things (your home, Downloads, Desktop...)"
+    if d.startswith(HOME + "/"):
+        if d[len(HOME) + 1:].split("/")[0].startswith("."): return None, f"{tilde(d)} is a hidden folder"
+        return d, None
+    if d.startswith("/tmp/"): return d, None
+    return None, f"{d} is not inside your home or /tmp"
+
+
+def folder_named_like(name, folder):
+    """True if the folder's name starts with the program's name, ignoring case and punctuation: G-Diffuser-v1.2.3-linux-x64 is
+    G-Diffuser's. A convenience for the folder=auto default, not a security check; own_folder() decides what may be shared at all."""
+    norm = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
+    n = norm(name)
+    return bool(n) and norm(os.path.basename(folder)).startswith(n)
+
+
+def opener_folder(real):
+    """The folder a program brings along when you open it with sbx (its game data, saves...): the folder it sits in,
+    unless that is your home, a hidden folder or a general-purpose one like Downloads. None then."""
+    return own_folder(real)[0]

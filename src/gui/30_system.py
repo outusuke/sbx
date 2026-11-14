@@ -331,3 +331,22 @@ def load_schema():
     if missing: groups.append(("Other", [(k, k.replace("_", " ").capitalize(), "Setting from sbx", bool(sch["switches"][k])) for k in missing]))
     GROUPS = [(t, rows) for t, rows in groups if rows]
     SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
+
+
+def folder_problem(name):
+    """Why the switch "Start in the program's own folder" shares nothing for this program (its file sits in your home, Downloads or
+    another general folder, or in a hidden folder), or None. Same rule as own_folder() in sbx."""
+    rec = read_origin(name)
+    path = os.path.realpath(rec[0]) if rec and os.path.isfile(rec[0]) else (os.path.realpath(shutil.which(name)) if shutil.which(name) else None)
+    if not path: return None
+    d = os.path.dirname(path)
+    generic = {HOME} | {f"{HOME}/{n}" for n in ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "Public", "Templates")}
+    try:
+        with open(f"{os.environ.get('XDG_CONFIG_HOME') or HOME + '/.config'}/user-dirs.dirs") as f:
+            for m in re.finditer(r'^XDG_\w+_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M): generic.add(f"{HOME}/{m[1]}".rstrip("/"))
+    except OSError:
+        pass
+    if d in generic: return f"{tilde(d)} holds all sorts of things, so it is not shared. Move the program into a folder of its own."
+    if d.startswith(HOME + "/") and d[len(HOME) + 1:].split("/")[0].startswith("."): return f"{tilde(d)} is a hidden folder, so it is not shared."
+    if not (d.startswith(HOME + "/") or d.startswith("/tmp/")): return f"{d} is not inside your home or /tmp, so it is not shared."
+    return None

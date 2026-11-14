@@ -393,28 +393,6 @@ def cmd_desktop(a):
 
 
 # ---------------------------------------------------------------- opening downloaded programs
-def generic_folders():
-    """Folders that hold all sorts of things (Downloads, Desktop...), never shared as a program's own folder."""
-    out = {HOME}
-    for n in ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "Public", "Templates"): out.add(f"{HOME}/{n}")
-    try:
-        with open(f"{os.environ.get('XDG_CONFIG_HOME') or HOME + '/.config'}/user-dirs.dirs") as f:       # translated names
-            for m in re.finditer(r'^XDG_\w+_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M): out.add(f"{HOME}/{m[1]}".rstrip("/"))
-    except OSError:
-        pass
-    return out
-
-
-def opener_folder(real):
-    """The folder a program brings along when you open it with sbx (its game data, saves...): the folder it sits in,
-    unless that is your home, a hidden folder or a general-purpose one like Downloads. None then."""
-    d = os.path.dirname(real)
-    if d in generic_folders(): return None
-    if d.startswith(HOME + "/"):
-        return None if d[len(HOME) + 1:].split("/")[0].startswith(".") else d
-    return d if d.startswith("/tmp/") else None
-
-
 def notify(title, body=""):
     """A desktop notification (there is no terminal to print to when started from a file manager). Also printed."""
     warn(f"{title}: {body}" if body else title)
@@ -434,9 +412,21 @@ def failure_reason(text, rc):
     return " ".join(segs[-3:]) or f"exit code {exit_code(rc)}"
 
 
+MISSING_FILE = re.compile(r"panicked at [^\n]*\n[^\n]*kind: NotFound|FileNotFoundError|no such file or directory", re.I)
+
+
+def missing_file_hint(text):
+    """One line of advice when a failed run's output says a file was not found, else ''. A program starts in its private home, so
+    files it expects in the folder it was started from are missing; folder=1 starts it in the folder its file sits in."""
+    if not MISSING_FILE.search(text): return ""
+    return ("It looked for a file that was not there. If it works on files in its own folder, turn on folder=1 for it "
+            "(sbx-gui: Start in the program's own folder). That only works from a folder of its own, not Downloads or your home")
+
+
 def cmd_open(a):
-    """sbx open FILE: what 'Open with' calls. A program with no settings of its own gets: its folder (read-write, for saves
-    and game data), game controllers, and the usual defaults. A program with a settings file gets exactly that file."""
+    """sbx open FILE: what 'Open with' calls. A program with no settings of its own gets game controllers and the usual defaults.
+    Its own folder is not shared unless folder=1 says so; a program that dies on a missing file is told so (see missing_file_hint).
+    A program with a settings file gets exactly that file."""
     if len(a) != 1 or a[0].startswith("-"): die("usage: sbx open FILE")
     f = os.path.abspath(a[0])
     name = clean(os.path.basename(f))
@@ -448,9 +438,6 @@ def cmd_open(a):
         notify(f"Can't run {name}", "it is not executable and not a dynamically linked program; run chmod +x on it"); sys.exit(1)
     if not os.path.exists(f"{CONF}/apps/{name}.conf"):
         flags.append("--input")
-        folder = opener_folder(os.path.realpath(f))
-        if folder:
-            os.chdir(folder); flags.append("--here")
     me = os.path.realpath(sys.argv[0]) if os.path.isfile(sys.argv[0]) else shutil.which("sbx")
     if not me: notify("sbx not found"); sys.exit(1)
     err, t0 = tempfile.TemporaryFile(), time.monotonic()
@@ -462,8 +449,10 @@ def cmd_open(a):
     if sig and not read_pending(name): notify_crash(name, sig)                 # a crash says so, however soon or late it came
     elif rc != 0 and time.monotonic() - t0 < 15 and not read_pending(name):    # it never really started (a decision waiting has its own notification)
         why = failure_reason(text, rc)
+        tip = missing_file_hint(text)
         warn(f"{name} didn't start: {why}")
-        notify_failure(name, why)                                  # clicking it opens the log, like a start from the menu
+        if tip: warn(tip)
+        notify_failure(name, why + (f" {tip}." if tip else ""))                                  # clicking it opens the log, like a start from the menu
     elif rc != 0 and exit_code(rc) not in STOP_CODES and not read_pending(name): notify_ended(name, exit_code(rc))      # not when you stopped it
     sys.exit(exit_code(rc))
 
