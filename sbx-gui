@@ -70,6 +70,8 @@ SHORT = {"net": "network", "net_private": "this computer private", "wayland": "W
          "tray": "tray icon", "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
          "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
+SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
+SOURCE_RANK = {"System": 0, "Downloaded": 2}   # same order as `sbx list --all`: of the programs only run from the terminal, System first, Downloaded last
 LISTS = ("whitelist", "read_only")
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
@@ -178,11 +180,11 @@ def reset_all_settings():
 
 def forget_program(name):
     """Take a program off the list: its private home goes to the Trash first (restorable; if that fails it raises GLib.Error and nothing
-    else is touched), then its settings file, machine-id and origin note."""
+    else is touched), then its settings file, machine-id, origin note and any decision waiting on it."""
     home = f"{HOMES}/{name}"
     if os.path.isdir(home) and not os.path.islink(home): Gio.File.new_for_path(home).trash(None)
     reset_settings(name)
-    for p in (f"{CONF}/ids/{name}", f"{CONF}/origins/{name}"):
+    for p in (f"{CONF}/ids/{name}", f"{CONF}/origins/{name}", f"{CONF}/pending/{name}"):
         try: os.unlink(p)
         except OSError: pass
 
@@ -513,11 +515,16 @@ def home_is_small(name, limit=UNUSED_BYTES):
     return not unreadable
 
 
-def covered_programs():
-    """Names with an sbx link in ~/.local/bin or an sbx launcher in ~/.local/share/applications: somebody set those up on purpose."""
-    names, d = set(), f"{HOME}/.local/bin"
-    try: names.update(program_name(n) for n in os.listdir(d) if os.path.islink(f"{d}/{n}") and os.path.basename(os.readlink(f"{d}/{n}")) == "sbx")
-    except OSError: pass
+def linked_programs():
+    """Names with an sbx link in ~/.local/bin."""
+    d = f"{HOME}/.local/bin"
+    try: return {program_name(n) for n in os.listdir(d) if os.path.islink(f"{d}/{n}") and os.path.basename(os.readlink(f"{d}/{n}")) == "sbx"}
+    except OSError: return set()
+
+
+def launcher_programs():
+    """Names an sbx launcher in ~/.local/share/applications starts or is called after."""
+    names = set()
     for p in glob.glob(f"{HOME}/.local/share/applications/*.desktop"):
         try:
             with open(p, errors="replace") as f: text = f.read()
@@ -528,15 +535,120 @@ def covered_programs():
     return names
 
 
+def covered_programs():
+    """Names with an sbx link in ~/.local/bin or an sbx launcher in ~/.local/share/applications: somebody set those up on purpose."""
+    return linked_programs() | launcher_programs()
+
+
+# ---- where a program comes from (origins/NAME, written by sbx; the same reading rules as sbx's read_origin) ----
+ORIGIN_META = re.compile(r"(\d+) (\d+) ([0-9a-f]{64})")
+
+
+def read_origin(name):
+    """(path, (size, mtime_ns, sha256) or None, moved-from path or None) from origins/NAME, or None when nothing is recorded."""
+    try:
+        with open(f"{CONF}/origins/{name}", errors="replace") as f: lines = f.read().split("\n")
+    except OSError:
+        return None
+    path = lines[0].strip()
+    if not path: return None
+    m = ORIGIN_META.fullmatch(lines[1].strip()) if len(lines) > 1 else None
+    moved = lines[2][5:].strip() if len(lines) > 2 and lines[2].startswith("from ") else None
+    return path, ((int(m[1]), int(m[2]), m[3]) if m else None), moved or None
+
+
+def downloads_dir():
+    """Your Downloads folder: XDG_DOWNLOAD_DIR in user-dirs.dirs (translated names), else ~/Downloads."""
+    try:
+        with open(f"{os.environ.get('XDG_CONFIG_HOME') or HOME + '/.config'}/user-dirs.dirs") as f:
+            m = re.search(r'^XDG_DOWNLOAD_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M)
+        if m and m[1]: return f"{HOME}/{m[1]}".rstrip("/")
+    except OSError:
+        pass
+    return f"{HOME}/Downloads"
+
+
+def source_kind(path):
+    """System (/usr, /opt, /snap...), Downloaded (inside your Downloads folder), Home (the rest of your home) or Other."""
+    if path.startswith(SYSTEM_PROGRAMS): return "System"
+    if path.startswith(downloads_dir() + "/"): return "Downloaded"
+    return "Home" if path.startswith(HOME + "/") else "Other"
+
+
+def origin_source(name):
+    """Where NAME's program comes from, as recorded: {kind, path, missing, moved, moved_exists}, or None when nothing is recorded."""
+    rec = read_origin(name)
+    if not rec: return None
+    path, _meta, moved = rec
+    return {"kind": source_kind(path), "path": path, "missing": not os.path.isfile(path), "moved": moved,
+            "moved_exists": bool(moved and os.path.isfile(moved))}
+
+
+def source_parts(s):
+    """The pieces of a source line, as shown in a list row: 'System · /usr/bin', 'Downloaded · ~/Downloads/Crash', 'Missing: ~/old/path',
+    then 'moved from ...' (or 'copied from ...' while the original is still there)."""
+    parts = [f"Missing: {tilde(s['path'])}" if s["missing"] else f"System · {os.path.dirname(s['path'])}" if s["kind"] == "System"
+             else f"{s['kind']} · {tilde(s['path'])}"]
+    if s["moved"]: parts.append(f"{'copied' if s['moved_exists'] else 'moved'} from {tilde(s['moved'])}")
+    return parts
+
+
+def source_tags(name, linked=None, menu=None):
+    """'link' and 'menu' for the ways a program is started through sbx besides the window (the two sets may be passed in, to look them up once for a whole list)."""
+    linked = linked_programs() if linked is None else linked
+    menu = launcher_programs() if menu is None else menu
+    return [t for t, names in (("link", linked), ("menu", menu)) if name in names]
+
+
+# ---- decisions waiting for you (pending/NAME, written by sbx; same rules as sbx's read_pending and pending_stale) ----
+def read_pending(name):
+    """{old, new, rule, reason} from pending/NAME, or None."""
+    try:
+        with open(f"{CONF}/pending/{name}", errors="replace") as f: text = f.read()
+    except OSError:
+        return None
+    d = {}
+    for line in text.split("\n"):
+        k, eq, v = line.partition("=")
+        if eq and k in ("old", "new", "rule", "reason"): d[k] = v
+    return d if d.get("old") and d.get("new") and d.get("rule") in ("c", "d") else None
+
+
+def pending_stale(name, p):
+    """Why the decision P no longer applies, or None while it does."""
+    rec = read_origin(name)
+    if not rec or rec[0] != p["old"]: return "what the name belongs to has changed since"
+    if not os.path.isfile(p["new"]): return f"{tilde(p['new'])} is gone"
+    if os.path.isfile(p["old"]) != (p["rule"] == "d"): return f"{tilde(p['old'])} is back" if p["rule"] == "c" else f"{tilde(p['old'])} is gone"
+    return None
+
+
+def pending_decisions():
+    """{name: decision} for every decision still waiting (one the situation has moved on from is left out)."""
+    try: names = sorted(os.listdir(f"{CONF}/pending"))
+    except OSError: return {}
+    return {n: p for n in names if NAME_RE.match(n) and (p := read_pending(n)) and not pending_stale(n, p)}
+
+
 def program_groups():
     """(the programs you set up, the ones only run from the terminal). Set up: a settings file, an sbx link or launcher, or running now.
-    The others are just a private home that a run created, as for `sbx curl ...` typed once."""
+    The others are just a private home that a run created, as for `sbx curl ...` typed once; System ones come first there, Downloaded last."""
     try: conf = {f[:-5] for f in os.listdir(APPS) if f.endswith(".conf")}
     except OSError: conf = set()
     chosen = conf | covered_programs()
     names = app_names()
     setup = [n for n in names if n in chosen or program_running(n)]
-    return setup, [n for n in names if n not in setup]
+    def rank(n):
+        s = origin_source(n)
+        return SOURCE_RANK.get(s["kind"], 1) if s else 1, n
+    return setup, sorted((n for n in names if n not in setup), key=rank)
+
+
+def row_subtitle(name, waiting=False, linked=None, menu=None):
+    """The second line of a program's row: running, waiting for a decision, where it comes from, how else it starts, then its settings."""
+    s = origin_source(name)
+    parts = (["Running now"] if program_running(name) else []) + (["Waiting for your decision"] if waiting else [])
+    return " · ".join(parts + (source_parts(s) if s else []) + source_tags(name, linked, menu) + [summary(name)])
 
 
 def unused_programs(others):
@@ -630,6 +742,8 @@ class Win(Adw.ApplicationWindow):
         menu.connect("notify::active", on_menu)
         mg.add(menu)
         page.add(mg)
+        self.pending_banner = Adw.Banner(title="", button_label="Review", revealed=False)       # filled in by fill_apps
+        self.pending_banner.connect("button-clicked", lambda *_: self.review_pending())
         self.apps_group = Adw.PreferencesGroup(title="Programs")
         self.app_rows = []
         self.others_open = False                 # is the terminal-only group open?
@@ -644,7 +758,7 @@ class Win(Adw.ApplicationWindow):
         add.connect("clicked", lambda *_: self.add_program())
         ts = Gtk.Button(icon_name="utilities-terminal-symbolic", tooltip_text="Troubleshooting")
         ts.connect("clicked", lambda *_: self.open_trouble(None))
-        return self.page("sbx", page, [add, ts])
+        return self.page("sbx", page, [add, ts], banner=self.pending_banner)
 
     def open_trouble(self, scope):
         """Health checks (sbx doctor) and the recent log, for one program or all."""
@@ -725,8 +839,8 @@ class Win(Adw.ApplicationWindow):
         refresh()
         self.nav.push(self.page("Troubleshooting", page, [rb, cb]))
 
-    def app_row(self, n):
-        r = Adw.ActionRow(title=n, subtitle=("Running now · " if program_running(n) else "") + summary(n), activatable=True, use_markup=False)
+    def app_row(self, n, waiting=False, linked=None, menu=None):
+        r = Adw.ActionRow(title=n, subtitle=row_subtitle(n, waiting, linked, menu), activatable=True, use_markup=False)
         play = Gtk.Button(icon_name="media-playback-start-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Run {n}")
         play.connect("clicked", lambda _b, n=n: self.run_program(n))
         r.add_suffix(play)
@@ -734,12 +848,22 @@ class Win(Adw.ApplicationWindow):
         r.connect("activated", lambda _r, n=n: self.open(n))
         return r
 
+    def review_pending(self):
+        """The banner's button: open the first program that waits for a decision (the decision itself is on its page)."""
+        names = sorted(pending_decisions())
+        if names: self.open(names[0])
+
     def fill_apps(self):
         for r in self.app_rows: self.apps_group.remove(r)
         self.app_rows.clear()
+        waiting = pending_decisions()
+        count = len(waiting)
+        self.pending_banner.set_title(f"{count} program{' is' if count == 1 else 's are'} waiting for your decision")
+        self.pending_banner.set_revealed(count > 0)
+        linked, menu = linked_programs(), launcher_programs()
         setup, others = program_groups()
         for n in setup:
-            r = self.app_row(n)
+            r = self.app_row(n, n in waiting, linked, menu)
             self.apps_group.add(r); self.app_rows.append(r)
         if others:
             ex = Adw.ExpanderRow(title=f"Only run from the terminal ({len(others)})", subtitle="No settings, link or app menu launcher yet", use_markup=False)
@@ -750,7 +874,7 @@ class Win(Adw.ApplicationWindow):
                 cl = Adw.ActionRow(title=f"Remove the {len(unused)} unused", subtitle="Almost no data. Their private homes are moved to the Trash", activatable=True, use_markup=False)
                 cl.connect("activated", lambda *_: self.ask_remove_unused())
                 ex.add_row(cl)
-            for n in others: ex.add_row(self.app_row(n))
+            for n in others: ex.add_row(self.app_row(n, n in waiting, linked, menu))
             self.apps_group.add(ex); self.app_rows.append(ex)
         if not self.app_rows:
             r = Adw.ActionRow(title="No programs yet", subtitle="Press + to add one. Programs you only run from the terminal are listed separately.")
@@ -810,6 +934,8 @@ class Win(Adw.ApplicationWindow):
         page_rows = []
         banner = None
         if scope is not None:
+            pg = self.pending_group(scope)                                            # a decision that blocks it comes before everything
+            if pg: page.add(pg)
             # what you came to do comes first: run it, see how, stop it
             banner = Adw.Banner(title="Running now. Changes apply the next time it starts.", revealed=program_running(scope))
             rg = Adw.PreferencesGroup()
@@ -841,6 +967,8 @@ class Win(Adw.ApplicationWindow):
             rg.add(run); rg.add(stop)
             refresh_run()
             page.add(rg)
+            srcg = self.source_group(scope)
+            if srcg: page.add(srcg)
         cg = Adw.PreferencesGroup(title="Summary" if scope is not None else "Every program starts with")
 
         def refresh_caps(*_):
@@ -910,6 +1038,56 @@ class Win(Adw.ApplicationWindow):
             rm.connect("activated", lambda *_: self.ask(f"Remove {scope}?", body, "Remove", lambda: self.remove_program(scope)))
             xg.add(rm); page.add(xg)
         return self.page("Default settings" if scope is None else scope, page, banner=banner)
+
+    def source_group(self, scope):
+        """Where the program comes from, as sbx recorded it when it first ran (None when it never ran through sbx)."""
+        s = origin_source(scope)
+        if not s: return None
+        parts = source_parts(s)
+        more = parts[1:] + source_tags(scope)
+        if s["missing"]: more.insert(0, "The recorded file is gone. If you moved it, start the program from its new place.")
+        g = Adw.PreferencesGroup(title="Where it comes from")
+        g.add(Adw.ActionRow(title=parts[0], subtitle=" · ".join(more), use_markup=False))
+        return g
+
+    def pending_group(self, scope):
+        """What to decide when a file showed up under this program's name that sbx can't tell apart from a different program
+        (see check_origin in sbx). Both buttons run `sbx rebind`. Where the original still exists (rule d) the warning is stronger
+        and accepting is destructive-styled and asked twice. None when nothing waits."""
+        p = pending_decisions().get(scope)
+        if not p: return None
+        other = p["rule"] == "d"
+        text = (f"The original is still at {tilde(p['old'])}. A different file now wants the name {scope} and would share its settings and private home. "
+                "Accept only if it really is the same program; for a different one start it with --name=OTHER in a terminal instead."
+                if other else
+                f"{scope} was first run from {tilde(p['old'])}, which is gone. Now it is started from {tilde(p['new'])}. "
+                "If that is the same program, accept it. Until you decide, sbx won't start it.")
+        g = Adw.PreferencesGroup(title="Waiting for your decision", description=GLib.markup_escape_text(text))
+        g.add(Adw.ActionRow(title=f"{tilde(p['old'])} → {tilde(p['new'])}", use_markup=False))
+        accept = Gtk.Button(label="Same program, accept", valign=Gtk.Align.CENTER, css_classes=["destructive-action" if other else "suggested-action"])
+        dismiss = Gtk.Button(label="Dismiss", valign=Gtk.Align.CENTER, css_classes=["flat"])
+        if other:
+            accept.connect("clicked", lambda *_: self.ask(f"Accept a different file as {scope}?",
+                                                          f"The original is still at {tilde(p['old'])}. {tilde(p['new'])} would take over the settings and private home of {scope}.",
+                                                          "Accept anyway", lambda: self.decide_pending(scope, True)))
+        else:
+            accept.connect("clicked", lambda *_: self.decide_pending(scope, True))
+        dismiss.connect("clicked", lambda *_: self.decide_pending(scope, False))
+        box = Gtk.Box(spacing=6)
+        box.append(dismiss); box.append(accept)
+        g.set_header_suffix(box)
+        return g
+
+    def decide_pending(self, name, accept):
+        """Same program, accept / Dismiss. sbx itself decides (sbx rebind), like the link and app menu switches do."""
+        try: r = subprocess.run([sbx_cmd(), "rebind"] + ([] if accept else ["--dismiss"]) + [name], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as e:
+            return self.alert("Couldn't run sbx", str(e))
+        self.nav.replace([self.main, self.program_page(name)])                   # either way the page shows how things stand now
+        self.fill_apps()
+        if r.returncode != 0:
+            return self.alert("Couldn't decide", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
+        self.toasts.add_toast(Adw.Toast(title=f"{name} is accepted. Start it again." if accept else f"Dismissed. sbx asks again the next time {name} starts from there."))
 
     def network_row(self, scope, page_rows):
         """The switches net and net_private as one choice: full access, internet only, or none."""

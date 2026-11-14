@@ -2,11 +2,12 @@
 # zsh completion for sbx. SPDX-License-Identifier: GPL-3.0-or-later
 # Install: put this file as _sbx in a folder on your $fpath, for example ~/.zfunc, then run: compinit
 _sbx_apps()  { local -a a; a=(${(f)"$(ls ~/.config/sbx/apps 2>/dev/null | sed 's/\.conf$//')"}); (( $#a )) && compadd -a a }
+_sbx_pending() { local -a a; a=(${(f)"$(ls ~/.config/sbx/pending 2>/dev/null)"}); (( $#a )) && compadd -a a }
 _sbx_homes() { local -a a; a=(${(f)"$(ls ~/.sbx-homes 2>/dev/null)"}); (( $#a )) && compadd -a a }
 
 _sbx() {
     local -a cmds opts
-    cmds=(preview show doctor clean reset link desktop open schema list stop)
+    cmds=(preview show doctor clean reset link desktop open schema list stop rebind)
     opts=(--net=none --net-private --private --here --no-wayland --wayland-strict --x11 --no-gpu --gpu-render-only --no-sound --portals --tray --hostname --privacy
           --no-userns --no-theme --camera --alsa --input --kvm --rocm --printing --ssh-agent --allow-sensitive --compat
           --ignore-config --rebind --portal-screenshot --portal-screencast --portal-location --portal-shortcuts
@@ -26,6 +27,7 @@ _sbx() {
             link) compadd -- --remove --desktop; _command_names -e; return ;;
             stop) (( CURRENT == i + 1 )) && _sbx_homes; return ;;
             list) compadd -- --all; return ;;
+            rebind) compadd -- --dismiss; _sbx_pending; return ;;
             doctor|schema) return ;;
             desktop) compadd -- --install-opener --remove-opener --install-menu --remove-menu --remove; return ;;
             *) _files; return ;;                          # the program's own arguments

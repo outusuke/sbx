@@ -17,6 +17,9 @@ sbx \- run a program in a bubblewrap sandbox
 .B sbx list
 [\fB\-\-all\fR]
 .br
+.B sbx rebind
+[\fB\-\-dismiss\fR] \fINAME\fR
+.br
 .B sbx stop
 \fINAME\fR
 .br
@@ -67,18 +70,24 @@ ended it).
 Print the bwrap command instead of running it.
 .TP
 .B sbx show [options] NAME
-Print the settings that apply to a program and which file or flag each one came from.
+Print the settings that apply to a program and which file or flag each one came from, where the program comes from, and a decision waiting about it.
 .TP
 .B sbx doctor
 Check bubblewrap, the helpers (xdg\-dbus\-proxy, notify\-send, systemd\-run), Wayland support and the
 settings files.
 .TP
 .B sbx list
-List the programs you set up (a settings file, an sbx link or launcher, or running now) and say which are running. Every
+List the programs you set up (a settings file, an sbx link or launcher, or running now) and say which are running, where each comes from (System, Downloaded, Home, link, menu, Missing, moved from) and whether a decision about it is waiting. Every
 .B sbx PROGRAM
 run leaves a private home behind, so a program you only ever started from the terminal is left out;
 .B \-\-all
-lists those too.
+lists those too, after the others, System programs first and Downloaded ones last.
+.TP
+.B sbx rebind NAME
+Accept the decision that is waiting for NAME: the file that now runs under that name is the same program as before, so the name belongs to it from now on, with the settings and private home it had. Errors when nothing is waiting, or when the situation has changed since (see
+.BR "MOVED PROGRAMS" ).
+.B sbx rebind \-\-dismiss NAME
+drops the decision and changes nothing else; sbx asks again the next time the program starts from there.
 .TP
 .B sbx stop NAME
 Ask a running program to stop (SIGTERM).
@@ -261,7 +270,8 @@ Use another private home, machine\-id and settings name than the program's.
 Ignore the settings files for this run.
 .TP
 .B \-\-rebind
-Accept that this file is the same program as the one that first used its name.
+Accept that this file is the same program as the one that first used its name, without asking. Only needed when sbx cannot tell by itself; see
+.BR "MOVED PROGRAMS" .
 .PP
 Shared paths must be inside your home (not the home itself), on /mnt, /media or /run/media, or in /tmp.
 ~/.config/sbx and ~/.sbx\-homes can never be shared. A folder is mounted before what is inside it, so a read\-write
@@ -320,6 +330,32 @@ settings file exists for that name, it is used exactly as written and none of th
 A file that has the execute bit still starts directly when double\-clicked; sbx cannot intercept that. These
 defaults trade isolation for convenience; for something you do not trust at all use
 .BR "sbx \-\-net=none \-\-private FILE" .
+.SH MOVED PROGRAMS
+A program name owns its settings and private home. sbx records which file first ran under it (the path, the size, the modification time and the SHA\-256 of the file) and, when the name runs from another path, decides by the first of these that matches:
+.TP
+.B a
+The file has the same content: the same program, moved or copied. Accepted silently; the record follows it.
+.TP
+.B b
+Other content, the old path is gone, the same file name: moved, then updated. Accepted, with one line saying so.
+.TP
+.B c
+Other content, the old path is gone, another file name: unclear. On a terminal sbx asks; without one the decision is left pending.
+.TP
+.B d
+Other content, the old path still exists: two programs want one name. Refused and left pending; use
+.B \-\-name=OTHER
+for the other one.
+.PP
+Moves between system folders (/usr, /opt, /snap, ...) are always fine. A run from the recorded path is never held up by the file's content: a changed size or modification time only updates the record. Rule b means that once the original is deleted, a file with the same file name can take over the name; the sandbox still applies to it, with that program's settings.
+.PP
+Pending means the program was not started. sbx writes
+.IR ~/.config/sbx/pending/NAME ,
+sends a notification (with an "Open sbx" button where notify\-send supports actions) and exits with an error. Decide with
+.B sbx rebind NAME
+or
+.BR "sbx rebind \-\-dismiss NAME" ;
+sbx\-gui has a button for each. A decision that no longer applies, for example because the file is back at its recorded path, is dropped.
 .SH TROUBLESHOOTING
 .B sbx doctor
 checks that everything sbx needs works on this machine. Every run is also logged to
@@ -344,10 +380,13 @@ Settings for every program.
 Settings for one program; they override the default.
 .TP
 .I ~/.config/sbx/origins/NAME
-The file that first ran under NAME. A different file under the same name is refused; use
-.B \-\-name
-or
-.BR \-\-rebind .
+The file that runs under NAME. Line 1 is its path, line 2 its size, modification time (ns) and SHA\-256 (absent in files from older versions; added at the next run), line 3 where it moved from. A different file under the same name is handled as described under
+.BR "MOVED PROGRAMS" .
+.TP
+.I ~/.config/sbx/pending/NAME
+A decision waiting for you: old=, new=, rule= (c or d) and reason=. Made by sbx, removed by
+.B sbx rebind
+or when it no longer applies.
 .TP
 .I ~/.config/sbx/ids/NAME
 The machine\-id of NAME.

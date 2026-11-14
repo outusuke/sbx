@@ -63,7 +63,8 @@ sbx [options] PROGRAM [args]
 sbx preview [options] PROGRAM [args]     print the command instead of running it
 sbx show [options] NAME                  the settings that apply, and which file or flag each came from
 sbx doctor                               check bubblewrap, helpers, Wayland support, settings files
-sbx list [--all]                         the programs you set up, and which are running; --all adds the ones only run from the terminal
+sbx list [--all]                         the programs you set up, where each comes from, and which are running; --all adds the ones only run from the terminal
+sbx rebind NAME | --dismiss NAME         decide a program that moved, or whose name another file wants: accept it as the same program, or drop the question
 sbx stop NAME                            stop a running program
 sbx clean [--yes] NAME | --unused        delete a private home and its machine-id (refused while the program runs); --unused: every nearly empty home of a program nobody set up
 sbx link NAME [--desktop]                typing NAME in a terminal starts it through sbx (a link in ~/.local/bin, like firecfg); --desktop covers its app-menu launchers too
@@ -108,7 +109,7 @@ Options go before the program name. A program named like a command: `sbx -- clea
 | `--memory=2G` `--tasks=512` `--cpu=200%` | resource limits through `systemd-run --user` |
 | `--name=NAME` | use another private home, machine-id and settings name than the program's |
 | `--ignore-config` | ignore the settings files for this run |
-| `--rebind` | accept that this file is the same program as the one that first used its name (see the last point under Limits) |
+| `--rebind` | accept that this file is the same program as the one that first used its name, without asking (see [Moving a program](#moving-a-program)) |
 
 Shared paths must be inside your home (not the home itself), on `/mnt`, `/media` or `/run/media`, or in `/tmp`. `~/.config/sbx` and `~/.sbx-homes` can never be shared. A folder is mounted before what is inside it, so `whitelist=~/a/b` stays writable even with `read_only=~/a`. Shared folders that don't exist yet in the private home are created as empty mountpoints for the run and removed again afterwards if nothing was written to them.
 
@@ -138,6 +139,23 @@ A program with no settings file of its own (`~/.config/sbx/apps/NAME.conf`) star
 If a settings file exists for that name, it is used exactly as written and none of the defaults above apply. Tighten a program by creating the file, for example `net=0`, or use `sbx-gui`.
 
 Two limits. A file that *has* the execute bit still starts directly when you double-click it; sbx can't intercept that, so use Open With or `chmod -x`. And these defaults trade isolation for convenience (the network is on, and the program's folder is writable); for something you don't trust at all, use `sbx --net=none --private FILE`.
+
+## Moving a program
+
+A program name owns its settings and its private home, so sbx remembers which file first ran under it (`~/.config/sbx/origins/NAME`: the path, then the size, modification time and SHA-256 of the file) and checks it when the same name runs from another path. You don't have to do anything when you move a game out of `~/Downloads`. When the path differs, the first of these that matches decides:
+
+| | the file at the new path | the old path | what happens |
+|---|---|---|---|
+| a | same content (same SHA-256) | any | the same program, moved or copied: accepted silently, the record follows it |
+| b | other content, same file name | gone | moved, then updated: accepted, with one line: `'game' moved from ~/Downloads/Crash to ~/Games/Crash` |
+| c | other content, other file name | gone | unclear: on a terminal sbx asks `[y/N]`; without one the decision is left pending |
+| d | other content | still there | two different programs want one name: refused, left pending; start the other with `--name=OTHER` |
+
+Moves between system folders (`/usr`, `/opt`, `/snap`, ...) are always fine. A run from the recorded path is never held up by what the file contains: when its size or modification time changed (an update, a game that patches itself) sbx only reads it again and updates the record. The file is read in full when a name is first recorded and whenever it changes, which takes a moment for a multi-gigabyte game.
+
+**Pending** means sbx did not start the program. It wrote `~/.config/sbx/pending/NAME` (old path, new path, which rule), sent a desktop notification (with an "Open sbx" button where `notify-send` supports actions, plain text otherwise) and exited with an error. Decide with `sbx rebind NAME` (it is the same program: the record moves to the new file) or `sbx rebind --dismiss NAME` (drop the question; sbx asks again the next time the program starts from there). `sbx-gui` shows the same thing: a banner on the main page ("N programs are waiting for your decision") and, on the program's page, the old and new path with **Same program, accept** and **Dismiss**. For rule d the original is still there, so the warning is stronger and accepting is asked twice. A pending decision disappears by itself when the situation does, for example when the file is back at its recorded path. `--rebind` stays as the override: accept this file now, without asking.
+
+The program list shows where each program comes from (`System: /usr/bin`, `Downloaded: ~/Downloads/Crash`, `Home: ...`, `link` and `menu` for the other ways it starts through sbx, `Missing: ...` when the recorded file is gone, `moved from ...` after a move), in `sbx-gui`, `sbx list` and `sbx show`.
 
 ## Settings
 
@@ -204,7 +222,7 @@ sbx ./sbx-report                 # a readable overview of what the program can r
 - Sharing a single file read-write can break programs that save by renaming over it. Share the folder instead.
 - A read-write share (`--here`, `whitelist=`) lets the program plant files that later run outside the sandbox: git hooks, Makefiles, `.envrc`, scripts. Share only what it needs, and prefer `read_only=` where you can.
 - Each program name has one private home, so `sbx python3 a.py` and `sbx python3 b.py` share it; use `--name` to separate them.
-- A program name is tied to the file that first ran under it (recorded in `~/.config/sbx/origins/NAME`). A different file under the same name is refused, so a download called `firefox` can't pick up firefox's settings and private home. Moves between system folders (`/usr`, `/opt`, `/snap`, ...) are fine; for a program you moved yourself use `--rebind`, for a different one `--name=OTHER`. The first run after upgrading records whatever is there now.
+- A program name is tied to the file that first ran under it, and moves are recognised by content and file name (see [Moving a program](#moving-a-program)); a different program under the same name is held for your decision, so a download called `firefox` can't quietly pick up firefox's settings and private home. Moves between system folders are fine. **Rule b trades some of that for convenience:** once the original is deleted, a file with the same file name can take over the name (with one line printed), so a malicious download called like a program you removed inherits its settings and private home; the sandbox still applies to it, but with those settings. For a different program use `--name=OTHER`. The first run after upgrading records whatever is there now.
 - `sbx link` is a convenience, not enforcement: a full path, a launcher that doesn't use your `PATH`, or a different `PATH` skips it.
 - Programs on another drive (`/mnt`, `/media`, `/run/media`) can't be started; copy them elsewhere first.
 - Not for root; `sbx` refuses to run as root or inside another `sbx` sandbox.

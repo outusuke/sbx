@@ -80,21 +80,3 @@ def hint_args(args, here, shared):
         warn(f"'{v}' exists here, but the program won't find it ({why}). Use --here, or --whitelist=PATH / --read-only=PATH.")
         said += 1
         if said == 3: break
-
-
-def check_origin(name, real, rebind=False):
-    """A program name owns settings (apps/NAME.conf) and a private home. Remember which file first used the name, and
-    refuse when a different file shows up under it, so a download called `firefox` can't inherit what firefox was given.
-    Moves between system folders (updates) are fine. rebind=True accepts the new file."""
-    p = f"{CONF}/origins/{name}"
-    try:
-        with open(p) as f: old = f.read().strip()
-    except OSError:
-        old = None
-    if old == real: return
-    system = lambda x: x.startswith(SYSTEM_PROGRAMS)
-    if old is not None and not rebind and not (system(old) and system(real)):
-        die(f"'{name}' was first run from {tilde(old)}, now it is {tilde(real)}. They would share the settings and private home of '{name}'.\n"
-            f"      Another program: use --name=OTHER for a separate home. The same program, moved: use --rebind.")
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "w") as f: f.write(real + "\n")

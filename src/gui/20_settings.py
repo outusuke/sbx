@@ -61,11 +61,11 @@ def reset_all_settings():
 
 def forget_program(name):
     """Take a program off the list: its private home goes to the Trash first (restorable; if that fails it raises GLib.Error and nothing
-    else is touched), then its settings file, machine-id and origin note."""
+    else is touched), then its settings file, machine-id, origin note and any decision waiting on it."""
     home = f"{HOMES}/{name}"
     if os.path.isdir(home) and not os.path.islink(home): Gio.File.new_for_path(home).trash(None)
     reset_settings(name)
-    for p in (f"{CONF}/ids/{name}", f"{CONF}/origins/{name}"):
+    for p in (f"{CONF}/ids/{name}", f"{CONF}/origins/{name}", f"{CONF}/pending/{name}"):
         try: os.unlink(p)
         except OSError: pass
 

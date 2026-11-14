@@ -8,6 +8,12 @@ def cmd_show(a):
     cfg, src = effective(name, o)
     home = f"{HOMES}/{name}"
     print(f"{name}   private home {tilde(home)} ({'exists' if os.path.isdir(home) else 'not created yet'})")
+    where = origin_source(name)
+    if where: print(f"  {'source':<16} = {source_text(where)}   [{tilde(CONF)}/origins/{name}]")
+    via = [t for t, names in (("link", linked_programs()), ("menu", launcher_programs())) if name in names]
+    if via: print(f"  {'starts via':<16} = {', '.join(via)}")
+    p = read_pending(name)
+    if p and not pending_stale(name, p): print(f"  {'waiting':<16} = {tilde(p['old'])} -> {tilde(p['new'])}   [sbx rebind {name} accepts it, sbx rebind --dismiss {name} drops it]")
     for k in SCALARS: print(f"  {k:<16} = {int(cfg[k])}   [{src[k]}]")
     for k in LIMITS:
         if cfg[k]: print(f"  {k:<16} = {cfg[k]}   [{src[k]}]")
@@ -29,13 +35,13 @@ def home_problem(name):
 
 
 def wipe_home(name):
-    """Delete NAME's private home, its machine-id and its origin note. Settings stay."""
+    """Delete NAME's private home, its machine-id, its origin note and any decision waiting on it. Settings stay."""
     def unlock(fn, p, _exc):                     # programs sometimes leave read-only folders behind
         os.chmod(os.path.dirname(p), 0o700)
         if not os.path.islink(p): os.chmod(p, 0o700)         # never chmod through a link the program planted
         fn(p)
     shutil.rmtree(os.path.realpath(f"{HOMES}/{name}"), onerror=unlock)
-    for gone in (f"{CONF}/ids/{name}", f"{CONF}/origins/{name}"):
+    for gone in (f"{CONF}/ids/{name}", f"{CONF}/origins/{name}", pending_path(name)):
         try: os.unlink(gone)
         except OSError: pass
 
@@ -51,16 +57,26 @@ def home_is_small(name, limit=UNUSED_BYTES):
     return not unreadable
 
 
-def covered_programs():
-    """Names with an sbx link in ~/.local/bin or an sbx launcher in ~/.local/share/applications: somebody set those up on purpose."""
-    names, d = set(), f"{HOME}/.local/bin"
-    try: names.update(clean(n) for n in os.listdir(d) if is_sbx_link(f"{d}/{n}"))
-    except OSError: pass
+def linked_programs():
+    """Names with an sbx link in ~/.local/bin."""
+    d = f"{HOME}/.local/bin"
+    try: return {clean(n) for n in os.listdir(d) if is_sbx_link(f"{d}/{n}")}
+    except OSError: return set()
+
+
+def launcher_programs():
+    """Names an sbx launcher in ~/.local/share/applications starts or is called after."""
+    names = set()
     for p in glob.glob(f"{user_launchers()}/*.desktop"):
         if "X-Sbx-Sandboxed=true" not in launcher_text(p): continue
         stem = os.path.basename(p)[:-8]
         names.update(clean(x) for x in (launcher_program(p), stem, stem.rsplit(".", 1)[-1]) if x)
     return names
+
+
+def covered_programs():
+    """Names with an sbx link in ~/.local/bin or an sbx launcher in ~/.local/share/applications: somebody set those up on purpose."""
+    return linked_programs() | launcher_programs()
 
 
 def known_programs(live=()):
@@ -202,18 +218,26 @@ def run_linked(argv0, args):
 
 
 def cmd_list(a):
-    """Programs somebody set up (a settings file, an sbx link or launcher, or running now), and whether each is running. --all adds the
-    ones that only have a private home, which every `sbx PROGRAM` run leaves behind."""
+    """Programs somebody set up (a settings file, an sbx link or launcher, or running now), and whether each is running, where it comes from
+    and whether a decision about it is waiting. --all adds the ones that only have a private home, which every `sbx PROGRAM` run leaves
+    behind; those come last, System programs first and Downloaded ones at the end."""
     if a not in ([], ["--all"]): die("usage: sbx list [--all]")
     live = {p: pid_app(p) for p in running()}
     progs = known_programs(set(live.values()))
     if not progs: print("No programs yet. Start one with: sbx PROGRAM"); return
-    hidden = 0
-    for n in sorted(progs):
-        if not progs[n] and not a: hidden += 1; continue
+    src = {n: origin_source(n) for n in progs}
+    rank = lambda n: (SOURCE_RANK.get(src[n]["kind"], 1) if src[n] else 1, n)
+    setup = sorted(n for n in progs if progs[n])
+    terminal = sorted((n for n in progs if not progs[n]), key=rank)
+    linked, menu, waiting = linked_programs(), launcher_programs(), set(pending_names())
+    for n in setup + (terminal if a else []):
         k = sum(1 for v in live.values() if v == n)
-        print(f"{n:32} " + (f"running ({k})" if k else "idle") + ("" if progs[n] else "   (only run from the terminal)"))
-    if hidden: print(f"{hidden} more only run from the terminal, with no settings, link or launcher. Show them: sbx list --all   Delete the empty ones: sbx clean --unused")
+        tags = [t for t, names in (("link", linked), ("menu", menu)) if n in names]
+        parts = ([source_text(src[n])] if src[n] else []) + ([f"[{', '.join(tags)}]"] if tags else [])
+        if n in waiting: parts.append(f"waiting for your decision: sbx rebind {n}")
+        if not progs[n]: parts.append("(only run from the terminal)")
+        print((f"{n:32} {'running (%d)' % k if k else 'idle':<12} " + "   ".join(parts)).rstrip())
+    if terminal and not a: print(f"{len(terminal)} more only run from the terminal, with no settings, link or launcher. Show them: sbx list --all   Delete the empty ones: sbx clean --unused")
 
 
 def cmd_stop(a):
@@ -222,6 +246,30 @@ def cmd_stop(a):
     if not running(a[0]): die(f"'{a[0]}' is not running")
     n = stop_program(a[0])
     print(f"stopping {a[0]}" + (f" ({n} processes)" if n > 1 else ""))
+
+
+def cmd_rebind(a):
+    """sbx rebind NAME | --dismiss NAME: decide what sbx left pending when a different file showed up under a program's name."""
+    dismiss = "--dismiss" in a
+    a = [x for x in a if x != "--dismiss"]
+    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx rebind NAME   |   sbx rebind --dismiss NAME")
+    if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
+    name = a[0]
+    if clean(name) != name: die(f"'{name}' is not a program name")
+    p = read_pending(name)
+    if dismiss:
+        if not os.path.lexists(pending_path(name)): die(f"nothing is waiting for a decision for '{name}'")
+        clear_pending(name)
+        print(f"dropped the decision for '{name}'. Nothing changed: the name still belongs to {tilde(p['old']) if p else 'what it did'}.")
+        return
+    if not p: die(f"nothing is waiting for a decision for '{name}'")
+    why = pending_stale(name, p)
+    if why:
+        clear_pending(name)
+        die(f"the decision for '{name}' no longer applies ({why}). Start it again and sbx decides afresh")
+    write_origin(name, p["new"], None, p["old"])         # the next run adds the fingerprint (a big file isn't read here)
+    clear_pending(name)
+    print(f"'{name}' now belongs to {tilde(p['new'])}, with the settings and private home it had. Start it again.")
 
 
 def rewrite_desktop(text, sbx):
@@ -418,7 +466,7 @@ def cmd_open(a):
     err.seek(0)
     text = err.read().decode(errors="replace")
     sys.stderr.write(text)
-    if rc != 0 and time.monotonic() - t0 < 15:                      # it never really started
+    if rc != 0 and time.monotonic() - t0 < 15 and not read_pending(name):      # it never really started (a decision waiting has its own notification)
         why = failure_reason(text, rc)
         warn(f"{name} didn't start: {why}")
         notify_failure(name, why)                                  # clicking it opens the log, like a start from the menu

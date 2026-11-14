@@ -3,10 +3,13 @@
 function __sbx_apps
     ls ~/.config/sbx/apps 2>/dev/null | string replace -r '\.conf$' ''
 end
+function __sbx_pending
+    ls ~/.config/sbx/pending 2>/dev/null
+end
 function __sbx_homes
     ls ~/.sbx-homes 2>/dev/null
 end
-set -l cmds preview show doctor clean reset link desktop open schema list stop
+set -l cmds preview show doctor clean reset link desktop open schema list stop rebind
 set -l c "not __fish_seen_subcommand_from $cmds"
 complete -c sbx -f -n $c -a "$cmds"
 complete -c sbx -n $c -F
@@ -16,6 +19,8 @@ complete -c sbx -f -n "__fish_seen_subcommand_from clean" -a "(__sbx_homes)"
 complete -c sbx -f -n "__fish_seen_subcommand_from clean" -l unused -d "Every nearly empty home of a program nobody set up"
 complete -c sbx -f -n "__fish_seen_subcommand_from clean" -l yes -d "Don't ask"
 complete -c sbx -f -n "__fish_seen_subcommand_from list" -l all -d "Also programs only run from the terminal"
+complete -c sbx -f -n "__fish_seen_subcommand_from rebind" -a "(__sbx_pending)" -d "Program waiting for your decision"
+complete -c sbx -f -n "__fish_seen_subcommand_from rebind" -l dismiss -d "Drop the question instead of accepting"
 complete -c sbx -f -n "__fish_seen_subcommand_from reset" -a "(__sbx_apps)"
 complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l default -d "Reset the default settings"
 complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l all -d "Reset every settings file"

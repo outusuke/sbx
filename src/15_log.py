@@ -85,19 +85,17 @@ def journal_tag(ident, sock=JOURNAL_SOCK):
 
 
 # ---------------------------------------------------------------- notification
-def notify_failure(name, reason=""):
-    """A critical notification that the program stopped right after starting, with the REASON when there is one. Where
-    notify-send can do actions, clicking it opens sbx-gui on this program's log. The waiting for the click happens in a
-    detached child, so sbx can exit at once."""
+def notify_click(plain, clicked, label, gui_args, urgency="critical"):
+    """A desktop notification. Where notify-send can do actions, it says CLICKED and a click on the LABEL button opens sbx-gui
+    with GUI_ARGS; the waiting for the click happens in a detached child, so sbx can exit at once. Without actions (an old
+    notify-send, or no sbx-gui to open) it is a plain popup saying PLAIN. Nothing happens without notify-send."""
     ns = shutil.which("notify-send")
     if not ns: return
-    why = f" {reason[:300]}" if reason else ""
-    msg = f"{name} stopped right after starting.{why} Click to open the log."
     gui = shutil.which("sbx-gui") or os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "sbx-gui")
     try: actions = "--action" in subprocess.run([ns, "--help"], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError): actions = False
     if not actions or not os.access(gui, os.X_OK):
-        try: subprocess.run([ns, "-u", "critical", "-a", "sbx", "sbx", f"{name} stopped right after starting.{why} See the log in sbx-gui."], timeout=5, stdin=subprocess.DEVNULL)
+        try: subprocess.run([ns, "-u", urgency, "-a", "sbx", "sbx", plain], timeout=5, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError): pass
         return
     try:
@@ -108,10 +106,18 @@ def notify_failure(name, reason=""):
         os.setsid()
         dn = os.open(os.devnull, os.O_RDWR)
         for fd in (0, 1, 2): os.dup2(dn, fd)
-        r = subprocess.run([ns, "-u", "critical", "-a", "sbx", "-A", "default=Open log", "--wait", "sbx", msg],
+        r = subprocess.run([ns, "-u", urgency, "-a", "sbx", "-A", f"default={label}", "--wait", "sbx", clicked],
                            capture_output=True, text=True, timeout=900)
-        if r.stdout.strip() == "default": subprocess.Popen([gui, "--log", name], start_new_session=True)
+        if r.stdout.strip() == "default": subprocess.Popen([gui, *gui_args], start_new_session=True)
     except Exception:
         pass
     finally:
         os._exit(0)
+
+
+def notify_failure(name, reason=""):
+    """A critical notification that the program stopped right after starting, with the REASON when there is one. Where
+    notify-send can do actions, clicking it opens sbx-gui on this program's log."""
+    why = f" {reason[:300]}" if reason else ""
+    notify_click(f"{name} stopped right after starting.{why} See the log in sbx-gui.",
+                 f"{name} stopped right after starting.{why} Click to open the log.", "Open log", ["--log", name])

@@ -18,6 +18,7 @@ _sbx() {
             link) COMPREPLY=($(compgen -W "--remove --desktop" -- "$cur") $(compgen -c -- "$cur")); return ;;
             stop) COMPREPLY=($(compgen -W "$(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
             list) COMPREPLY=($(compgen -W "--all" -- "$cur")); return ;;
+            rebind) COMPREPLY=($(compgen -W "--dismiss $(ls ~/.config/sbx/pending 2>/dev/null)" -- "$cur")); return ;;
             doctor|schema) return ;;
             desktop) COMPREPLY=($(compgen -W "--install-opener --remove-opener --install-menu --remove-menu --remove" -- "$cur")); return ;;
             *) COMPREPLY=($(compgen -f -- "$cur")); return ;;
@@ -27,7 +28,7 @@ _sbx() {
         --allow-syscall=*) COMPREPLY=($(compgen -W "io_uring userfaultfd process_vm_readv process_vm_writev kcmp pidfd_getfd" -- "${cur#*=}")) ;;
         --whitelist=*|--read-only=*) compopt -o filenames; COMPREPLY=($(compgen -f -- "${cur#*=}")) ;;
         -*) compopt -o nospace; COMPREPLY=($(compgen -W "$opts" -- "$cur")) ;;
-        *) COMPREPLY=($(compgen -W "preview show doctor clean reset link desktop open list stop" -- "$cur") $(compgen -c -- "$cur")) ;;
+        *) COMPREPLY=($(compgen -W "preview show doctor clean reset link desktop open list stop rebind" -- "$cur") $(compgen -c -- "$cur")) ;;
     esac
 }
 complete -F _sbx sbx

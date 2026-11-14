@@ -13,13 +13,14 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
                "--loader": "loader"}
-COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop")
+COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind")
 
 USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx preview [options] PROGRAM [args]   print the command instead of running it\n"
          "sbx show [options] NAME                the settings that apply to a program, and where each comes from\n"
          "sbx doctor                             check that everything sbx needs works here\n"
-         "sbx list [--all]                       the programs you set up, and which are running (--all adds those only run from the terminal)\n"
+         "sbx list [--all]                       the programs you set up, where each comes from, and which are running (--all adds those only run from the terminal)\n"
+         "sbx rebind NAME | --dismiss NAME       decide a program that moved or whose name another file wants: accept it as the same program, or drop the question\n"
          "sbx stop NAME                          stop a running program\n"
          "sbx clean [--yes] NAME | --unused      delete a program's private home and machine-id (not while it runs); --unused: every nearly empty home nobody set up\n"
          "sbx reset [--yes] NAME|--default|--all  delete settings so the built-in defaults apply again (data stays)\n"
@@ -52,13 +53,14 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --memory=2G --tasks=512 --cpu=200%   limits (systemd-run --user)\n"
          "  --name=NAME            use another private home and settings name than the program's\n"
          "  --ignore-config        ignore the settings files for this run\n"
-         "  --rebind               this file is the same program as before, just moved (see below)\n"
+         "  --rebind               this file is the same program as before, just moved (only needed when sbx can't tell; see below)\n"
          "notes: the program starts in its private home, so use full paths or --here for files.\n"
          "  Flags only turn things off (or on, for the extras); settings files set the rest.\n"
          "  net=1 also shares abstract Unix sockets (some X servers); only net=0 or --net-private closes that.\n"
          "  32-bit programs are blocked by the syscall filter. Terminal programs lose /dev/tty (--new-session).\n"
          "  A program named like a command (clean, show...): sbx -- clean\n"
-         "  A name belongs to the file that first used it; a different file under that name is refused (--name=OTHER or --rebind).\n"
+         "  A name belongs to the file that first used it. The same file moved or copied is recognised by its content; a different file\n"
+         "  under that name is held for your decision (sbx rebind NAME, or sbx-gui) or refused (--name=OTHER).\n"
          "settings: ~/.config/sbx/default.conf and ~/.config/sbx/apps/NAME.conf with lines like\n"
          "  net=0   gpu=0   portals=1   whitelist=~/Projects   read_only=~/.gitconfig   env=HTTPS_PROXY   memory=2G")
 

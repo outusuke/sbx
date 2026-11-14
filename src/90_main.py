@@ -12,6 +12,7 @@ def main(argv=None):
     if cmd == "clean": return cmd_clean(a)
     if cmd == "reset": return cmd_reset(a)
     if cmd == "link": return cmd_link(a)
+    if cmd == "rebind": return cmd_rebind(a)
     if cmd == "list": return cmd_list(a)
     if cmd == "stop": return cmd_stop(a)
     if cmd == "desktop": return cmd_desktop(a)

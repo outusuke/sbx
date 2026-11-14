@@ -149,11 +149,16 @@ def home_is_small(name, limit=UNUSED_BYTES):
     return not unreadable
 
 
-def covered_programs():
-    """Names with an sbx link in ~/.local/bin or an sbx launcher in ~/.local/share/applications: somebody set those up on purpose."""
-    names, d = set(), f"{HOME}/.local/bin"
-    try: names.update(program_name(n) for n in os.listdir(d) if os.path.islink(f"{d}/{n}") and os.path.basename(os.readlink(f"{d}/{n}")) == "sbx")
-    except OSError: pass
+def linked_programs():
+    """Names with an sbx link in ~/.local/bin."""
+    d = f"{HOME}/.local/bin"
+    try: return {program_name(n) for n in os.listdir(d) if os.path.islink(f"{d}/{n}") and os.path.basename(os.readlink(f"{d}/{n}")) == "sbx"}
+    except OSError: return set()
+
+
+def launcher_programs():
+    """Names an sbx launcher in ~/.local/share/applications starts or is called after."""
+    names = set()
     for p in glob.glob(f"{HOME}/.local/share/applications/*.desktop"):
         try:
             with open(p, errors="replace") as f: text = f.read()
@@ -164,15 +169,120 @@ def covered_programs():
     return names
 
 
+def covered_programs():
+    """Names with an sbx link in ~/.local/bin or an sbx launcher in ~/.local/share/applications: somebody set those up on purpose."""
+    return linked_programs() | launcher_programs()
+
+
+# ---- where a program comes from (origins/NAME, written by sbx; the same reading rules as sbx's read_origin) ----
+ORIGIN_META = re.compile(r"(\d+) (\d+) ([0-9a-f]{64})")
+
+
+def read_origin(name):
+    """(path, (size, mtime_ns, sha256) or None, moved-from path or None) from origins/NAME, or None when nothing is recorded."""
+    try:
+        with open(f"{CONF}/origins/{name}", errors="replace") as f: lines = f.read().split("\n")
+    except OSError:
+        return None
+    path = lines[0].strip()
+    if not path: return None
+    m = ORIGIN_META.fullmatch(lines[1].strip()) if len(lines) > 1 else None
+    moved = lines[2][5:].strip() if len(lines) > 2 and lines[2].startswith("from ") else None
+    return path, ((int(m[1]), int(m[2]), m[3]) if m else None), moved or None
+
+
+def downloads_dir():
+    """Your Downloads folder: XDG_DOWNLOAD_DIR in user-dirs.dirs (translated names), else ~/Downloads."""
+    try:
+        with open(f"{os.environ.get('XDG_CONFIG_HOME') or HOME + '/.config'}/user-dirs.dirs") as f:
+            m = re.search(r'^XDG_DOWNLOAD_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M)
+        if m and m[1]: return f"{HOME}/{m[1]}".rstrip("/")
+    except OSError:
+        pass
+    return f"{HOME}/Downloads"
+
+
+def source_kind(path):
+    """System (/usr, /opt, /snap...), Downloaded (inside your Downloads folder), Home (the rest of your home) or Other."""
+    if path.startswith(SYSTEM_PROGRAMS): return "System"
+    if path.startswith(downloads_dir() + "/"): return "Downloaded"
+    return "Home" if path.startswith(HOME + "/") else "Other"
+
+
+def origin_source(name):
+    """Where NAME's program comes from, as recorded: {kind, path, missing, moved, moved_exists}, or None when nothing is recorded."""
+    rec = read_origin(name)
+    if not rec: return None
+    path, _meta, moved = rec
+    return {"kind": source_kind(path), "path": path, "missing": not os.path.isfile(path), "moved": moved,
+            "moved_exists": bool(moved and os.path.isfile(moved))}
+
+
+def source_parts(s):
+    """The pieces of a source line, as shown in a list row: 'System · /usr/bin', 'Downloaded · ~/Downloads/Crash', 'Missing: ~/old/path',
+    then 'moved from ...' (or 'copied from ...' while the original is still there)."""
+    parts = [f"Missing: {tilde(s['path'])}" if s["missing"] else f"System · {os.path.dirname(s['path'])}" if s["kind"] == "System"
+             else f"{s['kind']} · {tilde(s['path'])}"]
+    if s["moved"]: parts.append(f"{'copied' if s['moved_exists'] else 'moved'} from {tilde(s['moved'])}")
+    return parts
+
+
+def source_tags(name, linked=None, menu=None):
+    """'link' and 'menu' for the ways a program is started through sbx besides the window (the two sets may be passed in, to look them up once for a whole list)."""
+    linked = linked_programs() if linked is None else linked
+    menu = launcher_programs() if menu is None else menu
+    return [t for t, names in (("link", linked), ("menu", menu)) if name in names]
+
+
+# ---- decisions waiting for you (pending/NAME, written by sbx; same rules as sbx's read_pending and pending_stale) ----
+def read_pending(name):
+    """{old, new, rule, reason} from pending/NAME, or None."""
+    try:
+        with open(f"{CONF}/pending/{name}", errors="replace") as f: text = f.read()
+    except OSError:
+        return None
+    d = {}
+    for line in text.split("\n"):
+        k, eq, v = line.partition("=")
+        if eq and k in ("old", "new", "rule", "reason"): d[k] = v
+    return d if d.get("old") and d.get("new") and d.get("rule") in ("c", "d") else None
+
+
+def pending_stale(name, p):
+    """Why the decision P no longer applies, or None while it does."""
+    rec = read_origin(name)
+    if not rec or rec[0] != p["old"]: return "what the name belongs to has changed since"
+    if not os.path.isfile(p["new"]): return f"{tilde(p['new'])} is gone"
+    if os.path.isfile(p["old"]) != (p["rule"] == "d"): return f"{tilde(p['old'])} is back" if p["rule"] == "c" else f"{tilde(p['old'])} is gone"
+    return None
+
+
+def pending_decisions():
+    """{name: decision} for every decision still waiting (one the situation has moved on from is left out)."""
+    try: names = sorted(os.listdir(f"{CONF}/pending"))
+    except OSError: return {}
+    return {n: p for n in names if NAME_RE.match(n) and (p := read_pending(n)) and not pending_stale(n, p)}
+
+
 def program_groups():
     """(the programs you set up, the ones only run from the terminal). Set up: a settings file, an sbx link or launcher, or running now.
-    The others are just a private home that a run created, as for `sbx curl ...` typed once."""
+    The others are just a private home that a run created, as for `sbx curl ...` typed once; System ones come first there, Downloaded last."""
     try: conf = {f[:-5] for f in os.listdir(APPS) if f.endswith(".conf")}
     except OSError: conf = set()
     chosen = conf | covered_programs()
     names = app_names()
     setup = [n for n in names if n in chosen or program_running(n)]
-    return setup, [n for n in names if n not in setup]
+    def rank(n):
+        s = origin_source(n)
+        return SOURCE_RANK.get(s["kind"], 1) if s else 1, n
+    return setup, sorted((n for n in names if n not in setup), key=rank)
+
+
+def row_subtitle(name, waiting=False, linked=None, menu=None):
+    """The second line of a program's row: running, waiting for a decision, where it comes from, how else it starts, then its settings."""
+    s = origin_source(name)
+    parts = (["Running now"] if program_running(name) else []) + (["Waiting for your decision"] if waiting else [])
+    return " · ".join(parts + (source_parts(s) if s else []) + source_tags(name, linked, menu) + [summary(name)])
 
 
 def unused_programs(others):

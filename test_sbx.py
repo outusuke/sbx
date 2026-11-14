@@ -8,7 +8,7 @@
 #     the Wayland client (against a fake compositor), launcher rewriting and more. Nothing here needs bubblewrap.
 #   * Isolation: runs sbx-selftest and small programs inside real sandboxes against canary files planted in a temporary
 #     "home". Needs bubblewrap; skipped without it. Nothing touches your real home.
-import contextlib, difflib, io, os, re, select, shutil, socket, struct, subprocess, sys, tempfile, threading, types, unittest
+import contextlib, difflib, hashlib, io, os, re, select, shutil, socket, struct, subprocess, sys, tempfile, threading, types, unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -577,21 +577,323 @@ class Units(unittest.TestCase):
         with contextlib.redirect_stdout(out): S["doctor"]()
         self.assertNotIn("abstract socket", out.getvalue())
 
-    def test_a_name_belongs_to_the_file_that_first_used_it(self):
-        S, dies = self.S, []
-        def die(msg, code=1): dies.append(msg); raise SystemExit(code)
+    # -- which file a program name belongs to (check_origin) and the decisions it leaves pending
+    def _origins(self):
+        """Real files in the temp home; die raises, notifications and sbx's own messages are recorded, and stdin is not a terminal."""
+        S = self.S
+        self.said, self.pinged = [], []
+        S["warn"] = self.said.append
+        def die(msg, code=1): self.said.append("DIE " + msg); raise SystemExit(code)
         S["die"] = die
-        check = S["check_origin"]
-        home = f"{self.home}/apps/foo/bin/foo"
-        check("foo", home)                                                     # first use: recorded
-        check("foo", home)                                                     # same file: fine
-        with self.assertRaises(SystemExit): check("foo", "/tmp/evil/foo")      # another file under the same name
-        self.assertIn("first run from", dies[-1])
-        with open(f"{S['CONF']}/origins/foo") as f: self.assertEqual(f.read().strip(), home)   # the record did not move
-        check("foo", "/tmp/evil/foo", rebind=True)                             # explicitly accepted
-        with open(f"{S['CONF']}/origins/foo") as f: self.assertEqual(f.read().strip(), "/tmp/evil/foo")
-        check("ls", "/usr/bin/ls"); check("ls", "/opt/coreutils/bin/ls")       # moving between system folders is not a new program
-        with self.assertRaises(SystemExit): check("ls", "/tmp/evil/ls")        # but a system program's name is not free for anyone
+        S["notify_click"] = lambda plain, clicked, label, args, urgency="critical": self.pinged.append((label, args))
+        quiet = mock.patch.object(sys, "stdin", io.StringIO()); quiet.start(); self.addCleanup(quiet.stop)
+
+    def origin(self, name, real, **kw):
+        """Run check_origin: True if the program may start."""
+        try: self.S["check_origin"](name, real, **kw); return True
+        except SystemExit: return False
+
+    def recorded(self, name):
+        with open(f"{self.S['CONF']}/origins/{name}") as f: return f.read().split("\n")
+
+    def test_the_first_run_records_the_path_and_a_fingerprint_of_the_file(self):
+        self._origins()
+        p = self.write("Downloads/Crash", "version one")
+        self.assertTrue(self.origin("game", p))
+        lines = self.recorded("game")
+        self.assertEqual(lines[0], p)
+        size, mtime, sha = lines[1].split()
+        self.assertEqual((int(size), int(mtime)), (11, os.stat(p).st_mtime_ns))
+        self.assertEqual(sha, hashlib.sha256(b"version one").hexdigest())            # the whole file, in full
+        self.assertEqual(self.said + self.pinged, [])
+
+    def test_a_program_moved_with_the_same_content_is_accepted_silently(self):
+        self._origins()
+        old = self.write("Downloads/Crash", "same bytes")
+        self.origin("game", old)
+        new = f"{self.home}/Games/Crash"; os.makedirs(os.path.dirname(new)); shutil.move(old, new)
+        self.assertTrue(self.origin("game", new))
+        self.assertEqual(self.said + self.pinged, [], "rule a says nothing")
+        lines = self.recorded("game")
+        self.assertEqual((lines[0], lines[2]), (new, f"from {old}"))                 # the record moved with it, and remembers where from
+        self.assertEqual(self.S["read_origin"]("game")[2], old)
+
+    def test_a_copy_is_the_same_program_even_while_the_original_exists(self):
+        self._origins()
+        old = self.write("apps/firefox", "same bytes")
+        self.origin("ff", old)
+        copy = self.write("Downloads/firefox", "same bytes")
+        self.assertTrue(self.origin("ff", copy))
+        self.assertEqual(self.said + self.pinged, [])
+        self.assertEqual(self.recorded("ff")[0], copy)
+        self.assertEqual(self.S["origin_source"]("ff")["moved_exists"], True)           # shown as a copy, not as a move
+
+    def test_a_copy_of_an_original_that_has_patched_itself_since_is_still_the_same_program(self):
+        self._origins()
+        old = self.write("apps/tool", "version one")
+        self.origin("tool", old)
+        with open(old, "w") as f: f.write("version one, patched")                        # the record's hash is out of date now
+        os.utime(old, ns=(5, 5))
+        copy = self.write("copy/tool", "version one, patched")
+        self.assertTrue(self.origin("tool", copy)); self.assertEqual(self.said + self.pinged, [])
+
+    def test_moved_and_updated_is_accepted_with_one_line(self):
+        self._origins()
+        old = self.write("Downloads/Crash", "version one")
+        self.origin("game", old)
+        os.unlink(old)
+        new = self.write("Games/Crash", "version two, longer")                          # another content, same file name, the old one gone
+        self.assertTrue(self.origin("game", new))
+        self.assertEqual(self.said, ["'game' moved from ~/Downloads/Crash to ~/Games/Crash"])
+        self.assertEqual(self.pinged, [])
+        self.assertEqual(self.recorded("game")[:1], [new])
+        self.assertEqual(self.recorded("game")[1].split()[2], hashlib.sha256(b"version two, longer").hexdigest())
+        self.assertIsNone(self.S["read_pending"]("game"))
+
+    def test_an_old_file_that_is_gone_and_a_new_name_is_asked_about_on_a_terminal(self):
+        self._origins(); S = self.S
+        old = self.write("Downloads/Crash", "one"); self.origin("game", old); os.unlink(old)
+        new = self.write("Games/CrashDeluxe", "two")
+        tty = mock.Mock(); tty.isatty.return_value = True
+        for answer in ("n", "", "no"):                                                  # anything but y or yes is no
+            with mock.patch.object(sys, "stdin", tty), mock.patch("builtins.input", return_value=answer) as ask:
+                self.assertFalse(self.origin("game", new), answer)
+            self.assertIn("Same program? [y/N]", ask.call_args[0][0]); self.assertIn("~/Downloads/Crash", ask.call_args[0][0])
+        with mock.patch.object(sys, "stdin", tty), mock.patch("builtins.input", side_effect=EOFError):
+            self.assertFalse(self.origin("game", new))                                  # the terminal closed under it: no
+        self.assertIn("--name=OTHER", self.said[-1])
+        self.assertEqual(self.recorded("game")[0], old, "a no changes nothing")
+        self.assertIsNone(S["read_pending"]("game"), "somebody just said no: nothing is left waiting"); self.assertEqual(self.pinged, [])
+        with mock.patch.object(sys, "stdin", tty), mock.patch("builtins.input", return_value="y"):
+            self.assertTrue(self.origin("game", new))
+        self.assertEqual(self.recorded("game")[0], new)
+
+    def test_an_old_file_that_is_gone_and_a_new_name_without_a_terminal_is_left_pending(self):
+        self._origins(); S = self.S
+        old = self.write("Downloads/Crash", "one"); self.origin("game", old); os.unlink(old)
+        new = self.write("Games/CrashDeluxe", "two")
+        self.assertFalse(self.origin("game", new), "it must not start")
+        p = S["read_pending"]("game")
+        self.assertEqual((p["old"], p["new"], p["rule"]), (old, new, "c"))
+        self.assertIn("~/Downloads/Crash", p["reason"])
+        self.assertEqual(self.recorded("game")[0], old, "nothing is decided yet")
+        self.assertEqual(self.pinged, [("Open sbx", ["game"])])                          # the click opens sbx-gui on that program
+        self.assertIn("sbx rebind game", self.said[-1])
+        self.assertEqual(S["pending_names"](), ["game"])
+
+    def test_a_different_program_while_the_original_exists_is_refused_and_left_pending(self):
+        self._origins(); S = self.S
+        old = self.write("apps/firefox", "the real one"); self.origin("ff", old)
+        evil = self.write("Downloads/firefox", "something else entirely")
+        self.assertFalse(self.origin("ff", evil))
+        p = S["read_pending"]("ff"); self.assertEqual((p["old"], p["new"], p["rule"]), (old, evil, "d"))
+        self.assertIn("--name=OTHER", self.said[-1]); self.assertEqual(self.pinged, [("Open sbx", ["ff"])])
+        self.assertEqual(self.recorded("ff")[0], old)
+        tty = mock.Mock(); tty.isatty.return_value = True
+        with mock.patch.object(sys, "stdin", tty), mock.patch("builtins.input") as ask:
+            self.assertFalse(self.origin("ff", evil))
+        ask.assert_not_called()                                                          # on a terminal too: rule d is not a question
+
+    def test_the_same_size_with_other_content_is_a_different_program(self):
+        self._origins()
+        a = self.write("one/z", "1234"); self.origin("z", a)
+        b = self.write("two/z", "5678")
+        self.assertEqual(os.stat(a).st_size, os.stat(b).st_size)
+        self.assertFalse(self.origin("z", b)); self.assertEqual(self.S["read_pending"]("z")["rule"], "d")
+
+    def test_a_program_changed_in_place_always_starts_and_only_the_record_follows(self):
+        self._origins(); S = self.S
+        p = self.write("g/game", "AAAA"); self.origin("game", p)
+        before = self.recorded("game")[1]
+        hashed = []
+        real = S["fingerprint"]; S["fingerprint"] = lambda path: hashed.append(path) or real(path)
+        self.assertTrue(self.origin("game", p)); self.assertEqual(hashed, [], "unchanged size and mtime: the file is not read again")
+        with open(p, "w") as f: f.write("BBBBBB")                                         # patched itself
+        self.assertTrue(self.origin("game", p)); self.assertEqual(hashed, [p])
+        self.assertNotEqual(self.recorded("game")[1], before)
+        self.assertEqual(self.recorded("game")[1].split()[2], hashlib.sha256(b"BBBBBB").hexdigest())
+        self.assertEqual(self.said + self.pinged, [])
+        with open(p, "w") as f: f.write("CCCCCC")
+        S["write_origin"] = mock.Mock(side_effect=OSError("read-only"))                  # even a record that can't be written is no reason to stop
+        self.assertTrue(self.origin("game", p))
+
+    def test_an_origin_file_from_an_older_version_keeps_working(self):
+        self._origins(); S = self.S
+        def legacy(name, path):
+            os.makedirs(f"{S['CONF']}/origins", exist_ok=True)
+            with open(f"{S['CONF']}/origins/{name}", "w") as f: f.write(path + "\n")
+        a = self.write("apps/leg", "same"); legacy("leg", a)
+        self.assertIsNone(S["read_origin"]("leg")[1])
+        self.assertTrue(self.origin("leg", a))                                          # path matches: line 2 is added, nothing else
+        self.assertEqual(self.recorded("leg")[1].split()[2], hashlib.sha256(b"same").hexdigest()); self.assertEqual(self.said, [])
+        b = self.write("apps/leg2", "same"); legacy("two", a)                           # path differs, the old file is still there: it is hashed now
+        self.assertTrue(self.origin("two", b)); self.assertEqual(self.recorded("two")[0], b)
+        c = self.write("elsewhere/other", "other"); legacy("three", a)
+        self.assertFalse(self.origin("three", c)); self.assertEqual(S["read_pending"]("three")["rule"], "d")
+        os.unlink(a); legacy("four", a)                                                  # old gone, nothing to compare with: by name, as for any other change
+        self.assertFalse(self.origin("four", c)); self.assertEqual(S["read_pending"]("four")["rule"], "c")
+        d = self.write("elsewhere/leg", "x"); legacy("five", a.replace("leg", "leg"))
+        self.assertTrue(self.origin("five", self.write("elsewhere/leg", "x2"))); self.assertIn("moved from", self.said[-1]); del d
+
+    def test_sbx_rebind_accepts_the_pending_decision(self):
+        self._origins(); S = self.S
+        old = self.write("Downloads/Crash", "one"); self.origin("game", old); os.unlink(old)
+        new = self.write("Games/CrashDeluxe", "two"); self.origin("game", new)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_rebind"]([ "game"])
+        self.assertIn("~/Games/CrashDeluxe", out.getvalue())
+        self.assertIsNone(S["read_pending"]("game")); self.assertFalse(os.path.exists(f"{S['CONF']}/pending/game"))
+        self.assertEqual((self.recorded("game")[0], self.recorded("game")[2]), (new, f"from {old}"))
+        self.assertTrue(self.origin("game", new)); self.assertEqual(self.recorded("game")[1].split()[2], hashlib.sha256(b"two").hexdigest())   # the next run adds line 2
+        with self.assertRaises(SystemExit): S["cmd_rebind"]([ "game"])                    # nothing left to accept
+        self.assertIn("nothing is waiting", self.said[-1])
+
+    def test_sbx_rebind_dismiss_drops_the_decision_and_changes_nothing_else(self):
+        self._origins(); S = self.S
+        old = self.write("apps/ff", "real"); self.origin("ff", old)
+        evil = self.write("Downloads/ff", "evil"); self.origin("ff", evil)
+        with contextlib.redirect_stdout(io.StringIO()): S["cmd_rebind"](["--dismiss", "ff"])
+        self.assertIsNone(S["read_pending"]("ff")); self.assertEqual(self.recorded("ff")[0], old)
+        with self.assertRaises(SystemExit): S["cmd_rebind"](["--dismiss", "ff"])
+        self.assertFalse(self.origin("ff", evil)); self.assertEqual(S["read_pending"]("ff")["rule"], "d")      # the next run asks again
+
+    def test_a_pending_decision_goes_away_when_the_situation_does(self):
+        self._origins(); S = self.S
+        old = self.write("Downloads/Crash", "one"); self.origin("game", old); os.unlink(old)
+        new = self.write("Games/CrashDeluxe", "two"); self.origin("game", new)
+        self.assertEqual(S["pending_names"](), ["game"])
+        self.write("Downloads/Crash", "one")                                              # the file went back to the recorded path
+        self.assertEqual(S["pending_names"](), [], "no longer listed even before the next run")
+        p = S["read_pending"]("game"); self.assertIn("is back", S["pending_stale"]("game", p))
+        self.assertTrue(self.origin("game", old))                                         # and the next run from there clears it
+        self.assertFalse(os.path.exists(f"{S['CONF']}/pending/game"))
+        # rule d: the original is deleted, or the other file is
+        other = self.write("Downloads/Crash2", "z"); self.origin("game", other)
+        p = S["read_pending"]("game"); self.assertEqual(p["rule"], "d")
+        os.unlink(other); self.assertIn("is gone", S["pending_stale"]("game", p))
+        self.write("Downloads/Crash2", "z"); os.unlink(old)
+        with self.assertRaises(SystemExit): S["cmd_rebind"](["game"])                     # accepting a stale one is refused and cleans up
+        self.assertIn("no longer applies", self.said[-1]); self.assertIsNone(S["read_pending"]("game"))
+        self.assertEqual(self.recorded("game")[0], old)
+        # being accepted by another way clears it too: --rebind, or a copy with the same content
+        self.write("Downloads/Crash", "one"); self.origin("game", self.write("a/Crash", "q")); self.assertIsNotNone(S["read_pending"]("game"))
+        self.assertTrue(self.origin("game", self.write("a/Crash", "q"), rebind=True)); self.assertIsNone(S["read_pending"]("game"))
+
+    def test_rebind_flag_is_still_the_override_for_a_different_file(self):
+        self._origins()
+        a = self.write("apps/ff", "real"); self.origin("ff", a)
+        b = self.write("Downloads/ff", "evil")
+        self.assertFalse(self.origin("ff", b)); self.assertTrue(self.origin("ff", b, rebind=True))
+        self.assertEqual(self.recorded("ff")[0], b); self.assertIsNone(self.S["read_pending"]("ff"))
+
+    def test_moves_between_system_folders_are_fine_and_a_system_name_is_not_free(self):
+        self._origins(); S = self.S
+        S["SYSTEM_PROGRAMS"] = (f"{self.home}/sys1/", f"{self.home}/sys2/")
+        a = self.write("sys1/ls", "coreutils 9"); self.origin("ls", a)
+        b = self.write("sys2/bin-ls", "coreutils 10")                                    # an update that also changed the folder and the file name
+        self.assertTrue(self.origin("ls", b)); self.assertEqual(self.said + self.pinged, [])
+        evil = self.write("evil/ls", "not coreutils")
+        self.assertFalse(self.origin("ls", evil)); self.assertEqual(S["read_pending"]("ls")["rule"], "d")
+
+    def test_a_file_name_with_a_line_break_cannot_be_recorded(self):
+        self._origins()
+        p = self.write("odd/a\nb", "x")
+        self.assertFalse(self.origin("odd", p)); self.assertIn("line break", self.said[-1])
+
+    def test_rebind_command_checks_its_arguments_and_where_it_runs(self):
+        self._origins(); S = self.S
+        for bad in ([], ["--dismiss"], ["a", "b"], ["--bogus"], ["../x"]):
+            with self.assertRaises(SystemExit, msg=bad): S["cmd_rebind"](bad)
+        with mock.patch.dict(os.environ, {"SBX_ACTIVE": "1"}), self.assertRaises(SystemExit): S["cmd_rebind"](["game"])
+        self.assertIn("rebind", S["COMMANDS"])
+
+    def test_cleaning_a_program_also_drops_its_pending_decision(self):
+        self._origins(); S = self.S
+        old = self.write("apps/ff", "real"); self.origin("ff", old); self.origin("ff", self.write("Downloads/ff", "evil"))
+        os.makedirs(f"{S['HOMES']}/ff"); self.assertTrue(os.path.exists(f"{S['CONF']}/pending/ff"))
+        S["wipe_home"]("ff")
+        for d in ("origins", "pending"): self.assertFalse(os.path.exists(f"{S['CONF']}/{d}/ff"), d)
+
+    def test_the_waiting_notification_opens_sbx_on_that_program(self):
+        S = self.S
+        def which(x): return {"notify-send": "/usr/bin/notify-send", "sbx-gui": "/usr/bin/sbx-gui"}.get(x)
+        with mock.patch("shutil.which", side_effect=which), mock.patch("os.access", return_value=True), \
+             mock.patch("subprocess.run", return_value=types.SimpleNamespace(stdout="no actions")) as run:
+            S["notify_click"]("plain text", "clickable text", "Open sbx", ["game"])
+        sent = run.call_args_list[-1].args[0]; self.assertIn("plain text", sent); self.assertNotIn("-A", sent)      # no actions: a plain popup
+        calls = []
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            return types.SimpleNamespace(stdout="--action" if "--help" in cmd else "default\n")
+        with mock.patch("shutil.which", side_effect=which), mock.patch("os.access", return_value=True), mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch("os.fork", return_value=0), mock.patch("os.setsid"), mock.patch("os.open", return_value=3), mock.patch("os.dup2"), \
+             mock.patch("os._exit", side_effect=SystemExit), mock.patch("subprocess.Popen") as popen, self.assertRaises(SystemExit):
+            S["notify_click"]("plain text", "clickable text", "Open sbx", ["game"])                        # the child that waits for the click
+        wait = calls[-1]; self.assertIn("default=Open sbx", wait); self.assertIn("clickable text", wait); self.assertIn("--wait", wait)
+        self.assertEqual(popen.call_args[0][0], ["/usr/bin/sbx-gui", "game"])                             # a click: sbx-gui game
+
+    # -- where a program comes from (list, show)
+    def test_a_program_comes_from_the_system_your_downloads_or_your_home(self):
+        S = self.S
+        self.write(".config/user-dirs.dirs", 'XDG_DOWNLOAD_DIR="$HOME/Transferencias"\n')
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": f"{self.home}/.config"}):
+            for path, kind in (("/usr/bin/firefox", "System"), ("/opt/x/bin/x", "System"), (f"{self.home}/Transferencias/Crash", "Downloaded"),
+                               (f"{self.home}/Downloads/Crash", "Home"), (f"{self.home}/Games/Crash", "Home"), ("/tmp/x/run", "Other")):
+                self.assertEqual(S["source_kind"](path), kind, path)
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": f"{self.home}/none"}):
+            self.assertEqual(S["source_kind"](f"{self.home}/Downloads/Crash"), "Downloaded")           # no user-dirs.dirs: the usual name
+        text = lambda **k: S["source_text"]({"kind": "Home", "path": f"{self.home}/Games/Crash", "missing": False, "moved": None, "moved_exists": False, **k})
+        self.assertEqual(text(), "Home: ~/Games/Crash")
+        self.assertEqual(text(kind="System", path="/usr/bin/firefox"), "System: /usr/bin")
+        self.assertEqual(text(missing=True), "Missing: ~/Games/Crash")
+        self.assertEqual(text(moved=f"{self.home}/Downloads/Crash"), "Home: ~/Games/Crash, moved from ~/Downloads/Crash")
+        self.assertEqual(text(moved=f"{self.home}/Downloads/Crash", moved_exists=True), "Home: ~/Games/Crash, copied from ~/Downloads/Crash")
+
+    def _sourced(self):
+        """Three programs that only have a private home, from a Downloads folder, the home and the system, named so that name order is the wrong order."""
+        self._origins(); S, h = self.S, self.home
+        S["running"] = lambda *a: []
+        S["SYSTEM_PROGRAMS"] = (f"{h}/sys/",)
+        for n, rel in (("aaa", "Downloads/Crash"), ("bbb", "Games/Other"), ("ccc", "sys/bin/tool")):
+            os.makedirs(f"{S['HOMES']}/{n}"); self.origin(n, self.write(rel, n))
+        os.makedirs(f"{S['HOMES']}/ddd"); self.write(".config/sbx/apps/ddd.conf", "net=0\n")                     # set up, no origin yet
+
+    def test_list_shows_the_source_and_puts_system_programs_first_and_downloaded_last(self):
+        self._sourced()
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": f"{self.home}/.config"}):
+            every = self._list("--all")
+        rows = every.splitlines()
+        self.assertEqual([r.split()[0] for r in rows], ["ddd", "ccc", "bbb", "aaa"])             # set up first, then System, Home, Downloaded
+        self.assertRegex(rows[1], r"ccc\s+idle\s+System: " + re.escape(f"{self.home}/sys/bin") + r"\s+\(only run from the terminal\)")
+        self.assertRegex(rows[3], r"aaa\s+idle\s+Downloaded: ~/Downloads/Crash\s+\(only")
+        self.assertNotIn("Downloaded", self._list().replace("Downloaded: ~/Downloads/Crash", ""))      # without --all the hidden ones stay hidden
+        os.unlink(f"{self.home}/Games/Other")
+        self.assertRegex(self._list("--all"), r"bbb\s+idle\s+Missing: ~/Games/Other")
+        os.makedirs(f"{self.home}/.local/bin"); os.symlink("/usr/local/bin/sbx", f"{self.home}/.local/bin/ddd")
+        self.assertRegex(self._list(), r"ddd\s+idle\s+\[link\]")
+
+    def test_list_and_show_say_when_a_decision_is_waiting(self):
+        self._sourced(); S = self.S
+        old = self.write("apps/ff", "real"); self.origin("ff", old); os.makedirs(f"{S['HOMES']}/ff"); self.write(".config/sbx/apps/ff.conf", "net=0\n")
+        evil = self.write("Downloads/ff", "evil"); self.origin("ff", evil)
+        self.assertRegex(self._list(), r"ff\s+idle\s+Home: ~/apps/ff\s+waiting for your decision: sbx rebind ff")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_show"]([ "ff"])
+        text = out.getvalue()
+        self.assertRegex(text, r"source\s+= Home: ~/apps/ff")
+        self.assertRegex(text, r"waiting\s+= ~/apps/ff -> ~/Downloads/ff"); self.assertIn("sbx rebind ff", text)
+        with contextlib.redirect_stdout(io.StringIO()): S["cmd_rebind"](["--dismiss", "ff"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_show"](["ff"])
+        self.assertNotIn("waiting", out.getvalue()); self.assertIn("source", out.getvalue())
+
+    def test_rebind_is_documented(self):
+        with open(f"{HERE}/sbx.1") as f: man = f.read()
+        with open(f"{HERE}/README.md") as f: readme = f.read()
+        self.assertIn("sbx rebind", man); self.assertIn("sbx rebind", readme); self.assertIn("sbx rebind", self.S["USAGE"])
+        self.assertIn("pending", man); self.assertIn("same file name", readme)
+        for c in ("sbx.bash", "_sbx", "sbx.fish"):
+            with open(f"{HERE}/completions/{c}") as f: self.assertIn("rebind", f.read(), c)
 
     # -- system calls
     @staticmethod
@@ -1569,8 +1871,9 @@ class Gui(unittest.TestCase):
         G = self.G; os.makedirs(G["APPS"], exist_ok=True)
         for n in ("a", "b"):
             with open(f"{G['APPS']}/{n}.conf", "w") as f: f.write("net=0\n")
-            os.makedirs(f"{G['HOMES']}/{n}"); os.makedirs(f"{G['CONF']}/ids", exist_ok=True); os.makedirs(f"{G['CONF']}/origins", exist_ok=True)
-            for d in ("ids", "origins"):
+            os.makedirs(f"{G['HOMES']}/{n}")
+            for d in ("ids", "origins", "pending"):
+                os.makedirs(f"{G['CONF']}/{d}", exist_ok=True)
                 with open(f"{G['CONF']}/{d}/{n}", "w") as f: f.write("x\n")
         trashed = []
         G["Gio"].File.new_for_path.return_value.trash.side_effect = lambda *_: trashed.append(1) or shutil.rmtree(f"{G['HOMES']}/a")
@@ -1580,7 +1883,7 @@ class Gui(unittest.TestCase):
         self.assertEqual(G["app_names"](), ["a", "b"]); win.alert.assert_called_once(); self.assertEqual(trashed, [])
         G["Win"].remove_program(win, "a")
         self.assertEqual(G["app_names"](), ["b"]); self.assertEqual(trashed, [1])
-        for d in ("ids", "origins"):
+        for d in ("ids", "origins", "pending"):
             self.assertFalse(os.path.exists(f"{G['CONF']}/{d}/a")); self.assertTrue(os.path.exists(f"{G['CONF']}/{d}/b"))
         win.nav.replace.assert_called_once(); win.fill_apps.assert_called_once(); G["Adw"].Toast.assert_called_with(title="Removed a from the list")
 
@@ -1624,6 +1927,168 @@ class Gui(unittest.TestCase):
         win.fill_apps.assert_called(); G["Adw"].Toast.assert_called_with(title="Removed 1 unused program")
         G["Win"].ask_remove_unused(win)                                                  # only `e` is left, and it holds data
         win.ask.assert_not_called(); G["Adw"].Toast.assert_called_with(title="Nothing unused")
+
+    # -- where a program comes from, and the decisions waiting for you
+    def _gui_origin(self, name, path, moved=None, content="x"):
+        """What sbx writes for NAME (through sbx's own write_origin, so a change of format breaks these tests)."""
+        G, S = self.G, self.S
+        S.update(HOME=G["HOME"], CONF=G["CONF"], HOMES=G["HOMES"])
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if not os.path.exists(path) and content is not None:
+            with open(path, "w") as f: f.write(content)
+        S["write_origin"](name, path, S["fingerprint"](path), moved)
+
+    def _gui_pending(self, name, old, new, rule):
+        G, S = self.G, self.S
+        S.update(HOME=G["HOME"], CONF=G["CONF"], HOMES=G["HOMES"])
+        S["write_pending"](name, old, new, rule, "why")
+
+    def _gui_waiting(self):
+        """`game` waits (rule c: the old file is gone), `ff` waits (rule d: the original is still there)."""
+        h = self.G["HOME"]
+        old = f"{h}/Downloads/Crash"; self._gui_origin("game", old); os.unlink(old)
+        new = self._gui_new("game", f"{h}/Games/CrashDeluxe"); self._gui_pending("game", old, new, "c")
+        orig = f"{h}/apps/ff"; self._gui_origin("ff", orig)
+        evil = self._gui_new("ff", f"{h}/Downloads/ff"); self._gui_pending("ff", orig, evil, "d")
+        return old, new, orig, evil
+
+    def _gui_new(self, name, path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f: f.write("other " + name)
+        return path
+
+    def test_the_window_reads_origins_and_pending_files_like_sbx_does(self):
+        G, S = self.G, self.S; h = G["HOME"]
+        old, new, orig, evil = self._gui_waiting()
+        self.assertEqual(G["SYSTEM_PROGRAMS"], S["SYSTEM_PROGRAMS"]); self.assertEqual(G["SOURCE_RANK"], S["SOURCE_RANK"])
+        for n in ("game", "ff"):
+            self.assertEqual(G["read_origin"](n), S["read_origin"](n)); self.assertEqual(G["read_pending"](n), S["read_pending"](n))
+        self.assertEqual(sorted(G["pending_decisions"]()), S["pending_names"]()); self.assertEqual(S["pending_names"](), ["ff", "game"])
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": f"{h}/.config"}):
+            for path in ("/usr/bin/x", "/opt/a/b", f"{h}/Downloads/x", f"{h}/Games/x", "/tmp/x/y"):
+                self.assertEqual(G["source_kind"](path), S["source_kind"](path), path)
+        # the same verdict in every situation: the old file back, the new file gone, the record moved on
+        with open(old, "w") as f: f.write("x")
+        self.assertEqual(sorted(G["pending_decisions"]()), S["pending_names"]()); self.assertEqual(S["pending_names"](), ["ff"])
+        os.unlink(evil); self.assertEqual(G["pending_decisions"](), {}); self.assertEqual(S["pending_names"](), [])
+        for n in ("game", "ff"): self.assertEqual(G["pending_stale"](n, G["read_pending"](n)), S["pending_stale"](n, S["read_pending"](n)))
+
+    def test_a_row_says_where_the_program_comes_from(self):
+        G = self.G; h = G["HOME"]; G["program_running"] = lambda n: False
+        self.assertEqual(G["row_subtitle"]("nothing"), "Uses the default settings")                       # never ran through sbx: nothing to say
+        self._gui_origin("game", f"{h}/Downloads/Crash")
+        self.assertEqual(G["row_subtitle"]("game"), "Downloaded · ~/Downloads/Crash · Uses the default settings")
+        self._gui_origin("tool", "/usr/bin/true"); self.assertEqual(G["row_subtitle"]("tool"), "System · /usr/bin · Uses the default settings")
+        os.makedirs(f"{h}/.local/bin"); os.symlink("/usr/local/bin/sbx", f"{h}/.local/bin/game")
+        self.assertEqual(G["row_subtitle"]("game", True), "Waiting for your decision · Downloaded · ~/Downloads/Crash · link · Uses the default settings")
+        new = f"{h}/Games/Crash"; os.makedirs(f"{h}/Games"); os.rename(f"{h}/Downloads/Crash", new)
+        self._gui_origin("game", new, moved=f"{h}/Downloads/Crash")
+        self.assertIn("Home · ~/Games/Crash · moved from ~/Downloads/Crash", G["row_subtitle"]("game"))
+        os.unlink(new); G["program_running"] = lambda n: n == "game"
+        self.assertTrue(G["row_subtitle"]("game").startswith("Running now · Missing: ~/Games/Crash · moved from ~/Downloads/Crash"))
+
+    def test_programs_only_run_from_the_terminal_list_system_first_and_downloaded_last(self):
+        G = self.G; h = G["HOME"]; G["program_running"] = lambda n: False
+        for n, path in (("aaa", f"{h}/Downloads/a"), ("bbb", f"{h}/Games/b"), ("ccc", "/usr/bin/true")):
+            os.makedirs(f"{G['HOMES']}/{n}"); self._gui_origin(n, path)
+        self.assertEqual(G["program_groups"](), ([], ["ccc", "bbb", "aaa"]))
+
+    def test_the_main_page_banner_counts_the_programs_waiting_for_a_decision(self):
+        G = self.G; G["program_running"] = lambda n: False
+        win = mock.MagicMock(); win.app_rows = []; win.others_open = False
+        G["Win"].fill_apps(win)
+        win.pending_banner.set_revealed.assert_called_with(False)
+        self._gui_waiting()
+        os.makedirs(G["APPS"], exist_ok=True)
+        for n in ("game", "ff"): os.makedirs(f"{G['HOMES']}/{n}", exist_ok=True)
+        G["Win"].fill_apps(win)
+        win.pending_banner.set_title.assert_called_with("2 programs are waiting for your decision"); win.pending_banner.set_revealed.assert_called_with(True)
+        self.assertEqual({c.args[0]: c.args[1] for c in win.app_row.call_args_list}, {"game": True, "ff": True})       # each row is told
+        os.unlink(f"{G['HOME']}/Downloads/ff")
+        G["Win"].fill_apps(win)
+        win.pending_banner.set_title.assert_called_with("1 program is waiting for your decision")
+        G["Win"].review_pending(win); win.open.assert_called_with("game")                                              # the banner's button
+
+    def _buttons(self):
+        made = {}
+        self.G["GLib"].markup_escape_text.side_effect = lambda text: text            # the stub would hide the wording
+        self.G["Gtk"].Button.side_effect = lambda **kw: made.setdefault(kw["label"], mock.MagicMock(name=kw["label"]))
+        self.addCleanup(setattr, self.G["Gtk"].Button, "side_effect", None)
+        return made
+
+    def test_the_program_page_shows_old_and_new_path_with_two_buttons(self):
+        G = self.G; self._gui_waiting(); made = self._buttons(); adw = G["Adw"]
+        win = mock.MagicMock()
+        self.assertIsNone(G["Win"].pending_group(win, "nothing waits"))
+        adw.PreferencesGroup.reset_mock(); adw.ActionRow.reset_mock()
+        self.assertIsNotNone(G["Win"].pending_group(win, "game"))
+        self.assertEqual(adw.ActionRow.call_args.kwargs["title"], "~/Downloads/Crash → ~/Games/CrashDeluxe")
+        self.assertEqual(adw.PreferencesGroup.call_args.kwargs["title"], "Waiting for your decision")
+        self.assertNotIn("still at", adw.PreferencesGroup.call_args.kwargs["description"])
+        self.assertEqual(set(made), {"Same program, accept", "Dismiss"})
+        accept, dismiss = (made[k].connect.call_args[0][1] for k in ("Same program, accept", "Dismiss"))
+        accept(); win.decide_pending.assert_called_once_with("game", True); win.ask.assert_not_called()               # rule c: one click
+        dismiss(); win.decide_pending.assert_called_with("game", False)
+
+    def test_when_the_original_is_still_there_the_warning_is_stronger_and_accepting_asks_again(self):
+        G = self.G; self._gui_waiting(); made = self._buttons(); adw = G["Adw"]; win = mock.MagicMock()
+        adw.PreferencesGroup.reset_mock()
+        G["Win"].pending_group(win, "ff")
+        desc = adw.PreferencesGroup.call_args.kwargs["description"]
+        self.assertIn("The original is still at ~/apps/ff", desc); self.assertIn("--name=OTHER", desc)
+        accept = made["Same program, accept"].connect.call_args[0][1]
+        accept()
+        win.decide_pending.assert_not_called()                                                                       # not yet: it asks first
+        heading, body, label, then = win.ask.call_args[0]
+        self.assertIn("~/apps/ff", body); self.assertEqual(label, "Accept anyway")
+        then(); win.decide_pending.assert_called_once_with("ff", True)
+        made["Dismiss"].connect.call_args[0][1](); win.decide_pending.assert_called_with("ff", False)               # dismissing is never asked
+
+    def test_the_buttons_style_follows_the_rule(self):
+        G = self.G; self._gui_waiting(); win = mock.MagicMock(); styles = {}
+        G["GLib"].markup_escape_text.side_effect = lambda text: text
+        G["Gtk"].Button.side_effect = lambda **kw: styles.__setitem__(kw["label"], kw["css_classes"]) or mock.MagicMock()
+        self.addCleanup(setattr, G["Gtk"].Button, "side_effect", None)
+        G["Win"].pending_group(win, "game"); self.assertEqual(styles["Same program, accept"], ["suggested-action"])
+        G["Win"].pending_group(win, "ff"); self.assertEqual(styles["Same program, accept"], ["destructive-action"])
+        self.assertEqual(styles["Dismiss"], ["flat"])
+
+    def test_the_buttons_run_sbx_rebind_through_the_cli(self):
+        G = self.G; win = mock.MagicMock(); cli = G["sbx_cmd"]()
+        done = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        with mock.patch.object(G["subprocess"], "run", return_value=done) as run:
+            G["Win"].decide_pending(win, "game", True)
+            self.assertEqual(run.call_args[0][0], [cli, "rebind", "game"])
+            win.nav.replace.assert_called_once(); win.fill_apps.assert_called_once(); win.alert.assert_not_called()
+            self.assertIn("accepted", G["Adw"].Toast.call_args.kwargs["title"])
+            G["Win"].decide_pending(win, "game", False)
+            self.assertEqual(run.call_args[0][0], [cli, "rebind", "--dismiss", "game"]); self.assertIn("Dismissed", G["Adw"].Toast.call_args.kwargs["title"])
+        win.reset_mock()
+        failed = types.SimpleNamespace(returncode=1, stdout="", stderr="sbx: nothing is waiting for a decision for 'game'\n")
+        with mock.patch.object(G["subprocess"], "run", return_value=failed):
+            G["Win"].decide_pending(win, "game", True)
+        self.assertIn("nothing is waiting", win.alert.call_args[0][1]); win.nav.replace.assert_called_once()           # the page shows how things stand now
+        win.reset_mock()
+        with mock.patch.object(G["subprocess"], "run", side_effect=OSError("no sbx")):
+            G["Win"].decide_pending(win, "game", True)
+        win.alert.assert_called_once(); win.nav.replace.assert_not_called()
+
+    def test_the_decision_made_through_the_cli_clears_the_banner(self):
+        G, S = self.G, self.S; self._gui_waiting()
+        S["warn"] = lambda m: None
+        with contextlib.redirect_stdout(io.StringIO()): S["cmd_rebind"](["game"]); S["cmd_rebind"](["--dismiss", "ff"])
+        self.assertEqual(G["pending_decisions"](), {})
+
+    def test_the_program_page_says_where_the_program_comes_from(self):
+        G = self.G; h = G["HOME"]; adw = G["Adw"]; win = mock.MagicMock()
+        self.assertIsNone(G["Win"].source_group(win, "never"))
+        self._gui_origin("game", f"{h}/Downloads/Crash", moved=f"{h}/Old/Crash")
+        adw.ActionRow.reset_mock(); G["Win"].source_group(win, "game")
+        kw = adw.ActionRow.call_args.kwargs
+        self.assertEqual(kw["title"], "Downloaded · ~/Downloads/Crash"); self.assertIn("moved from ~/Old/Crash", kw["subtitle"])
+        os.unlink(f"{h}/Downloads/Crash"); adw.ActionRow.reset_mock(); G["Win"].source_group(win, "game")
+        kw = adw.ActionRow.call_args.kwargs
+        self.assertEqual(kw["title"], "Missing: ~/Downloads/Crash"); self.assertIn("The recorded file is gone", kw["subtitle"])
 
     def test_switch_rows_do_not_carry_a_default_note(self):
         G = self.G

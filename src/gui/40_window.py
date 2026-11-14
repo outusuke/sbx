@@ -65,6 +65,8 @@ class Win(Adw.ApplicationWindow):
         menu.connect("notify::active", on_menu)
         mg.add(menu)
         page.add(mg)
+        self.pending_banner = Adw.Banner(title="", button_label="Review", revealed=False)       # filled in by fill_apps
+        self.pending_banner.connect("button-clicked", lambda *_: self.review_pending())
         self.apps_group = Adw.PreferencesGroup(title="Programs")
         self.app_rows = []
         self.others_open = False                 # is the terminal-only group open?
@@ -79,7 +81,7 @@ class Win(Adw.ApplicationWindow):
         add.connect("clicked", lambda *_: self.add_program())
         ts = Gtk.Button(icon_name="utilities-terminal-symbolic", tooltip_text="Troubleshooting")
         ts.connect("clicked", lambda *_: self.open_trouble(None))
-        return self.page("sbx", page, [add, ts])
+        return self.page("sbx", page, [add, ts], banner=self.pending_banner)
 
     def open_trouble(self, scope):
         """Health checks (sbx doctor) and the recent log, for one program or all."""
@@ -160,8 +162,8 @@ class Win(Adw.ApplicationWindow):
         refresh()
         self.nav.push(self.page("Troubleshooting", page, [rb, cb]))
 
-    def app_row(self, n):
-        r = Adw.ActionRow(title=n, subtitle=("Running now · " if program_running(n) else "") + summary(n), activatable=True, use_markup=False)
+    def app_row(self, n, waiting=False, linked=None, menu=None):
+        r = Adw.ActionRow(title=n, subtitle=row_subtitle(n, waiting, linked, menu), activatable=True, use_markup=False)
         play = Gtk.Button(icon_name="media-playback-start-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Run {n}")
         play.connect("clicked", lambda _b, n=n: self.run_program(n))
         r.add_suffix(play)
@@ -169,12 +171,22 @@ class Win(Adw.ApplicationWindow):
         r.connect("activated", lambda _r, n=n: self.open(n))
         return r
 
+    def review_pending(self):
+        """The banner's button: open the first program that waits for a decision (the decision itself is on its page)."""
+        names = sorted(pending_decisions())
+        if names: self.open(names[0])
+
     def fill_apps(self):
         for r in self.app_rows: self.apps_group.remove(r)
         self.app_rows.clear()
+        waiting = pending_decisions()
+        count = len(waiting)
+        self.pending_banner.set_title(f"{count} program{' is' if count == 1 else 's are'} waiting for your decision")
+        self.pending_banner.set_revealed(count > 0)
+        linked, menu = linked_programs(), launcher_programs()
         setup, others = program_groups()
         for n in setup:
-            r = self.app_row(n)
+            r = self.app_row(n, n in waiting, linked, menu)
             self.apps_group.add(r); self.app_rows.append(r)
         if others:
             ex = Adw.ExpanderRow(title=f"Only run from the terminal ({len(others)})", subtitle="No settings, link or app menu launcher yet", use_markup=False)
@@ -185,7 +197,7 @@ class Win(Adw.ApplicationWindow):
                 cl = Adw.ActionRow(title=f"Remove the {len(unused)} unused", subtitle="Almost no data. Their private homes are moved to the Trash", activatable=True, use_markup=False)
                 cl.connect("activated", lambda *_: self.ask_remove_unused())
                 ex.add_row(cl)
-            for n in others: ex.add_row(self.app_row(n))
+            for n in others: ex.add_row(self.app_row(n, n in waiting, linked, menu))
             self.apps_group.add(ex); self.app_rows.append(ex)
         if not self.app_rows:
             r = Adw.ActionRow(title="No programs yet", subtitle="Press + to add one. Programs you only run from the terminal are listed separately.")
@@ -245,6 +257,8 @@ class Win(Adw.ApplicationWindow):
         page_rows = []
         banner = None
         if scope is not None:
+            pg = self.pending_group(scope)                                            # a decision that blocks it comes before everything
+            if pg: page.add(pg)
             # what you came to do comes first: run it, see how, stop it
             banner = Adw.Banner(title="Running now. Changes apply the next time it starts.", revealed=program_running(scope))
             rg = Adw.PreferencesGroup()
@@ -276,6 +290,8 @@ class Win(Adw.ApplicationWindow):
             rg.add(run); rg.add(stop)
             refresh_run()
             page.add(rg)
+            srcg = self.source_group(scope)
+            if srcg: page.add(srcg)
         cg = Adw.PreferencesGroup(title="Summary" if scope is not None else "Every program starts with")
 
         def refresh_caps(*_):
@@ -345,6 +361,56 @@ class Win(Adw.ApplicationWindow):
             rm.connect("activated", lambda *_: self.ask(f"Remove {scope}?", body, "Remove", lambda: self.remove_program(scope)))
             xg.add(rm); page.add(xg)
         return self.page("Default settings" if scope is None else scope, page, banner=banner)
+
+    def source_group(self, scope):
+        """Where the program comes from, as sbx recorded it when it first ran (None when it never ran through sbx)."""
+        s = origin_source(scope)
+        if not s: return None
+        parts = source_parts(s)
+        more = parts[1:] + source_tags(scope)
+        if s["missing"]: more.insert(0, "The recorded file is gone. If you moved it, start the program from its new place.")
+        g = Adw.PreferencesGroup(title="Where it comes from")
+        g.add(Adw.ActionRow(title=parts[0], subtitle=" · ".join(more), use_markup=False))
+        return g
+
+    def pending_group(self, scope):
+        """What to decide when a file showed up under this program's name that sbx can't tell apart from a different program
+        (see check_origin in sbx). Both buttons run `sbx rebind`. Where the original still exists (rule d) the warning is stronger
+        and accepting is destructive-styled and asked twice. None when nothing waits."""
+        p = pending_decisions().get(scope)
+        if not p: return None
+        other = p["rule"] == "d"
+        text = (f"The original is still at {tilde(p['old'])}. A different file now wants the name {scope} and would share its settings and private home. "
+                "Accept only if it really is the same program; for a different one start it with --name=OTHER in a terminal instead."
+                if other else
+                f"{scope} was first run from {tilde(p['old'])}, which is gone. Now it is started from {tilde(p['new'])}. "
+                "If that is the same program, accept it. Until you decide, sbx won't start it.")
+        g = Adw.PreferencesGroup(title="Waiting for your decision", description=GLib.markup_escape_text(text))
+        g.add(Adw.ActionRow(title=f"{tilde(p['old'])} → {tilde(p['new'])}", use_markup=False))
+        accept = Gtk.Button(label="Same program, accept", valign=Gtk.Align.CENTER, css_classes=["destructive-action" if other else "suggested-action"])
+        dismiss = Gtk.Button(label="Dismiss", valign=Gtk.Align.CENTER, css_classes=["flat"])
+        if other:
+            accept.connect("clicked", lambda *_: self.ask(f"Accept a different file as {scope}?",
+                                                          f"The original is still at {tilde(p['old'])}. {tilde(p['new'])} would take over the settings and private home of {scope}.",
+                                                          "Accept anyway", lambda: self.decide_pending(scope, True)))
+        else:
+            accept.connect("clicked", lambda *_: self.decide_pending(scope, True))
+        dismiss.connect("clicked", lambda *_: self.decide_pending(scope, False))
+        box = Gtk.Box(spacing=6)
+        box.append(dismiss); box.append(accept)
+        g.set_header_suffix(box)
+        return g
+
+    def decide_pending(self, name, accept):
+        """Same program, accept / Dismiss. sbx itself decides (sbx rebind), like the link and app menu switches do."""
+        try: r = subprocess.run([sbx_cmd(), "rebind"] + ([] if accept else ["--dismiss"]) + [name], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as e:
+            return self.alert("Couldn't run sbx", str(e))
+        self.nav.replace([self.main, self.program_page(name)])                   # either way the page shows how things stand now
+        self.fill_apps()
+        if r.returncode != 0:
+            return self.alert("Couldn't decide", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
+        self.toasts.add_toast(Adw.Toast(title=f"{name} is accepted. Start it again." if accept else f"Dismissed. sbx asks again the next time {name} starts from there."))
 
     def network_row(self, scope, page_rows):
         """The switches net and net_private as one choice: full access, internet only, or none."""
