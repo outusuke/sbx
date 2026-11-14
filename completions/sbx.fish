@@ -6,13 +6,17 @@ end
 function __sbx_homes
     ls ~/.sbx-homes 2>/dev/null
 end
-set -l cmds preview show doctor clean desktop open schema list stop
+set -l cmds preview show doctor clean reset desktop open schema list stop
 set -l c "not __fish_seen_subcommand_from $cmds"
 complete -c sbx -f -n $c -a "$cmds"
 complete -c sbx -n $c -F
 # commands that take a name
 complete -c sbx -f -n "__fish_seen_subcommand_from show" -a "(__sbx_apps)"
 complete -c sbx -f -n "__fish_seen_subcommand_from clean" -a "(__sbx_homes)"
+complete -c sbx -f -n "__fish_seen_subcommand_from reset" -a "(__sbx_apps)"
+complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l default -d "Reset the default settings"
+complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l all -d "Reset every settings file"
+complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l yes -d "Don't ask"
 complete -c sbx -f -n "__fish_seen_subcommand_from stop" -a "(__sbx_homes)"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l install-opener -d "Add \"Run in sbx\" to Open With"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l install-menu -d "Add sbx-gui to the app menu"

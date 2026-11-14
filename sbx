@@ -1277,7 +1277,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
                "--loader": "loader"}
-COMMANDS = ("preview", "show", "doctor", "clean", "desktop", "open", "schema", "list", "stop")
+COMMANDS = ("preview", "show", "doctor", "clean", "reset", "desktop", "open", "schema", "list", "stop")
 
 USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx preview [options] PROGRAM [args]   print the command instead of running it\n"
@@ -1286,6 +1286,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx list                               the programs sbx knows, and which are running\n"
          "sbx stop NAME                          stop a running program\n"
          "sbx clean [--yes] NAME                 delete a program's private home and machine-id (not while it runs)\n"
+         "sbx reset [--yes] NAME|--default|--all  delete settings so the built-in defaults apply again (data stays)\n"
          "sbx open FILE                          run a downloaded program with sensible defaults (for \"Open with\")\n"
          "sbx desktop NAME | --remove NAME       make a launcher (NAME.desktop) start the program through sbx\n"
          "sbx desktop --install-opener           add \"Run in sbx\" to your file manager's Open With (--remove-opener undoes it)\n"
@@ -1399,6 +1400,32 @@ def cmd_clean(a):
         try: os.unlink(gone)
         except OSError: pass
     print(f"removed {tilde(home)} and its machine-id")
+
+
+def cmd_reset(a):
+    """sbx reset [--yes] NAME | --default | --all: delete settings files so the built-in defaults apply again. Data stays."""
+    yes = "--yes" in a
+    a = [x for x in a if x != "--yes"]
+    if len(a) != 1 or (a[0].startswith("-") and a[0] not in ("--default", "--all")): die("usage: sbx reset [--yes] NAME | --default | --all")
+    if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
+    apps = f"{CONF}/apps"
+    if a[0] == "--all":
+        files = [f"{CONF}/default.conf"]
+        try: files += [f"{apps}/{n}" for n in sorted(os.listdir(apps)) if n.endswith(".conf") and not n.startswith(".")]
+        except OSError: pass
+    elif a[0] == "--default": files = [f"{CONF}/default.conf"]
+    else:
+        if clean(a[0]) != a[0]: die(f"'{a[0]}' is not a program name")
+        files = [f"{apps}/{a[0]}.conf"]
+    files = [p for p in files if os.path.lexists(p)]
+    if not files: print("Nothing to reset: already using the built-in defaults."); return
+    if not yes:
+        if not sys.stdin.isatty(): die("not asking without a terminal; add --yes")
+        print("Delete these settings files? Private homes, machine-ids and menu launchers stay.")
+        for p in files: print(f"  {tilde(p)}")
+        if input("Reset? [y/N] ").strip().lower() not in ("y", "yes"): die("nothing deleted", 0)
+    for p in files: os.unlink(p)
+    print(f"deleted {len(files)} settings file{'s' if len(files) != 1 else ''}; the built-in defaults apply again")
 
 
 def cmd_list(a):
@@ -1696,6 +1723,7 @@ def main(argv=None):
     if cmd == "doctor": sys.exit(doctor())
     if cmd == "schema": print(json.dumps(schema(), indent=1)); return
     if cmd == "clean": return cmd_clean(a)
+    if cmd == "reset": return cmd_reset(a)
     if cmd == "list": return cmd_list(a)
     if cmd == "stop": return cmd_stop(a)
     if cmd == "desktop": return cmd_desktop(a)

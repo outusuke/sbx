@@ -37,6 +37,28 @@ def save(scope, lines):
     os.replace(p + ".tmp", p)
 
 
+def settings_files():
+    """Every settings file that exists: default.conf and apps/*.conf."""
+    out = [p for p in (path_for(None),) if os.path.lexists(p)]
+    try: out += [f"{APPS}/{f}" for f in sorted(os.listdir(APPS)) if f.endswith(".conf") and not f.startswith(".")]
+    except OSError: pass
+    return out
+
+
+def reset_settings(scope):
+    """Delete a settings file. Writing an empty one is not the same: a program that has a file loses the defaults `sbx open` gives one without."""
+    try: os.unlink(path_for(scope)); return True
+    except OSError: return False
+
+
+def reset_all_settings():
+    n = 0
+    for p in settings_files():
+        try: os.unlink(p); n += 1
+        except OSError: pass
+    return n
+
+
 def key_of(line):
     m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", line)       # digits too: x11
     return m.group(1) if m else None

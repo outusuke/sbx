@@ -66,6 +66,7 @@ sbx doctor                               check bubblewrap, helpers, Wayland supp
 sbx list                                 the programs sbx knows, and which are running
 sbx stop NAME                            stop a running program
 sbx clean [--yes] NAME                   delete a private home and its machine-id (refused while the program runs)
+sbx reset [--yes] NAME|--default|--all      delete settings files so the built-in defaults apply again (data stays)
 sbx open FILE                            run a downloaded program with sensible defaults (what "Open with" calls)
 sbx desktop NAME                         make a launcher (.desktop file) start the program through sbx
 sbx desktop --remove NAME                undo that

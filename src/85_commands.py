@@ -44,6 +44,32 @@ def cmd_clean(a):
     print(f"removed {tilde(home)} and its machine-id")
 
 
+def cmd_reset(a):
+    """sbx reset [--yes] NAME | --default | --all: delete settings files so the built-in defaults apply again. Data stays."""
+    yes = "--yes" in a
+    a = [x for x in a if x != "--yes"]
+    if len(a) != 1 or (a[0].startswith("-") and a[0] not in ("--default", "--all")): die("usage: sbx reset [--yes] NAME | --default | --all")
+    if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
+    apps = f"{CONF}/apps"
+    if a[0] == "--all":
+        files = [f"{CONF}/default.conf"]
+        try: files += [f"{apps}/{n}" for n in sorted(os.listdir(apps)) if n.endswith(".conf") and not n.startswith(".")]
+        except OSError: pass
+    elif a[0] == "--default": files = [f"{CONF}/default.conf"]
+    else:
+        if clean(a[0]) != a[0]: die(f"'{a[0]}' is not a program name")
+        files = [f"{apps}/{a[0]}.conf"]
+    files = [p for p in files if os.path.lexists(p)]
+    if not files: print("Nothing to reset: already using the built-in defaults."); return
+    if not yes:
+        if not sys.stdin.isatty(): die("not asking without a terminal; add --yes")
+        print("Delete these settings files? Private homes, machine-ids and menu launchers stay.")
+        for p in files: print(f"  {tilde(p)}")
+        if input("Reset? [y/N] ").strip().lower() not in ("y", "yes"): die("nothing deleted", 0)
+    for p in files: os.unlink(p)
+    print(f"deleted {len(files)} settings file{'s' if len(files) != 1 else ''}; the built-in defaults apply again")
+
+
 def cmd_list(a):
     """Every program sbx knows (a private home or a settings file, or running now), and whether it is running."""
     if a: die("usage: sbx list")

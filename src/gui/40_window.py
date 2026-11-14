@@ -68,6 +68,11 @@ class Win(Adw.ApplicationWindow):
         self.apps_group = Adw.PreferencesGroup(title="Programs")
         self.app_rows = []
         page.add(self.apps_group)
+        rg = Adw.PreferencesGroup(title="Reset")
+        ra = Adw.ActionRow(title="Reset all settings", subtitle="Deletes the default settings and every program's own. Program data stays", activatable=True, use_markup=False)
+        ra.connect("activated", lambda *_: self.reset_all())
+        rg.add(ra)
+        page.add(rg)
         self.fill_apps()
         add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add a program")
         add.connect("clicked", lambda *_: self.add_program())
@@ -280,10 +285,13 @@ class Win(Adw.ApplicationWindow):
             mg.add(self.app_menu_row(scope))
             page.add(mg)
         dg = Adw.PreferencesGroup(title="Reset")
-        rs = Adw.ActionRow(title="Reset settings", subtitle="Removes everything above for " + ("all programs" if scope is None else scope),
-                           activatable=True, use_markup=False)
-        rs.connect("activated", lambda *_: self.ask("Reset settings?", "Folders and switches go back to the defaults. Program data is not touched.", "Reset",
-                                                    lambda: self.reset(scope)))
+        rs = Adw.ActionRow(title="Reset to defaults", activatable=True, use_markup=False,
+                           subtitle=("Deletes the default settings. Programs with their own settings keep them" if scope is None
+                                     else f"Deletes the settings of {scope}. It then uses the Default settings again"))
+        rs.connect("activated", lambda *_: self.ask("Reset to defaults?",
+                                                    ("The default settings are deleted. Programs with their own settings keep them. " if scope is None
+                                                     else "This program's own settings are deleted, so it uses the Default settings again. ") + "Program data is not touched.",
+                                                    "Reset", lambda: self.reset(scope)))
         dg.add(rs)
         if scope is not None and os.path.isdir(f"{HOMES}/{scope}"):
             tr = Adw.ActionRow(title="Move private home to Trash", subtitle=tilde(f"{HOMES}/{scope}"), activatable=True, use_markup=False)
@@ -497,8 +505,20 @@ class Win(Adw.ApplicationWindow):
         self.nav.replace([self.main, self.program_page(None)])            # like reset(): no stale copy of this page to come back to
 
     def reset(self, scope):
-        save(scope, [])
+        done = reset_settings(scope)
         self.nav.replace([self.main, self.program_page(scope)])
+        self.toasts.add_toast(Adw.Toast(title="Settings reset to the defaults" if done else "Already using the defaults"))
+
+    def reset_all(self):
+        n = len(settings_files())
+        if not n: return self.toasts.add_toast(Adw.Toast(title="Nothing to reset"))
+        self.ask("Reset all settings?", f"Deletes every settings file ({n}): the default settings and each program's own. "
+                 "Private homes and app menu launchers are not touched.", "Reset all", lambda: self.do_reset_all())
+
+    def do_reset_all(self):
+        n = reset_all_settings()
+        self.fill_apps()
+        self.toasts.add_toast(Adw.Toast(title=f"Reset {n} settings file{'s' if n != 1 else ''}"))
 
     def trash_home(self, name, row):
         if program_running(name):

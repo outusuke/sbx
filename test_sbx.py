@@ -697,7 +697,7 @@ class Units(unittest.TestCase):
                 ok = (o in t or f"-l {name}" in t or name in looped
                       or (name.startswith("portal-") and name[7:] in looped))
                 self.assertTrue(ok, f"{f} doesn't offer {o}")
-            for c in ("preview", "show", "doctor", "clean", "desktop", "open", "list", "stop"): self.assertIn(c, t, f"{f} lacks {c}")
+            for c in ("preview", "show", "doctor", "clean", "reset", "desktop", "open", "list", "stop"): self.assertIn(c, t, f"{f} lacks {c}")
 
     # -- running programs
     def running_file(self, pid, name, start="same"):
@@ -749,6 +749,48 @@ class Units(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out): S["cmd_list"]([])
         self.assertEqual([l.split() for l in out.getvalue().splitlines()], [["busy", "running", "(1)"], ["idle", "idle"]])
+
+    def test_reset_deletes_settings_files_and_nothing_else(self):
+        S = self.S; conf = S["CONF"]; apps = f"{conf}/apps"
+        os.makedirs(apps); os.makedirs(f"{S['HOMES']}/a")
+        def make():
+            for p in (f"{conf}/default.conf", f"{apps}/a.conf", f"{apps}/b.conf"):
+                with open(p, "w") as f: f.write("net=0\n")
+        def reset(*args):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out): S["cmd_reset"](list(args))
+            return out.getvalue()
+        make()
+        reset("--yes", "a")                                                                      # one program: only its own file
+        self.assertEqual(sorted(os.listdir(apps)), ["b.conf"]); self.assertTrue(os.path.exists(f"{conf}/default.conf"))
+        self.assertTrue(os.path.isdir(f"{S['HOMES']}/a"), "private homes are data, not settings")
+        reset("--yes", "--default")
+        self.assertFalse(os.path.exists(f"{conf}/default.conf")); self.assertTrue(os.path.exists(f"{apps}/b.conf"))
+        self.assertIn("Nothing to reset", reset("--yes", "--default"))                           # already the defaults: not an error
+        make(); reset("--all", "--yes")
+        self.assertEqual(os.listdir(apps), []); self.assertFalse(os.path.exists(f"{conf}/default.conf"))
+        self.assertTrue(os.path.isdir(f"{S['HOMES']}/a"))
+        make()
+        for bad in (["../x"], ["--bogus"], [], ["a", "b"], ["--yes"]):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit, msg=bad): S["cmd_reset"](bad)
+        with mock.patch.object(sys, "stdin", io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as c:
+            S["cmd_reset"]([ "a"])                                                               # no terminal to ask on
+        self.assertNotEqual(c.exception.code, 0); self.assertIn("--yes", err.getvalue()); self.assertTrue(os.path.exists(f"{apps}/a.conf"))
+        tty = mock.Mock(); tty.isatty.return_value = True
+        with mock.patch.object(sys, "stdin", tty), mock.patch("builtins.input", return_value="n"), contextlib.redirect_stdout(io.StringIO()) as out, \
+             contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as c:
+            S["cmd_reset"](["--all"])
+        self.assertEqual(c.exception.code, 0); self.assertTrue(os.path.exists(f"{apps}/a.conf"))
+        self.assertIn("apps/a.conf", out.getvalue()); self.assertIn("apps/b.conf", out.getvalue()); self.assertIn("default.conf", out.getvalue())   # it says what goes
+        with mock.patch.object(sys, "stdin", tty), mock.patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
+            S["cmd_reset"](["--all"])
+        self.assertFalse(os.path.exists(f"{apps}/a.conf"))
+        with mock.patch.dict(os.environ, {"SBX_ACTIVE": "1"}), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["cmd_reset"](["--yes", "--all"])
+
+    def test_reset_is_documented(self):
+        with open(f"{HERE}/sbx.1") as f: man = f.read()
+        with open(f"{HERE}/README.md") as f: readme = f.read()
+        self.assertIn("sbx reset", man); self.assertIn("sbx reset", readme); self.assertIn("sbx reset", self.S["USAGE"]); self.assertIn("reset", self.S["COMMANDS"])
 
     def test_install_hint(self):
         def hint(text):
@@ -1263,6 +1305,25 @@ class Gui(unittest.TestCase):
         self.assertEqual(len(G["Win"].folders_group(win, None)), 1)                      # the Default page has no such group
         G["Win"].open_defaults(win)
         self.assertEqual(G["CURRENT"], [None]); win.nav.replace.assert_called_once()
+
+    def test_reset_deletes_the_settings_file_instead_of_emptying_it(self):
+        G = self.G; os.makedirs(G["APPS"], exist_ok=True)
+        for p in (f"{G['CONF']}/default.conf", f"{G['APPS']}/a.conf", f"{G['APPS']}/b.conf"):
+            with open(p, "w") as f: f.write("net=0\n")
+        win = mock.MagicMock()
+        G["Win"].reset(win, "a")
+        self.assertFalse(os.path.exists(f"{G['APPS']}/a.conf"), "an empty file would still switch off the defaults of `sbx open`")
+        self.assertTrue(os.path.exists(f"{G['APPS']}/b.conf") and os.path.exists(f"{G['CONF']}/default.conf"))
+        win.nav.replace.assert_called_once(); G["Adw"].Toast.assert_called_with(title="Settings reset to the defaults")
+        G["Win"].reset(win, "a"); G["Adw"].Toast.assert_called_with(title="Already using the defaults")
+        self.assertEqual(len(G["settings_files"]()), 2)
+        win.ask.reset_mock(); win.toasts.add_toast.reset_mock()
+        G["Win"].reset_all(win)                                                          # asks first, with the number of files
+        self.assertIn("(2)", win.ask.call_args[0][1]); self.assertTrue(os.path.exists(f"{G['APPS']}/b.conf"))
+        G["Win"].do_reset_all(win)
+        self.assertEqual(G["settings_files"](), []); win.fill_apps.assert_called_once(); G["Adw"].Toast.assert_called_with(title="Reset 2 settings files")
+        win.ask.reset_mock(); G["Win"].reset_all(win)
+        win.ask.assert_not_called(); G["Adw"].Toast.assert_called_with(title="Nothing to reset")
 
     def test_switch_rows_do_not_carry_a_default_note(self):
         G = self.G

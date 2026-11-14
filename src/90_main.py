@@ -9,6 +9,7 @@ def main(argv=None):
     if cmd == "doctor": sys.exit(doctor())
     if cmd == "schema": print(json.dumps(schema(), indent=1)); return
     if cmd == "clean": return cmd_clean(a)
+    if cmd == "reset": return cmd_reset(a)
     if cmd == "list": return cmd_list(a)
     if cmd == "stop": return cmd_stop(a)
     if cmd == "desktop": return cmd_desktop(a)
