@@ -278,10 +278,10 @@ def program_groups():
     return setup, sorted((n for n in names if n not in setup), key=rank)
 
 
-def row_subtitle(name, waiting=False, linked=None, menu=None):
-    """The second line of a program's row: running, waiting for a decision, where it comes from, how else it starts, then its settings."""
+def row_subtitle(name, waiting=False, linked=None, menu=None, show_running=True):
+    """The second line of a program's row: running (unless the row shows that itself), waiting for a decision, where it comes from, how else it starts, then its settings."""
     s = origin_source(name)
-    parts = (["Running now"] if program_running(name) else []) + (["Waiting for your decision"] if waiting else [])
+    parts = (["Running now"] if show_running and program_running(name) else []) + (["Waiting for your decision"] if waiting else [])
     return " · ".join(parts + (source_parts(s) if s else []) + source_tags(name, linked, menu) + [summary(name)])
 
 

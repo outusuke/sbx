@@ -681,10 +681,10 @@ def program_groups():
     return setup, sorted((n for n in names if n not in setup), key=rank)
 
 
-def row_subtitle(name, waiting=False, linked=None, menu=None):
-    """The second line of a program's row: running, waiting for a decision, where it comes from, how else it starts, then its settings."""
+def row_subtitle(name, waiting=False, linked=None, menu=None, show_running=True):
+    """The second line of a program's row: running (unless the row shows that itself), waiting for a decision, where it comes from, how else it starts, then its settings."""
     s = origin_source(name)
-    parts = (["Running now"] if program_running(name) else []) + (["Waiting for your decision"] if waiting else [])
+    parts = (["Running now"] if show_running and program_running(name) else []) + (["Waiting for your decision"] if waiting else [])
     return " · ".join(parts + (source_parts(s) if s else []) + source_tags(name, linked, menu) + [summary(name)])
 
 
@@ -931,13 +931,39 @@ class Win(Adw.ApplicationWindow):
         self.nav.push(self.page("Log" + (f" · {scope}" if scope else ""), page, [rb, cb]))
 
     def app_row(self, n, waiting=False, linked=None, menu=None):
-        r = Adw.ActionRow(title=n, subtitle=row_subtitle(n, waiting, linked, menu), activatable=True, use_markup=False)
+        live = program_running(n)
+        r = Adw.ActionRow(title=n, subtitle=row_subtitle(n, waiting, linked, menu, show_running=False), activatable=True, use_markup=False)
+        if live:                                                                  # running: a green word and a stop button, before the run button
+            r.add_suffix(Gtk.Label(label="Running", valign=Gtk.Align.CENTER, css_classes=["success"]))
+            stop = Gtk.Button(icon_name="media-playback-stop-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Stop {n}")
+            stop.connect("clicked", lambda _b, n=n: self.stop_running(n) and self.watch_running(n, False))
+            r.add_suffix(stop)
         play = Gtk.Button(icon_name="media-playback-start-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Run {n}")
-        play.connect("clicked", lambda _b, n=n: self.run_program(n))
+        play.connect("clicked", lambda _b, n=n: (self.run_program(n), self.watch_running(n, True, 20)))
         r.add_suffix(play)
         r.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
         r.connect("activated", lambda _r, n=n: self.open(n))
         return r
+
+    def stop_running(self, name):
+        """sbx stop NAME. True if it was asked to stop (it takes a moment to end); otherwise says why not."""
+        try: r = subprocess.run([sbx_cmd(), "stop", name], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError) as e:
+            self.alert("Couldn't run sbx", str(e)); return False
+        if r.returncode != 0:
+            self.alert(f"Couldn't stop {name}", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}"); return False
+        self.toasts.add_toast(Adw.Toast(title=f"Stopping {name}…"))
+        return True
+
+    def watch_running(self, name, want_live, tries=30):
+        """A start or a stop takes a moment: look every half second, and redraw the list once NAME is in the wanted state (or it gives up)."""
+        left = [tries]
+        def tick():
+            left[0] -= 1
+            if program_running(name) == want_live or left[0] <= 0:
+                self.fill_apps(); return False
+            return True
+        GLib.timeout_add(500, tick)
 
     def review_pending(self):
         """The banner's button: open the first program that waits for a decision (the decision itself is on its page)."""
@@ -1055,12 +1081,7 @@ class Win(Adw.ApplicationWindow):
                 watch_run(True, 20)
 
             def stop_it(*_):
-                try: r = subprocess.run([sbx_cmd(), "stop", scope], capture_output=True, text=True, timeout=10)
-                except (OSError, subprocess.SubprocessError) as e:
-                    return self.alert("Couldn't run sbx", str(e))
-                if r.returncode != 0: return self.alert(f"Couldn't stop {scope}", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
-                self.toasts.add_toast(Adw.Toast(title=f"Stopping {scope}…"))
-                watch_run(False, 30)
+                if self.stop_running(scope): watch_run(False, 30)
             run.connect("activated", start)
             stop.connect("activated", stop_it)
             lgr = Adw.ActionRow(title="Show log", subtitle="Starts, exits and errors of this program", activatable=True, use_markup=False)
