@@ -1042,9 +1042,17 @@ class Win(Adw.ApplicationWindow):
                 banner.set_revealed(live)
                 return False                                                      # also used as a one-shot timeout
 
+            def watch_run(want_live, tries):
+                """A start or a stop takes a moment: look again every half second until the state is the wanted one (or it gives up)."""
+                left = [tries]
+                def tick():
+                    refresh_run(); left[0] -= 1
+                    return left[0] > 0 and program_running(scope) != want_live        # True: look again
+                GLib.timeout_add(500, tick)
+
             def start(*_):
                 self.run_program(scope)
-                GLib.timeout_add(2500, refresh_run)
+                watch_run(True, 20)
 
             def stop_it(*_):
                 try: r = subprocess.run([sbx_cmd(), "stop", scope], capture_output=True, text=True, timeout=10)
@@ -1052,7 +1060,7 @@ class Win(Adw.ApplicationWindow):
                     return self.alert("Couldn't run sbx", str(e))
                 if r.returncode != 0: return self.alert(f"Couldn't stop {scope}", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
                 self.toasts.add_toast(Adw.Toast(title=f"Stopping {scope}…"))
-                GLib.timeout_add(1000, refresh_run)
+                watch_run(False, 30)
             run.connect("activated", start)
             stop.connect("activated", stop_it)
             lgr = Adw.ActionRow(title="Show log", subtitle="Starts, exits and errors of this program", activatable=True, use_markup=False)
