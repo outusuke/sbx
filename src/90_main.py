@@ -21,6 +21,8 @@ def main(argv=None):
     opts, a = parse_options(a)
     if not a: die("usage: sbx [preview] [options] PROGRAM [args]")
     if cmd == "preview":
+        if not opts.get("loader") and "/" in a[0] and os.path.isfile(a[0]) and not os.access(a[0], os.X_OK) and elf_interpreter(os.path.abspath(a[0])):
+            opts = {**opts, "loader": elf_interpreter(os.path.abspath(a[0]))}      # run() sets the execute bit for the run (or uses the loader); preview shows the loader form without touching the file
         _, cmdline, st = build(a[0], a[1:], False, opts)
         print(shlex.join(st["prefix"] + st["wrap"] + cmdline)); return
     run(a[0], a[1:], opts)

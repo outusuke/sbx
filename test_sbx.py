@@ -521,6 +521,17 @@ class Units(unittest.TestCase):
         words = __import__("shlex").split(out.getvalue())
         self.assertEqual(words[:2], ["pasta", "--quiet"]); self.assertLess(words.index("pasta"), words.index("bwrap"))
 
+    def test_preview_of_a_file_without_the_execute_bit_uses_the_loader(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        f = f"{d}/prog"; shutil.copy("/bin/true", f); os.chmod(f, 0o644)
+        loader = self.S["elf_interpreter"](f)
+        if not loader: self.skipTest("/bin/true is not a dynamically linked program here")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): self.S["main"](["preview", "--ignore-config", f])
+        words = __import__("shlex").split(out.getvalue())
+        self.assertEqual(words[words.index("--") + 1:], [loader, f])
+        self.assertFalse(os.access(f, os.X_OK))                           # preview never changes the file
+
     def test_unknown_architecture_does_not_start_without_the_filter(self):
         if os.geteuid() == 0: self.skipTest("run() refuses root before it gets to the architecture")
         S, dies = self.S, []
