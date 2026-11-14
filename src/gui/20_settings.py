@@ -59,6 +59,17 @@ def reset_all_settings():
     return n
 
 
+def forget_program(name):
+    """Take a program off the list: its private home goes to the Trash first (restorable; if that fails it raises GLib.Error and nothing
+    else is touched), then its settings file, machine-id and origin note."""
+    home = f"{HOMES}/{name}"
+    if os.path.isdir(home) and not os.path.islink(home): Gio.File.new_for_path(home).trash(None)
+    reset_settings(name)
+    for p in (f"{CONF}/ids/{name}", f"{CONF}/origins/{name}"):
+        try: os.unlink(p)
+        except OSError: pass
+
+
 def key_of(line):
     m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", line)       # digits too: x11
     return m.group(1) if m else None

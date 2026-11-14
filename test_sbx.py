@@ -1511,6 +1511,37 @@ class Gui(unittest.TestCase):
         for n in ("google-chrome-stable", "google-chrome", "firefox", "org.mozilla.firefox"): self.assertTrue(G["launcher_is_ours"](n), n)
         for n in ("chrome", "mine", "missing", "fire"): self.assertFalse(G["launcher_is_ours"](n), n)
 
+    def test_removing_a_program_takes_it_off_the_list_and_trashes_only_its_home(self):
+        G = self.G; os.makedirs(G["APPS"], exist_ok=True)
+        for n in ("a", "b"):
+            with open(f"{G['APPS']}/{n}.conf", "w") as f: f.write("net=0\n")
+            os.makedirs(f"{G['HOMES']}/{n}"); os.makedirs(f"{G['CONF']}/ids", exist_ok=True); os.makedirs(f"{G['CONF']}/origins", exist_ok=True)
+            for d in ("ids", "origins"):
+                with open(f"{G['CONF']}/{d}/{n}", "w") as f: f.write("x\n")
+        trashed = []
+        G["Gio"].File.new_for_path.return_value.trash.side_effect = lambda *_: trashed.append(1) or shutil.rmtree(f"{G['HOMES']}/a")
+        G["program_running"] = lambda n: n == "b"
+        win = mock.MagicMock()
+        G["Win"].remove_program(win, "b")                                                  # running: nothing is touched
+        self.assertEqual(G["app_names"](), ["a", "b"]); win.alert.assert_called_once(); self.assertEqual(trashed, [])
+        G["Win"].remove_program(win, "a")
+        self.assertEqual(G["app_names"](), ["b"]); self.assertEqual(trashed, [1])
+        for d in ("ids", "origins"):
+            self.assertFalse(os.path.exists(f"{G['CONF']}/{d}/a")); self.assertTrue(os.path.exists(f"{G['CONF']}/{d}/b"))
+        win.nav.replace.assert_called_once(); win.fill_apps.assert_called_once(); G["Adw"].Toast.assert_called_with(title="Removed a from the list")
+
+    def test_a_program_stays_when_its_home_cannot_go_to_the_trash(self):
+        G = self.G; os.makedirs(G["APPS"], exist_ok=True); os.makedirs(f"{G['HOMES']}/a")
+        with open(f"{G['APPS']}/a.conf", "w") as f: f.write("net=0\n")
+        class Failed(Exception): message = "no trash here"
+        G["GLib"].Error = Failed
+        G["Gio"].File.new_for_path.return_value.trash.side_effect = Failed()
+        G["program_running"] = lambda n: False
+        win = mock.MagicMock()
+        G["Win"].remove_program(win, "a")
+        self.assertTrue(os.path.exists(f"{G['APPS']}/a.conf")); self.assertTrue(os.path.isdir(f"{G['HOMES']}/a"))
+        self.assertIn("no trash here", win.alert.call_args[0][1]); win.nav.replace.assert_not_called()
+
     def test_switch_rows_do_not_carry_a_default_note(self):
         G = self.G
         os.makedirs(G["APPS"], exist_ok=True)

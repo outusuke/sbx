@@ -300,6 +300,13 @@ class Win(Adw.ApplicationWindow):
                                                         "Move to Trash", lambda: self.trash_home(scope, tr)))
             dg.add(tr)
         page.add(dg)
+        if scope is not None:
+            body = "Its settings are deleted and its private home is moved to the Trash, where you can restore it from. "
+            if link_is_ours(scope) or launcher_is_ours(scope): body += "Its terminal link and app menu launcher stay: turn those off first if you don't want them."
+            xg = Adw.PreferencesGroup()
+            rm = Adw.ActionRow(title="Remove from the list", subtitle="Deletes its settings and moves its private home to the Trash", activatable=True, use_markup=False)
+            rm.connect("activated", lambda *_: self.ask(f"Remove {scope}?", body, "Remove", lambda: self.remove_program(scope)))
+            xg.add(rm); page.add(xg)
         return self.page("Default settings" if scope is None else scope, page, banner=banner)
 
     def network_row(self, scope, page_rows):
@@ -544,6 +551,16 @@ class Win(Adw.ApplicationWindow):
         n = reset_all_settings()
         self.fill_apps()
         self.toasts.add_toast(Adw.Toast(title=f"Reset {n} settings file{'s' if n != 1 else ''}"))
+
+    def remove_program(self, name):
+        if program_running(name):
+            return self.alert("It is running", f"Stop it first (sbx stop {name}), then remove it.")
+        try: forget_program(name)
+        except GLib.Error as e:
+            return self.alert("Couldn't move its private home to the Trash", e.message)
+        CURRENT[:] = []
+        self.nav.replace([self.main]); self.fill_apps()
+        self.toasts.add_toast(Adw.Toast(title=f"Removed {name} from the list"))
 
     def trash_home(self, name, row):
         if program_running(name):
