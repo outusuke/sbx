@@ -595,6 +595,8 @@ class Win(Adw.ApplicationWindow):
     def run_program(self, name):
         # bwrap --die-with-parent kills the program when its parent exits, so a child of this window would die with it.
         # A transient user service has the systemd user manager as parent instead (its output goes to the journal).
+        argv, problem = start_command(name)
+        if problem: return self.alert(f"Can't start {name}", problem)
         sr = shutil.which("systemd-run")
         if sr:
             cmd = [sr, "--user", "--collect", "--quiet", "--same-dir", f"--unit=sbx-{name}-{os.getpid()}",
@@ -603,9 +605,9 @@ class Win(Adw.ApplicationWindow):
                       "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE",
                       "LANG", "LANGUAGE", "LC_ALL", "TZ", "PATH"):
                 if k in os.environ: cmd.append(f"--setenv={k}={os.environ[k]}")
-            cmd += [sbx_cmd(), name]
+            cmd += argv
         else:
-            cmd = [sbx_cmd(), name]
+            cmd = argv
         err = tempfile.TemporaryFile()
         try: p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
         except OSError as e:

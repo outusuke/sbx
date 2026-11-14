@@ -2044,6 +2044,36 @@ class Gui(unittest.TestCase):
         then(); win.decide_pending.assert_called_once_with("ff", True)
         made["Dismiss"].connect.call_args[0][1](); win.decide_pending.assert_called_with("ff", False)               # dismissing is never asked
 
+    def test_the_window_starts_a_program_that_is_not_in_path_from_its_recorded_file(self):
+        G = self.G; h = G["HOME"]; cli = G["sbx_cmd"]()
+        bindir = f"{h}/bin"; os.makedirs(bindir)
+        with mock.patch.dict(os.environ, {"PATH": bindir}):
+            self.assertIn("not in your PATH", G["start_command"]("CrashBandicoot-Linux")[1])                      # never ran from a file: say how
+            game = f"{h}/Games/CrashBandicoot-Linux"; self._gui_origin("CrashBandicoot-Linux", game)
+            self.assertEqual(G["start_command"]("CrashBandicoot-Linux"), ([cli, "open", game], None))              # as Open With does
+            self._gui_origin("renamed", game)
+            self.assertEqual(G["start_command"]("renamed"), ([cli, "--name=renamed", game], None))                 # a --name stays
+            os.unlink(game); problem = G["start_command"]("CrashBandicoot-Linux")
+            self.assertEqual(problem[0], None); self.assertIn("~/Games/CrashBandicoot-Linux is gone", problem[1])
+            prog = f"{bindir}/tool"
+            with open(prog, "w") as f: f.write("#!/bin/sh\n")
+            os.chmod(prog, 0o755)
+            self.assertEqual(G["start_command"]("tool"), ([cli, "tool"], None))                                    # in PATH: by name
+            os.unlink(prog); os.symlink("/usr/local/bin/sbx", prog)
+            self.assertIsNone(G["start_command"]("tool")[0])                                                       # an sbx link is not the program
+
+    def test_run_hands_the_recorded_file_to_sbx(self):
+        G = self.G; game = f"{G['HOME']}/Games/Crash"; self._gui_origin("Crash", game); win = mock.MagicMock()
+        with mock.patch.dict(os.environ, {"PATH": f"{G['HOME']}/nowhere"}), mock.patch.object(G["subprocess"], "Popen") as popen:
+            G["Win"].run_program(win, "Crash")
+        cmd = popen.call_args[0][0]; self.assertEqual(cmd[-3:], [G["sbx_cmd"](), "open", game]); win.alert.assert_not_called()
+
+    def test_run_shows_why_instead_of_starting_a_missing_file(self):
+        G = self.G; win = mock.MagicMock()
+        with mock.patch.dict(os.environ, {"PATH": f"{G['HOME']}/nowhere"}), mock.patch.object(G["subprocess"], "Popen") as popen:
+            G["Win"].run_program(win, "ghost")
+        popen.assert_not_called(); self.assertEqual(win.alert.call_args[0][0], "Can't start ghost")
+
     def test_the_buttons_style_follows_the_rule(self):
         G = self.G; self._gui_waiting(); win = mock.MagicMock(); styles = {}
         G["GLib"].markup_escape_text.side_effect = lambda text: text

@@ -155,6 +155,8 @@ Moves between system folders (`/usr`, `/opt`, `/snap`, ...) are always fine. A r
 
 **Pending** means sbx did not start the program. It wrote `~/.config/sbx/pending/NAME` (old path, new path, which rule), sent a desktop notification (with an "Open sbx" button where `notify-send` supports actions, plain text otherwise) and exited with an error. Decide with `sbx rebind NAME` (it is the same program: the record moves to the new file) or `sbx rebind --dismiss NAME` (drop the question; sbx asks again the next time the program starts from there). `sbx-gui` shows the same thing: a banner on the main page ("N programs are waiting for your decision") and, on the program's page, the old and new path with **Same program, accept** and **Dismiss**. For rule d the original is still there, so the warning is stronger and accepting is asked twice. A pending decision disappears by itself when the situation does, for example when the file is back at its recorded path. `--rebind` stays as the override: accept this file now, without asking.
 
+The **Run** button in `sbx-gui` starts a program that is in your `PATH` by its name, and any other (a downloaded game) from the file sbx recorded for it, like Open With does. If that file is gone, it says so: start the program once from its new place (Open With, Run in sbx) and sbx recognises the move.
+
 The program list shows where each program comes from (`System: /usr/bin`, `Downloaded: ~/Downloads/Crash`, `Home: ...`, `link` and `menu` for the other ways it starts through sbx, `Missing: ...` when the recorded file is gone, `moved from ...` after a move), in `sbx-gui`, `sbx list` and `sbx show`.
 
 ## Settings

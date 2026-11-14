@@ -290,6 +290,27 @@ def unused_programs(others):
     return [n for n in others if os.path.isdir(f"{HOMES}/{n}") and home_is_small(n)]
 
 
+def in_path(name):
+    """True if PATH holds a program of that name, not counting the links `sbx link` makes (they are how sbx starts, not the program)."""
+    for d in os.environ.get("PATH", "").split(":"):
+        p = os.path.join(d, name) if d else ""
+        if p and os.path.isfile(p) and os.access(p, os.X_OK) and not (os.path.islink(p) and os.path.basename(os.readlink(p)) == "sbx"): return True
+    return False
+
+
+def start_command(name):
+    """(the sbx command that starts NAME from the window, or None, and why not). A program in your PATH starts by its name. One that is not (a
+    downloaded game) starts from the file sbx recorded for it, as `sbx open` does when you use Open With; a name that was given with --name
+    keeps it. When that file is gone there is nothing to start: run it once from its new place and sbx recognises it (see check_origin)."""
+    if in_path(name): return [sbx_cmd(), name], None
+    rec = read_origin(name)
+    if not rec: return None, f"{name} is not in your PATH, and sbx has not run it from a file yet. Open it once with Open With, Run in sbx."
+    path = rec[0]
+    if not os.path.isfile(path): return None, f"The file {tilde(path)} is gone. If you moved it, start it once from its new place (Open With, Run in sbx): sbx recognises a moved program."
+    if program_name(os.path.basename(path)) == name: return [sbx_cmd(), "open", path], None
+    return [sbx_cmd(), f"--name={name}", path], None
+
+
 def sbx_cmd():
     return shutil.which("sbx") or "/usr/local/bin/sbx"
 
