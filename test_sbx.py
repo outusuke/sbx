@@ -2348,12 +2348,20 @@ class Gui(unittest.TestCase):
             self.assertEqual(G["start_command"]("CrashBandicoot-Linux"), ([cli, "open", game], None))              # as Open With does
             self._gui_origin("renamed", game)
             self.assertEqual(G["start_command"]("renamed"), ([cli, "--name=renamed", game], None))                 # a --name stays
+            self.assertEqual(G["preview_command"]("CrashBandicoot-Linux"), ([cli, "preview", "--input", game], None))   # not just `sbx preview NAME`: that only looks in PATH
+            self.assertEqual(G["preview_command"]("renamed"), ([cli, "preview", "--name=renamed", game], None))
+            os.makedirs(G["APPS"], exist_ok=True)
+            with open(f"{G['APPS']}/CrashBandicoot-Linux.conf", "w") as f: f.write("net=0\n")
+            self.assertEqual(G["preview_command"]("CrashBandicoot-Linux"), ([cli, "preview", game], None))             # a settings file: exactly that file
+            os.unlink(f"{G['APPS']}/CrashBandicoot-Linux.conf")
             os.unlink(game); problem = G["start_command"]("CrashBandicoot-Linux")
             self.assertEqual(problem[0], None); self.assertIn("~/Games/CrashBandicoot-Linux is gone", problem[1])
             prog = f"{bindir}/tool"
             with open(prog, "w") as f: f.write("#!/bin/sh\n")
             os.chmod(prog, 0o755)
             self.assertEqual(G["start_command"]("tool"), ([cli, "tool"], None))                                    # in PATH: by name
+            self.assertEqual(G["preview_command"]("tool"), ([cli, "preview", "tool"], None))
+            self.assertIn("gone", G["preview_command"]("CrashBandicoot-Linux")[1])
             os.unlink(prog); os.symlink("/usr/local/bin/sbx", prog)
             self.assertIsNone(G["start_command"]("tool")[0])                                                       # an sbx link is not the program
 

@@ -722,7 +722,9 @@ class Win(Adw.ApplicationWindow):
         GLib.timeout_add(2000, check)
 
     def show_command(self, name):
-        try: r = subprocess.run([sbx_cmd(), "preview", name], capture_output=True, text=True, timeout=10)
+        argv, problem = preview_command(name)
+        if problem: return self.alert(f"Can't show the command of {name}", problem)
+        try: r = subprocess.run(argv, capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.TimeoutExpired) as e:
             return self.alert("Couldn't run sbx", str(e))
         text = (r.stdout or r.stderr).strip()

@@ -311,6 +311,16 @@ def start_command(name):
     return [sbx_cmd(), f"--name={name}", path], None
 
 
+def preview_command(name):
+    """(the sbx command that prints what start_command(name) would run, or None, and why not). `sbx preview NAME` alone only finds
+    programs in your PATH, so a program started from a recorded file is previewed from that file, with what `sbx open` adds."""
+    argv, problem = start_command(name)
+    if problem: return None, problem
+    if argv[1] != "open": return [argv[0], "preview"] + argv[1:], None                          # [sbx, NAME] or [sbx, --name=NAME, FILE]
+    flags = [] if os.path.exists(f"{APPS}/{name}.conf") else ["--input"]                        # `sbx open` gives a program with no settings of its own game controllers
+    return [argv[0], "preview", *flags, argv[2]], None
+
+
 def sbx_cmd():
     return shutil.which("sbx") or "/usr/local/bin/sbx"
 
