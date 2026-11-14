@@ -2935,7 +2935,7 @@ class Isolation(unittest.TestCase):
         bash = shutil.which("bash")
         S = load_sbx()
         if not bash or not S["elf_interpreter"](os.path.realpath(bash)): self.skipTest("no dynamically linked bash to copy")
-        game, dl = f"{self.home}/Games/Crash", f"{self.home}/Downloads"
+        game, dl = f"{self.home}/Games/CrashBandicoot-Linux-v1", f"{self.home}/Downloads"       # a folder named after the program is shared by default
         os.makedirs(game, exist_ok=True); os.makedirs(dl, exist_ok=True)
         for p in (f"{game}/CrashBandicoot-Linux", f"{dl}/loose"):
             shutil.copy(os.path.realpath(bash), p); os.chmod(p, 0o644)                      # no execute bit
@@ -2961,7 +2961,7 @@ class Isolation(unittest.TestCase):
         r = sbx_open(f"{game}/CrashBandicoot-Linux", "exit 3\n")                          # quits at once with an error: reported, status kept
         self.assertEqual(r.returncode, 3); self.assertIn("didn't start", r.stderr)
         os.makedirs(f"{self.home}/.config/sbx/apps", exist_ok=True)                         # a settings file means no extras
-        with open(f"{self.home}/.config/sbx/apps/CrashBandicoot-Linux.conf", "w") as f: f.write("net=0\n")
+        with open(f"{self.home}/.config/sbx/apps/CrashBandicoot-Linux.conf", "w") as f: f.write("net=0\nfolder=0\n")
         try: r = sbx_open(f"{game}/CrashBandicoot-Linux", "pwd; ls -A\n")
         finally: os.unlink(f"{self.home}/.config/sbx/apps/CrashBandicoot-Linux.conf")
         self.assertEqual(r.stdout.split("\n")[0], self.home); self.assertNotIn("data.pak", r.stdout)
