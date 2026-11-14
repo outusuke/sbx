@@ -63,7 +63,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  under that name is held for your decision (sbx rebind NAME, or sbx-gui) or refused (--name=OTHER). When a move is accepted, what the\n"
          "  program stored beside its old file moves to the new folder in its private home.\n"
          "  A file run by its path whose size and SHA-256 are those of a recorded program whose file is gone is that program renamed: it keeps\n"
-         "  that name, even if the new file name has leftovers (not a copy; not when the new name has settings or data; --name overrides).\n"
+         "  that name, even if the new file name has leftovers (not a copy; not when the new name has settings of its own; --name overrides).\n"
          "settings: ~/.config/sbx/default.conf and ~/.config/sbx/apps/NAME.conf with lines like\n"
          "  net=0   gpu=0   portals=1   whitelist=~/Projects   read_only=~/.gitconfig   env=HTTPS_PROXY   memory=2G")
 

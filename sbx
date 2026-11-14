@@ -982,15 +982,23 @@ def home_has_data(name):
     return os.path.islink(home) or (os.path.isdir(home) and not home_is_small(name))
 
 
+def set_up_among(names):
+    """The one of NAMES that somebody set up: the only one with settings (apps/NAME.conf), else the only one whose private home holds data
+    (earlier runs under a wrong name leave records and nearly empty homes behind). None when none stands out, or two do."""
+    for tier in ([n for n in names if os.path.exists(f"{CONF}/apps/{n}.conf")], [n for n in names if home_has_data(n)]):
+        if tier: return tier[0] if len(tier) == 1 else None
+    return None
+
+
 def file_owner(name, real):
     """(program name, the file it had before or None, a reason it was not taken or None) for the file REAL that would run as NAME (its file name).
     Looked up by content FIRST, before NAME is considered: a file that is a recorded program's renamed file keeps that program's name.
       - a record that already followed this very file here (moved or renamed by an earlier run) wins;
       - else the file has the size and SHA-256 of exactly one recorded program whose file is gone: that name. Only a file of a size
         that such a program had is read. A copy (the original is still there) is not a rename and stays a program of its own.
-    Leftovers under NAME from an earlier run of this same file (an origin record, an unused private home) don't matter. NAME stays only
-    when it has settings of its own (apps/NAME.conf), or a home with data in it that no run of this file explains: then nothing is mixed
-    up, and the reason says how to join them. A home next to an origin record of this very file is that file's own leftover, however big."""
+    Leftovers under NAME from earlier runs of this same file (an origin record, a private home, however big: a game that ran once has written
+    logs and caches there) don't matter; the homes stay and are named. NAME stays only when somebody gave it settings of its own
+    (apps/NAME.conf) and it is not another existing program's name: then nothing is mixed up, and the reason says how to join them."""
     try: st = os.stat(real)
     except OSError: return name, None, None
     if real.startswith(SYSTEM_PROGRAMS): return name, None, None
@@ -1001,26 +1009,33 @@ def file_owner(name, real):
     if not gone: return name, None, None                          # nothing of this size to compare with: the file is not read
     sha = (fingerprint(real) or (0, 0, None))[2]
     same = sorted(n for n, s in gone.items() if sha and s == sha)
-    if not same or name in same: return name, None, None
-    if len(same) > 1: return name, None, f"'{os.path.basename(real)}' has the content of several programs whose file is gone ({', '.join(same)}), so sbx does not pick one. --name=ONE does"
-    other = recs.get(name)
-    theirs = bool(other) and other[0] != real and os.path.isfile(other[0])          # NAME is another program's: its data is none of our business
-    mine = bool(other) and other[0] == real                                          # NAME was recorded for this very file: its home is a leftover
-    if not theirs and (os.path.exists(f"{CONF}/apps/{name}.conf") or (not mine and home_has_data(name))):
-        return name, None, f"'{name}' already has settings or data of its own, so '{os.path.basename(real)}' stays '{name}', although it is '{same[0]}' renamed. --name={same[0]} runs it as that"
-    return same[0], recs[same[0]][0], None
+    if not same: return name, None, None
+    owner = same[0] if len(same) == 1 else set_up_among(same)
+    if owner is None:
+        if name in same and not any(home_has_data(n) or os.path.exists(f"{CONF}/apps/{n}.conf") for n in same): return name, None, None
+        return name, None, f"'{os.path.basename(real)}' has the content of several programs whose file is gone ({', '.join(same)}) and sbx can't tell which one you set up. --name=ONE picks"
+    if owner == name: return name, None, None
+    if os.path.exists(f"{CONF}/apps/{name}.conf") and not (recs.get(name) and recs[name][0] != real and os.path.isfile(recs[name][0])):
+        return name, None, f"'{name}' already has settings of its own, so '{os.path.basename(real)}' stays '{name}', although it is '{owner}' renamed. --name={owner} runs it as that"
+    return owner, recs[owner][0], None
 
 
 def took_over(name, owner, real, old):
     """REAL runs as OWNER, not as NAME: say so in one line, and drop NAME's record of this same file (a second claim on it). A private home
-    NAME got meanwhile is not touched: it may hold something, and it is named in that line so you can delete it."""
-    rec = read_origin(name)
-    if rec and rec[0] == real:
-        try: os.unlink(f"{CONF}/origins/{name}")
+    NAME got meanwhile is not touched: it may hold something, and it is named in that line so you can delete it. The same goes for other
+    records of this same content whose file is gone and that nobody set up (runs under wrong names): their records go, their homes stay."""
+    recs = origin_records()
+    sha = (recs.get(owner) or (None, None))[1]
+    sha = sha[2] if sha else None
+    dupes = [n for n, r in recs.items() if n != owner and n != name and sha and r[1] and r[1][2] == sha and not os.path.isfile(r[0])
+             and not os.path.exists(f"{CONF}/apps/{n}.conf")]
+    rec = recs.get(name)
+    for n in dupes + ([name] if rec and rec[0] == real else []):
+        try: os.unlink(f"{CONF}/origins/{n}")
         except OSError: pass
-    left = f"{HOMES}/{name}"
+    left = [f"{HOMES}/{n}" for n in [name] + dupes if os.path.lexists(f"{HOMES}/{n}")]
     warn(f"'{os.path.basename(real)}' is '{owner}' renamed (same size and SHA-256 as {tilde(old)}): it uses the settings and private home of '{owner}'"
-         + (f". {tilde(left)} is left over from running it as '{name}'; delete it with: sbx clean {name}" if os.path.lexists(left) else ""))
+         + (f". Left over from running it under other names: {', '.join(tilde(h) for h in left)}; delete with: sbx clean NAME" if left else ""))
 
 
 # ---------------------------------------------------------------- decisions waiting for you
@@ -1648,7 +1663,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  under that name is held for your decision (sbx rebind NAME, or sbx-gui) or refused (--name=OTHER). When a move is accepted, what the\n"
          "  program stored beside its old file moves to the new folder in its private home.\n"
          "  A file run by its path whose size and SHA-256 are those of a recorded program whose file is gone is that program renamed: it keeps\n"
-         "  that name, even if the new file name has leftovers (not a copy; not when the new name has settings or data; --name overrides).\n"
+         "  that name, even if the new file name has leftovers (not a copy; not when the new name has settings of its own; --name overrides).\n"
          "settings: ~/.config/sbx/default.conf and ~/.config/sbx/apps/NAME.conf with lines like\n"
          "  net=0   gpu=0   portals=1   whitelist=~/Projects   read_only=~/.gitconfig   env=HTTPS_PROXY   memory=2G")
 
