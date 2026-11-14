@@ -13,6 +13,9 @@ complete -c sbx -n $c -F
 # commands that take a name
 complete -c sbx -f -n "__fish_seen_subcommand_from show" -a "(__sbx_apps)"
 complete -c sbx -f -n "__fish_seen_subcommand_from clean" -a "(__sbx_homes)"
+complete -c sbx -f -n "__fish_seen_subcommand_from clean" -l unused -d "Every nearly empty home of a program nobody set up"
+complete -c sbx -f -n "__fish_seen_subcommand_from clean" -l yes -d "Don't ask"
+complete -c sbx -f -n "__fish_seen_subcommand_from list" -l all -d "Also programs only run from the terminal"
 complete -c sbx -f -n "__fish_seen_subcommand_from reset" -a "(__sbx_apps)"
 complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l default -d "Reset the default settings"
 complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l all -d "Reset every settings file"

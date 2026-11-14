@@ -67,6 +67,7 @@ class Win(Adw.ApplicationWindow):
         page.add(mg)
         self.apps_group = Adw.PreferencesGroup(title="Programs")
         self.app_rows = []
+        self.others_open = False                 # is the terminal-only group open?
         page.add(self.apps_group)
         rg = Adw.PreferencesGroup(title="Reset")
         ra = Adw.ActionRow(title="Reset all settings", subtitle="Deletes the default settings and every program's own. Program data stays", activatable=True, use_markup=False)
@@ -159,20 +160,56 @@ class Win(Adw.ApplicationWindow):
         refresh()
         self.nav.push(self.page("Troubleshooting", page, [rb, cb]))
 
+    def app_row(self, n):
+        r = Adw.ActionRow(title=n, subtitle=("Running now · " if program_running(n) else "") + summary(n), activatable=True, use_markup=False)
+        play = Gtk.Button(icon_name="media-playback-start-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Run {n}")
+        play.connect("clicked", lambda _b, n=n: self.run_program(n))
+        r.add_suffix(play)
+        r.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        r.connect("activated", lambda _r, n=n: self.open(n))
+        return r
+
     def fill_apps(self):
         for r in self.app_rows: self.apps_group.remove(r)
         self.app_rows.clear()
-        for n in app_names():
-            r = Adw.ActionRow(title=n, subtitle=("Running now · " if program_running(n) else "") + summary(n), activatable=True, use_markup=False)
-            play = Gtk.Button(icon_name="media-playback-start-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Run {n}")
-            play.connect("clicked", lambda _b, n=n: self.run_program(n))
-            r.add_suffix(play)
-            r.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
-            r.connect("activated", lambda _r, n=n: self.open(n))
+        setup, others = program_groups()
+        for n in setup:
+            r = self.app_row(n)
             self.apps_group.add(r); self.app_rows.append(r)
+        if others:
+            ex = Adw.ExpanderRow(title=f"Only run from the terminal ({len(others)})", subtitle="No settings, link or app menu launcher yet", use_markup=False)
+            ex.set_expanded(self.others_open or not setup)
+            ex.connect("notify::expanded", lambda e, _p: setattr(self, "others_open", e.get_expanded()))     # the list is rebuilt often; keep it as the person left it
+            unused = unused_programs(others)
+            if unused:
+                cl = Adw.ActionRow(title=f"Remove the {len(unused)} unused", subtitle="Almost no data. Their private homes are moved to the Trash", activatable=True, use_markup=False)
+                cl.connect("activated", lambda *_: self.ask_remove_unused())
+                ex.add_row(cl)
+            for n in others: ex.add_row(self.app_row(n))
+            self.apps_group.add(ex); self.app_rows.append(ex)
         if not self.app_rows:
-            r = Adw.ActionRow(title="No programs yet", subtitle="Press + to add one. Programs also show up here after their first run.")
+            r = Adw.ActionRow(title="No programs yet", subtitle="Press + to add one. Programs you only run from the terminal are listed separately.")
             self.apps_group.add(r); self.app_rows.append(r)
+
+    def ask_remove_unused(self):
+        names = unused_programs(program_groups()[1])
+        if not names: return self.toasts.add_toast(Adw.Toast(title="Nothing unused"))
+        shown = ", ".join(names[:10]) + (f" and {len(names) - 10} more" if len(names) > 10 else "")
+        self.ask(f"Remove {len(names)} unused program{'s' if len(names) != 1 else ''}?",
+                 f"{shown}. None has settings, a link or an app menu launcher, and each holds under {UNUSED_BYTES // 1024} KiB. Their private homes are moved to the Trash.",
+                 "Remove", lambda: self.remove_unused(names))
+
+    def remove_unused(self, names):
+        done = 0
+        for n in names:
+            if program_running(n): continue
+            try: forget_program(n)
+            except GLib.Error as e:
+                self.fill_apps()
+                return self.alert("Couldn't move a private home to the Trash", f"{n}: {e.message}")
+            done += 1
+        self.fill_apps()
+        self.toasts.add_toast(Adw.Toast(title=f"Removed {done} unused program{'s' if done != 1 else ''}"))
 
     def add_program(self):
         entry = Gtk.Entry(placeholder_text="firefox", activates_default=True)

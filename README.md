@@ -63,9 +63,9 @@ sbx [options] PROGRAM [args]
 sbx preview [options] PROGRAM [args]     print the command instead of running it
 sbx show [options] NAME                  the settings that apply, and which file or flag each came from
 sbx doctor                               check bubblewrap, helpers, Wayland support, settings files
-sbx list                                 the programs sbx knows, and which are running
+sbx list [--all]                         the programs you set up, and which are running; --all adds the ones only run from the terminal
 sbx stop NAME                            stop a running program
-sbx clean [--yes] NAME                   delete a private home and its machine-id (refused while the program runs)
+sbx clean [--yes] NAME | --unused        delete a private home and its machine-id (refused while the program runs); --unused: every nearly empty home of a program nobody set up
 sbx link NAME [--desktop]                typing NAME in a terminal starts it through sbx (a link in ~/.local/bin, like firecfg); --desktop covers its app-menu launchers too
 sbx link --remove NAME [--desktop]       undo that
 sbx reset [--yes] NAME|--default|--all      delete settings files so the built-in defaults apply again (data stays)

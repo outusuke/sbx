@@ -17,31 +17,103 @@ def cmd_show(a):
         for v in o.get(flag, []): print(f"  {k:<16} = {v}   [flag]")
 
 
-def cmd_clean(a):
-    yes = "--yes" in a
-    a = [x for x in a if x != "--yes"]
-    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx clean [--yes] NAME")
-    if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
-    name = a[0]
-    home, mid = f"{HOMES}/{name}", f"{CONF}/ids/{name}"
-    if clean(name) != name or not (os.path.isdir(home) or os.path.exists(mid)): die(f"nothing to clean for '{name}'")
-    if running(name): die(f"'{name}' is running. Stop it first: sbx stop {name}")
-    real = os.path.realpath(home)
-    if os.path.islink(home) or not real.startswith(os.path.realpath(HOMES) + "/"): die(f"{tilde(home)} is not a plain private home")
-    if not yes:
-        if not sys.stdin.isatty(): die("not asking without a terminal; add --yes")
-        if input(f"Delete {tilde(home)} and the machine-id of '{name}'? Settings stay. [y/N] ").strip().lower() not in ("y", "yes"):
-            die("nothing deleted", 0)
+UNUSED_BYTES = 64 * 1024        # a private home with no more than this in files, and nobody having set the program up, counts as unused
 
+
+def home_problem(name):
+    """Why NAME's private home can't be deleted, or None."""
+    home = f"{HOMES}/{name}"
+    real = os.path.realpath(home)
+    if os.path.islink(home) or not real.startswith(os.path.realpath(HOMES) + "/"): return f"{tilde(home)} is not a plain private home"
+    return None
+
+
+def wipe_home(name):
+    """Delete NAME's private home, its machine-id and its origin note. Settings stay."""
     def unlock(fn, p, _exc):                     # programs sometimes leave read-only folders behind
         os.chmod(os.path.dirname(p), 0o700)
         if not os.path.islink(p): os.chmod(p, 0o700)         # never chmod through a link the program planted
         fn(p)
-    shutil.rmtree(real, onerror=unlock)
-    for gone in (mid, f"{CONF}/origins/{name}"):
+    shutil.rmtree(os.path.realpath(f"{HOMES}/{name}"), onerror=unlock)
+    for gone in (f"{CONF}/ids/{name}", f"{CONF}/origins/{name}"):
         try: os.unlink(gone)
         except OSError: pass
+
+
+def home_is_small(name, limit=UNUSED_BYTES):
+    """True if the private home holds at most LIMIT bytes in files (links are not followed; a folder that can't be read counts as not small)."""
+    total, unreadable = 0, []
+    for d, _dirs, files in os.walk(f"{HOMES}/{name}", onerror=unreadable.append):
+        for f in files:
+            try: total += os.lstat(f"{d}/{f}").st_size
+            except OSError: unreadable.append(f)
+            if total > limit or unreadable: return False
+    return not unreadable
+
+
+def covered_programs():
+    """Names with an sbx link in ~/.local/bin or an sbx launcher in ~/.local/share/applications: somebody set those up on purpose."""
+    names, d = set(), f"{HOME}/.local/bin"
+    try: names.update(clean(n) for n in os.listdir(d) if is_sbx_link(f"{d}/{n}"))
+    except OSError: pass
+    for p in glob.glob(f"{user_launchers()}/*.desktop"):
+        if "X-Sbx-Sandboxed=true" not in launcher_text(p): continue
+        stem = os.path.basename(p)[:-8]
+        names.update(clean(x) for x in (launcher_program(p), stem, stem.rsplit(".", 1)[-1]) if x)
+    return names
+
+
+def known_programs(live=()):
+    """{name: set up?} for every program sbx knows. Set up means a settings file, an sbx link or launcher, or running now;
+    otherwise all sbx has is a private home that a run created, as for `sbx curl ...` typed once."""
+    homes, conf = set(), set()
+    for d, suffix, into in ((HOMES, "", homes), (f"{CONF}/apps", ".conf", conf)):
+        try: into.update(n[:len(n) - len(suffix)] for n in os.listdir(d) if n.endswith(suffix) and not n.startswith("."))
+        except OSError: pass
+    chosen = conf | set(live) | covered_programs()
+    return {n: n in chosen for n in homes | conf | set(live)}
+
+
+def unused_programs():
+    """Programs nobody set up whose private home is nearly empty: what `sbx clean --unused` deletes."""
+    live = {pid_app(p) for p in running()}
+    return sorted(n for n, chosen in known_programs(live).items() if not chosen and os.path.isdir(f"{HOMES}/{n}") and home_is_small(n))
+
+
+def cmd_clean(a):
+    yes = "--yes" in a
+    a = [x for x in a if x != "--yes"]
+    if len(a) != 1 or (a[0].startswith("-") and a[0] != "--unused"): die("usage: sbx clean [--yes] NAME   |   sbx clean [--yes] --unused")
+    if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
+    if a[0] == "--unused": return clean_unused(yes)
+    name = a[0]
+    home, mid = f"{HOMES}/{name}", f"{CONF}/ids/{name}"
+    if clean(name) != name or not (os.path.isdir(home) or os.path.exists(mid)): die(f"nothing to clean for '{name}'")
+    if running(name): die(f"'{name}' is running. Stop it first: sbx stop {name}")
+    if home_problem(name): die(home_problem(name))
+    if not yes:
+        if not sys.stdin.isatty(): die("not asking without a terminal; add --yes")
+        if input(f"Delete {tilde(home)} and the machine-id of '{name}'? Settings stay. [y/N] ").strip().lower() not in ("y", "yes"):
+            die("nothing deleted", 0)
+    wipe_home(name)
     print(f"removed {tilde(home)} and its machine-id")
+
+
+def clean_unused(yes):
+    """sbx clean --unused: the private homes of programs nobody set up (no settings file, link or launcher) that hold under 64 KiB."""
+    names = unused_programs()
+    if not names: print("Nothing unused: every program has settings, a link, a launcher, is running, or holds more than 64 KiB."); return
+    if not yes:
+        if not sys.stdin.isatty(): die("not asking without a terminal; add --yes")
+        print(f"Delete the private homes of these {len(names)} programs? None has settings, a link or a launcher, and each holds under {UNUSED_BYTES // 1024} KiB.")
+        for n in names: print(f"  {tilde(f'{HOMES}/{n}')}")
+        if input("Delete? [y/N] ").strip().lower() not in ("y", "yes"): die("nothing deleted", 0)
+    done = 0
+    for n in names:
+        problem = home_problem(n)
+        if problem: warn(problem + "; skipped"); continue
+        wipe_home(n); done += 1
+    print(f"removed {done} private home{'s' if done != 1 else ''}")
 
 
 def cmd_reset(a):
@@ -130,18 +202,18 @@ def run_linked(argv0, args):
 
 
 def cmd_list(a):
-    """Every program sbx knows (a private home or a settings file, or running now), and whether it is running."""
-    if a: die("usage: sbx list")
-    names = set()
-    for d, suffix in ((HOMES, ""), (f"{CONF}/apps", ".conf")):
-        try: names.update(n[:len(n) - len(suffix)] for n in os.listdir(d) if n.endswith(suffix) and not n.startswith("."))
-        except OSError: pass
+    """Programs somebody set up (a settings file, an sbx link or launcher, or running now), and whether each is running. --all adds the
+    ones that only have a private home, which every `sbx PROGRAM` run leaves behind."""
+    if a not in ([], ["--all"]): die("usage: sbx list [--all]")
     live = {p: pid_app(p) for p in running()}
-    names.update(live.values())
-    if not names: print("No programs yet. Start one with: sbx PROGRAM"); return
-    for n in sorted(names):
+    progs = known_programs(set(live.values()))
+    if not progs: print("No programs yet. Start one with: sbx PROGRAM"); return
+    hidden = 0
+    for n in sorted(progs):
+        if not progs[n] and not a: hidden += 1; continue
         k = sum(1 for v in live.values() if v == n)
-        print(f"{n:32} " + (f"running ({k})" if k else "idle"))
+        print(f"{n:32} " + (f"running ({k})" if k else "idle") + ("" if progs[n] else "   (only run from the terminal)"))
+    if hidden: print(f"{hidden} more only run from the terminal, with no settings, link or launcher. Show them: sbx list --all   Delete the empty ones: sbx clean --unused")
 
 
 def cmd_stop(a):

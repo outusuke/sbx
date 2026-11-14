@@ -499,6 +499,51 @@ def link_is_ours(name):
     except OSError: return False
 
 
+UNUSED_BYTES = 64 * 1024        # same rule as `sbx clean --unused`
+
+
+def home_is_small(name, limit=UNUSED_BYTES):
+    """True if the private home holds at most LIMIT bytes in files (links are not followed; a folder that can't be read counts as not small)."""
+    total, unreadable = 0, []
+    for d, _dirs, files in os.walk(f"{HOMES}/{name}", onerror=unreadable.append):
+        for f in files:
+            try: total += os.lstat(f"{d}/{f}").st_size
+            except OSError: unreadable.append(f)
+            if total > limit or unreadable: return False
+    return not unreadable
+
+
+def covered_programs():
+    """Names with an sbx link in ~/.local/bin or an sbx launcher in ~/.local/share/applications: somebody set those up on purpose."""
+    names, d = set(), f"{HOME}/.local/bin"
+    try: names.update(program_name(n) for n in os.listdir(d) if os.path.islink(f"{d}/{n}") and os.path.basename(os.readlink(f"{d}/{n}")) == "sbx")
+    except OSError: pass
+    for p in glob.glob(f"{HOME}/.local/share/applications/*.desktop"):
+        try:
+            with open(p, errors="replace") as f: text = f.read()
+        except OSError: continue
+        if "X-Sbx-Sandboxed=true" not in text: continue
+        stem = os.path.basename(p)[:-8]
+        names.update(program_name(x) for x in (launcher_program(text), stem, stem.rsplit(".", 1)[-1]) if x)
+    return names
+
+
+def program_groups():
+    """(the programs you set up, the ones only run from the terminal). Set up: a settings file, an sbx link or launcher, or running now.
+    The others are just a private home that a run created, as for `sbx curl ...` typed once."""
+    try: conf = {f[:-5] for f in os.listdir(APPS) if f.endswith(".conf")}
+    except OSError: conf = set()
+    chosen = conf | covered_programs()
+    names = app_names()
+    setup = [n for n in names if n in chosen or program_running(n)]
+    return setup, [n for n in names if n not in setup]
+
+
+def unused_programs(others):
+    """Of the terminal-only programs, those whose private home is nearly empty."""
+    return [n for n in others if os.path.isdir(f"{HOMES}/{n}") and home_is_small(n)]
+
+
 def sbx_cmd():
     return shutil.which("sbx") or "/usr/local/bin/sbx"
 
@@ -587,6 +632,7 @@ class Win(Adw.ApplicationWindow):
         page.add(mg)
         self.apps_group = Adw.PreferencesGroup(title="Programs")
         self.app_rows = []
+        self.others_open = False                 # is the terminal-only group open?
         page.add(self.apps_group)
         rg = Adw.PreferencesGroup(title="Reset")
         ra = Adw.ActionRow(title="Reset all settings", subtitle="Deletes the default settings and every program's own. Program data stays", activatable=True, use_markup=False)
@@ -679,20 +725,56 @@ class Win(Adw.ApplicationWindow):
         refresh()
         self.nav.push(self.page("Troubleshooting", page, [rb, cb]))
 
+    def app_row(self, n):
+        r = Adw.ActionRow(title=n, subtitle=("Running now · " if program_running(n) else "") + summary(n), activatable=True, use_markup=False)
+        play = Gtk.Button(icon_name="media-playback-start-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Run {n}")
+        play.connect("clicked", lambda _b, n=n: self.run_program(n))
+        r.add_suffix(play)
+        r.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        r.connect("activated", lambda _r, n=n: self.open(n))
+        return r
+
     def fill_apps(self):
         for r in self.app_rows: self.apps_group.remove(r)
         self.app_rows.clear()
-        for n in app_names():
-            r = Adw.ActionRow(title=n, subtitle=("Running now · " if program_running(n) else "") + summary(n), activatable=True, use_markup=False)
-            play = Gtk.Button(icon_name="media-playback-start-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Run {n}")
-            play.connect("clicked", lambda _b, n=n: self.run_program(n))
-            r.add_suffix(play)
-            r.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
-            r.connect("activated", lambda _r, n=n: self.open(n))
+        setup, others = program_groups()
+        for n in setup:
+            r = self.app_row(n)
             self.apps_group.add(r); self.app_rows.append(r)
+        if others:
+            ex = Adw.ExpanderRow(title=f"Only run from the terminal ({len(others)})", subtitle="No settings, link or app menu launcher yet", use_markup=False)
+            ex.set_expanded(self.others_open or not setup)
+            ex.connect("notify::expanded", lambda e, _p: setattr(self, "others_open", e.get_expanded()))     # the list is rebuilt often; keep it as the person left it
+            unused = unused_programs(others)
+            if unused:
+                cl = Adw.ActionRow(title=f"Remove the {len(unused)} unused", subtitle="Almost no data. Their private homes are moved to the Trash", activatable=True, use_markup=False)
+                cl.connect("activated", lambda *_: self.ask_remove_unused())
+                ex.add_row(cl)
+            for n in others: ex.add_row(self.app_row(n))
+            self.apps_group.add(ex); self.app_rows.append(ex)
         if not self.app_rows:
-            r = Adw.ActionRow(title="No programs yet", subtitle="Press + to add one. Programs also show up here after their first run.")
+            r = Adw.ActionRow(title="No programs yet", subtitle="Press + to add one. Programs you only run from the terminal are listed separately.")
             self.apps_group.add(r); self.app_rows.append(r)
+
+    def ask_remove_unused(self):
+        names = unused_programs(program_groups()[1])
+        if not names: return self.toasts.add_toast(Adw.Toast(title="Nothing unused"))
+        shown = ", ".join(names[:10]) + (f" and {len(names) - 10} more" if len(names) > 10 else "")
+        self.ask(f"Remove {len(names)} unused program{'s' if len(names) != 1 else ''}?",
+                 f"{shown}. None has settings, a link or an app menu launcher, and each holds under {UNUSED_BYTES // 1024} KiB. Their private homes are moved to the Trash.",
+                 "Remove", lambda: self.remove_unused(names))
+
+    def remove_unused(self, names):
+        done = 0
+        for n in names:
+            if program_running(n): continue
+            try: forget_program(n)
+            except GLib.Error as e:
+                self.fill_apps()
+                return self.alert("Couldn't move a private home to the Trash", f"{n}: {e.message}")
+            done += 1
+        self.fill_apps()
+        self.toasts.add_toast(Adw.Toast(title=f"Removed {done} unused program{'s' if done != 1 else ''}"))
 
     def add_program(self):
         entry = Gtk.Entry(placeholder_text="firefox", activates_default=True)

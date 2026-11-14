@@ -747,8 +747,62 @@ class Units(unittest.TestCase):
         self.assertIn("sbx stop busy", err.getvalue()); self.assertTrue(os.path.isdir(f"{S['HOMES']}/busy"))
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["cmd_stop"](["idle"])
         out = io.StringIO()
-        with contextlib.redirect_stdout(out): S["cmd_list"]([])
-        self.assertEqual([l.split() for l in out.getvalue().splitlines()], [["busy", "running", "(1)"], ["idle", "idle"]])
+        with contextlib.redirect_stdout(out): S["cmd_list"](["--all"])
+        self.assertEqual([l.split()[:3] for l in out.getvalue().splitlines()], [["busy", "running", "(1)"], ["idle", "idle", "(only"]])
+
+    def _programs(self):
+        """Programs of every kind: set up by a settings file, a link, a launcher; and two that only have a private home."""
+        S, h = self.S, self.home
+        S["running"] = lambda *a: []
+        for n in ("conf", "linked", "launched", "seen", "big"): os.makedirs(f"{S['HOMES']}/{n}")
+        self.write(".config/sbx/apps/conf.conf", "net=0\n")
+        os.makedirs(f"{h}/.local/bin"); os.symlink("/usr/local/bin/sbx", f"{h}/.local/bin/linked")
+        self.write(".local/share/applications/org.example.launched.desktop", "[Desktop Entry]\nX-Sbx-Sandboxed=true\nExec=/usr/local/bin/sbx launched %U\n")
+        self.write(".sbx-homes/seen/.cache/x", "tiny")
+        self.write(".sbx-homes/big/data", "x" * (S["UNUSED_BYTES"] + 1))
+        self.write(".config/sbx/ids/seen", "id\n")
+
+    def _list(self, *args):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): self.S["cmd_list"](list(args))
+        return out.getvalue()
+
+    def test_list_leaves_out_programs_nobody_set_up_unless_asked(self):
+        self._programs()
+        out = self._list()
+        self.assertEqual([l.split()[0] for l in out.splitlines()[:3]], ["conf", "launched", "linked"])
+        self.assertNotIn("seen ", out); self.assertNotIn("big ", out)
+        self.assertIn("2 more", out); self.assertIn("sbx list --all", out); self.assertIn("sbx clean --unused", out)
+        every = self._list("--all")
+        self.assertRegex(every, r"seen\s+idle\s+\(only run from the terminal\)"); self.assertRegex(every, r"big\s+idle\s+\(only run from the terminal\)")
+        self.assertNotRegex(every, r"conf\s+idle\s+\(only")
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): self._list("--bogus")
+
+    def test_a_running_program_is_listed_even_when_nobody_set_it_up(self):
+        self._programs()
+        self.S["running"] = lambda *a: ["1"]; self.S["pid_app"] = lambda p: "seen"
+        self.assertRegex(self._list(), r"seen\s+running \(1\)")
+
+    def test_unused_means_nobody_set_it_up_and_almost_nothing_is_stored(self):
+        self._programs()
+        self.assertEqual(self.S["unused_programs"](), ["seen"])                          # `big` holds data, the others were set up
+        self.assertTrue(self.S["home_is_small"]("seen")); self.assertFalse(self.S["home_is_small"]("big"))
+        self.S["running"] = lambda *a: ["1"]; self.S["pid_app"] = lambda p: "seen"
+        self.assertEqual(self.S["unused_programs"](), [], "a running program is never unused")
+
+    def test_clean_unused_deletes_only_those_homes_and_asks_first(self):
+        S, h = self.S, self.home
+        self._programs()
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit): S["cmd_clean"](["--unused"])     # no terminal: needs --yes
+        self.assertIn("--yes", err.getvalue()); self.assertTrue(os.path.isdir(f"{S['HOMES']}/seen"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_clean"](["--yes", "--unused"])
+        self.assertIn("removed 1 private home", out.getvalue())
+        self.assertEqual(sorted(os.listdir(S["HOMES"])), ["big", "conf", "launched", "linked"])
+        self.assertFalse(os.path.exists(f"{h}/.config/sbx/ids/seen"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_clean"](["--yes", "--unused"])
+        self.assertIn("Nothing unused", out.getvalue())
 
     def test_reset_deletes_settings_files_and_nothing_else(self):
         S = self.S; conf = S["CONF"]; apps = f"{conf}/apps"
@@ -1541,6 +1595,35 @@ class Gui(unittest.TestCase):
         G["Win"].remove_program(win, "a")
         self.assertTrue(os.path.exists(f"{G['APPS']}/a.conf")); self.assertTrue(os.path.isdir(f"{G['HOMES']}/a"))
         self.assertIn("no trash here", win.alert.call_args[0][1]); win.nav.replace.assert_not_called()
+
+    def _gui_programs(self):
+        G = self.G; h = G["HOME"]; os.makedirs(G["APPS"], exist_ok=True)
+        for n in ("a", "b", "c", "d", "e"): os.makedirs(f"{G['HOMES']}/{n}")
+        with open(f"{G['APPS']}/a.conf", "w") as f: f.write("net=0\n")
+        os.makedirs(f"{h}/.local/bin"); os.symlink("/usr/local/bin/sbx", f"{h}/.local/bin/b")
+        os.makedirs(f"{h}/.local/share/applications")
+        with open(f"{h}/.local/share/applications/org.example.c.desktop", "w") as f: f.write("[Desktop Entry]\nX-Sbx-Sandboxed=true\nExec=sbx c\n")
+        with open(f"{G['HOMES']}/e/data", "w") as f: f.write("x" * (G["UNUSED_BYTES"] + 1))
+        G["program_running"] = lambda n: False
+
+    def test_the_list_separates_programs_you_set_up_from_terminal_only_ones(self):
+        self._gui_programs(); G = self.G
+        self.assertEqual(G["program_groups"](), (["a", "b", "c"], ["d", "e"]))
+        self.assertEqual(G["unused_programs"](["d", "e"]), ["d"])
+        G["program_running"] = lambda n: n == "d"
+        self.assertEqual(G["program_groups"](), (["a", "b", "c", "d"], ["e"]))
+
+    def test_removing_the_unused_ones_trashes_only_those_homes(self):
+        self._gui_programs(); G = self.G
+        def new_for_path(p):
+            m = mock.MagicMock(); m.trash.side_effect = lambda *_: shutil.rmtree(p); return m
+        G["Gio"].File.new_for_path.side_effect = new_for_path
+        win = mock.MagicMock()
+        G["Win"].remove_unused(win, ["d"])
+        self.assertEqual(G["app_names"](), ["a", "b", "c", "e"])
+        win.fill_apps.assert_called(); G["Adw"].Toast.assert_called_with(title="Removed 1 unused program")
+        G["Win"].ask_remove_unused(win)                                                  # only `e` is left, and it holds data
+        win.ask.assert_not_called(); G["Adw"].Toast.assert_called_with(title="Nothing unused")
 
     def test_switch_rows_do_not_carry_a_default_note(self):
         G = self.G

@@ -13,11 +13,12 @@ _sbx() {
             --) COMPREPLY=($(compgen -c -- "$cur")); return ;;
             -*) ;;
             preview|show) [[ $word == show ]] && { COMPREPLY=($(compgen -W "$(ls ~/.config/sbx/apps 2>/dev/null | sed 's/\.conf$//')" -- "$cur")); return; } ;;
-            clean) COMPREPLY=($(compgen -W "$(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
+            clean) COMPREPLY=($(compgen -W "--yes --unused $(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
             reset) COMPREPLY=($(compgen -W "--yes --default --all $(ls ~/.config/sbx/apps 2>/dev/null | sed 's/\.conf$//')" -- "$cur")); return ;;
             link) COMPREPLY=($(compgen -W "--remove --desktop" -- "$cur") $(compgen -c -- "$cur")); return ;;
             stop) COMPREPLY=($(compgen -W "$(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
-            doctor|schema|list) return ;;
+            list) COMPREPLY=($(compgen -W "--all" -- "$cur")); return ;;
+            doctor|schema) return ;;
             desktop) COMPREPLY=($(compgen -W "--install-opener --remove-opener --install-menu --remove-menu --remove" -- "$cur")); return ;;
             *) COMPREPLY=($(compgen -f -- "$cur")); return ;;
         esac

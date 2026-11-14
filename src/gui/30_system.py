@@ -135,6 +135,51 @@ def link_is_ours(name):
     except OSError: return False
 
 
+UNUSED_BYTES = 64 * 1024        # same rule as `sbx clean --unused`
+
+
+def home_is_small(name, limit=UNUSED_BYTES):
+    """True if the private home holds at most LIMIT bytes in files (links are not followed; a folder that can't be read counts as not small)."""
+    total, unreadable = 0, []
+    for d, _dirs, files in os.walk(f"{HOMES}/{name}", onerror=unreadable.append):
+        for f in files:
+            try: total += os.lstat(f"{d}/{f}").st_size
+            except OSError: unreadable.append(f)
+            if total > limit or unreadable: return False
+    return not unreadable
+
+
+def covered_programs():
+    """Names with an sbx link in ~/.local/bin or an sbx launcher in ~/.local/share/applications: somebody set those up on purpose."""
+    names, d = set(), f"{HOME}/.local/bin"
+    try: names.update(program_name(n) for n in os.listdir(d) if os.path.islink(f"{d}/{n}") and os.path.basename(os.readlink(f"{d}/{n}")) == "sbx")
+    except OSError: pass
+    for p in glob.glob(f"{HOME}/.local/share/applications/*.desktop"):
+        try:
+            with open(p, errors="replace") as f: text = f.read()
+        except OSError: continue
+        if "X-Sbx-Sandboxed=true" not in text: continue
+        stem = os.path.basename(p)[:-8]
+        names.update(program_name(x) for x in (launcher_program(text), stem, stem.rsplit(".", 1)[-1]) if x)
+    return names
+
+
+def program_groups():
+    """(the programs you set up, the ones only run from the terminal). Set up: a settings file, an sbx link or launcher, or running now.
+    The others are just a private home that a run created, as for `sbx curl ...` typed once."""
+    try: conf = {f[:-5] for f in os.listdir(APPS) if f.endswith(".conf")}
+    except OSError: conf = set()
+    chosen = conf | covered_programs()
+    names = app_names()
+    setup = [n for n in names if n in chosen or program_running(n)]
+    return setup, [n for n in names if n not in setup]
+
+
+def unused_programs(others):
+    """Of the terminal-only programs, those whose private home is nearly empty."""
+    return [n for n in others if os.path.isdir(f"{HOMES}/{n}") and home_is_small(n)]
+
+
 def sbx_cmd():
     return shutil.which("sbx") or "/usr/local/bin/sbx"
 

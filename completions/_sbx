@@ -21,11 +21,12 @@ _sbx() {
             -*) ;;
             preview) ;;                                   # options and the program follow
             show) (( CURRENT == i + 1 )) && _sbx_apps; return ;;
-            clean) (( CURRENT == i + 1 )) && _sbx_homes; return ;;
+            clean) compadd -- --yes --unused; _sbx_homes; return ;;
             reset) compadd -- --yes --default --all; _sbx_apps; return ;;
             link) compadd -- --remove --desktop; _command_names -e; return ;;
             stop) (( CURRENT == i + 1 )) && _sbx_homes; return ;;
-            doctor|schema|list) return ;;
+            list) compadd -- --all; return ;;
+            doctor|schema) return ;;
             desktop) compadd -- --install-opener --remove-opener --install-menu --remove-menu --remove; return ;;
             *) _files; return ;;                          # the program's own arguments
         esac
