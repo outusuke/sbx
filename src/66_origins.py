@@ -152,6 +152,38 @@ def sha_now(path, known):
     return (fingerprint(path) or (0, 0, None))[2]
 
 
+def carry_data(name, old, real):
+    """A program that writes beside its own file (settings, saves, a chosen disc) finds that in its private home under the folder the file is in:
+    HOME/Games/x/save.dat is HOMES/NAME/Games/x/save.dat. After a move that is another folder, and everything it stored looks lost. When OLD is
+    gone, move what is stored under its folder to the folder of REAL, inside the private home only: never over something that is already there,
+    never through a link (the program can plant links in its own home), and not for a file outside your home. Says so, in one line. Returns
+    how many entries moved."""
+    if not old or os.path.lexists(old): return 0                    # still there: a copy, the original may be in use
+    a, b = os.path.dirname(old), os.path.dirname(real)
+    if a == b or not (a.startswith(HOME + "/") and b.startswith(HOME + "/")): return 0
+    home = os.path.realpath(HOMES) + "/" + name
+    if os.path.realpath(f"{HOMES}/{name}") != home: return 0          # the private home is a plain folder, not a link to somewhere
+    src, dst = f"{home}/{a[len(HOME) + 1:]}", f"{home}/{b[len(HOME) + 1:]}"
+    if os.path.realpath(src) != src or os.path.realpath(dst) != dst or not os.path.isdir(src): return 0      # no link anywhere on the way
+    moved = 0
+    try:
+        for e in sorted(os.listdir(src)):
+            s, d = f"{src}/{e}", f"{dst}/{e}"
+            if dst == s or dst.startswith(s + "/") or os.path.lexists(d): continue         # the new folder itself, or taken
+            os.makedirs(dst, mode=0o700, exist_ok=True)
+            os.rename(s, d); moved += 1
+    except OSError:
+        pass
+    if moved: warn(f"'{name}': moved {moved} item{'s' if moved != 1 else ''} it had stored beside its old file, from {tilde(a)} to {tilde(b)}, in its private home")
+    return moved
+
+
+def follow(name, real, fp, old):
+    """NAME now belongs to REAL, which moved there from OLD: record it, and take along what the program stored beside the old file."""
+    write_origin(name, real, fp, old)
+    carry_data(name, old, real)
+
+
 def check_origin(name, real, rebind=False):
     """A program name owns settings (apps/NAME.conf) and a private home. Remember which file first used the name, and when a file
     shows up under it from another path, decide in this order, the first match winning:
@@ -168,25 +200,25 @@ def check_origin(name, real, rebind=False):
     if old == real: return refresh_origin(name, real, rec)
     system = lambda x: x.startswith(SYSTEM_PROGRAMS)
     if old is None or rebind or (system(old) and system(real)):
-        write_origin(name, real, fingerprint(real), old)
+        follow(name, real, fingerprint(real), old)
         return clear_pending(name)
     new = fingerprint(real)
     exists = os.path.isfile(old)
     known = rec[1]
     old_sha = sha_now(old, known) if exists else known[2] if known else None      # the old file may have been updated since it was recorded
     if new and new[2] and new[2] == old_sha:                       # a
-        write_origin(name, real, new, old)
+        follow(name, real, new, old)
         return clear_pending(name)
     if exists: hold(name, old, real, "d")                          # d
     if os.path.basename(old) == os.path.basename(real):            # b
-        write_origin(name, real, new, old)
+        follow(name, real, new, old)
         clear_pending(name)
         return warn(f"'{name}' moved from {tilde(old)} to {tilde(real)}")
     if sys.stdin.isatty():                                         # c
         try: answer = input(f"'{name}' was first run from {tilde(old)}, which is gone. Now it is {tilde(real)}. Same program? [y/N] ")
         except EOFError: answer = ""
         if answer.strip().lower() in ("y", "yes"):
-            write_origin(name, real, new, old)
+            follow(name, real, new, old)
             return clear_pending(name)
         die("not accepted. A different program: use --name=OTHER for a separate home. The same one after all: run it once with --rebind")
     hold(name, old, real, "c")

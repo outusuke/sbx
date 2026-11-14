@@ -887,11 +887,66 @@ class Units(unittest.TestCase):
         with contextlib.redirect_stdout(out): S["cmd_show"](["ff"])
         self.assertNotIn("waiting", out.getvalue()); self.assertIn("source", out.getvalue())
 
+    # -- what a program stored beside its file follows the move (carry_data)
+    def _stored_beside(self, folder="Downloads"):
+        """`game` ran from ~/Downloads/Crash and wrote beside itself: in its private home that is Downloads/..."""
+        self._origins(); S = self.S
+        old = self.write(f"{folder}/Crash", "the game"); self.origin("game", old)
+        h = f"{S['HOMES']}/game/{folder}"
+        for rel, text in (("settings.json", "disc=a.chd"), ("save/carda.sav", "1"), ("game/x/main.cs", "2")):
+            os.makedirs(os.path.dirname(f"{h}/{rel}"), exist_ok=True); open(f"{h}/{rel}", "w").write(text)
+        return old, h
+
+    def test_what_a_program_stored_beside_its_file_follows_it_to_the_new_folder(self):
+        old, h = self._stored_beside(); S = self.S
+        new = f"{self.home}/Downloads/retro games/Crash"; os.makedirs(os.path.dirname(new)); shutil.move(old, new)
+        self.assertTrue(self.origin("game", new))
+        t = f"{S['HOMES']}/game/Downloads/retro games"
+        self.assertEqual(open(f"{t}/settings.json").read(), "disc=a.chd")
+        self.assertTrue(os.path.exists(f"{t}/save/carda.sav") and os.path.exists(f"{t}/game/x/main.cs"))
+        self.assertEqual(sorted(os.listdir(h)), ["retro games"], "the new folder is inside the old one: it stays, the rest moved in")
+        self.assertEqual(self.said, ["'game': moved 3 items it had stored beside its old file, from ~/Downloads to ~/Downloads/retro games, in its private home"])
+        self.said.clear(); self.assertTrue(self.origin("game", new)); self.assertEqual(self.said, [], "once")
+
+    def test_nothing_is_carried_over_a_copy_or_over_what_is_already_there(self):
+        old, h = self._stored_beside(); S = self.S
+        copy = self.write("Games/Crash", "the game")                                    # the original is still there: it may be in use
+        self.assertTrue(self.origin("game", copy)); self.assertEqual(os.listdir(h).count("settings.json"), 1)
+        self.assertEqual(os.listdir(f"{S['HOMES']}/game/Games") if os.path.isdir(f"{S['HOMES']}/game/Games") else [], [])
+        os.unlink(old); os.unlink(copy)
+        new = self.write("Moved/Crash", "the game")
+        os.makedirs(f"{S['HOMES']}/game/Moved"); open(f"{S['HOMES']}/game/Moved/settings.json", "w").write("fresh")
+        self.assertEqual(S["carry_data"]("game", old, new), 2, "what is free moves (save, game), what is taken stays (settings.json)")
+        self.assertEqual(open(f"{S['HOMES']}/game/Moved/settings.json").read(), "fresh", "never over something that is there")
+        self.assertEqual(open(f"{h}/settings.json").read(), "disc=a.chd", "and it stays where it was")
+
+    def test_carrying_stays_inside_the_private_home_and_inside_your_home(self):
+        old, h = self._stored_beside(); S = self.S
+        os.unlink(old)
+        outside = f"{self.tmp}/outside"; os.makedirs(outside)
+        os.makedirs(f"{S['HOMES']}/game/Evil"); os.symlink(outside, f"{S['HOMES']}/game/Evil/sub")      # a link the program planted in its home
+        new = f"{self.home}/Evil/sub/Crash"; os.makedirs(os.path.dirname(new))
+        self.assertEqual(S["carry_data"]("game", old, new), 0); self.assertEqual(os.listdir(outside), [])
+        self.assertEqual(S["carry_data"]("game", old, f"{self.tmp}/elsewhere/Crash"), 0, "a file outside your home")
+        self.assertEqual(S["carry_data"]("game", "/mnt/games/Crash", new), 0)
+        self.assertEqual(S["carry_data"]("game", None, new), 0)
+        link = f"{S['HOMES']}/linked"; os.symlink(f"{S['HOMES']}/game", link)             # the whole private home is a link
+        self.assertEqual(S["carry_data"]("linked", old, f"{self.home}/Moved/Crash"), 0)
+
+    def test_sbx_rebind_carries_it_too(self):
+        self._origins(); S = self.S
+        old = self.write("Downloads/Crash", "one"); self.origin("game", old)
+        h = f"{S['HOMES']}/game/Downloads"; os.makedirs(h); open(f"{h}/settings.json", "w").write("s")
+        os.unlink(old); new = self.write("Games/CrashDeluxe", "two"); self.origin("game", new)       # rule c: waits
+        with contextlib.redirect_stdout(io.StringIO()): S["cmd_rebind"](["game"])
+        self.assertEqual(open(f"{S['HOMES']}/game/Games/settings.json").read(), "s")
+
     def test_rebind_is_documented(self):
         with open(f"{HERE}/sbx.1") as f: man = f.read()
         with open(f"{HERE}/README.md") as f: readme = f.read()
         self.assertIn("sbx rebind", man); self.assertIn("sbx rebind", readme); self.assertIn("sbx rebind", self.S["USAGE"])
         self.assertIn("pending", man); self.assertIn("same file name", readme)
+        self.assertIn("stored beside", self.S["USAGE"]); self.assertIn("beside its own file", man); self.assertIn("next to its own file", readme)
         for c in ("sbx.bash", "_sbx", "sbx.fish"):
             with open(f"{HERE}/completions/{c}") as f: self.assertIn("rebind", f.read(), c)
 

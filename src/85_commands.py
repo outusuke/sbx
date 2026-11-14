@@ -267,7 +267,7 @@ def cmd_rebind(a):
     if why:
         clear_pending(name)
         die(f"the decision for '{name}' no longer applies ({why}). Start it again and sbx decides afresh")
-    write_origin(name, p["new"], None, p["old"])         # the next run adds the fingerprint (a big file isn't read here)
+    follow(name, p["new"], None, p["old"])               # the next run adds the fingerprint (a big file isn't read here)
     clear_pending(name)
     print(f"'{name}' now belongs to {tilde(p['new'])}, with the settings and private home it had. Start it again.")
 

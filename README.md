@@ -146,12 +146,14 @@ A program name owns its settings and its private home, so sbx remembers which fi
 
 | | the file at the new path | the old path | what happens |
 |---|---|---|---|
-| a | same content (same SHA-256) | any | the same program, moved or copied: accepted silently, the record follows it |
+| a | same content (same SHA-256) | any | the same program, moved or copied: accepted without a question, the record follows it |
 | b | other content, same file name | gone | moved, then updated: accepted, with one line: `'game' moved from ~/Downloads/Crash to ~/Games/Crash` |
 | c | other content, other file name | gone | unclear: on a terminal sbx asks `[y/N]`; without one the decision is left pending |
 | d | other content | still there | two different programs want one name: refused, left pending; start the other with `--name=OTHER` |
 
 Moves between system folders (`/usr`, `/opt`, `/snap`, ...) are always fine. A run from the recorded path is never held up by what the file contains: when its size or modification time changed (an update, a game that patches itself) sbx only reads it again and updates the record. The file is read in full when a name is first recorded and whenever it changes, which takes a moment for a multi-gigabyte game.
+
+**What the program stored beside its file moves with it.** A program that writes next to its own file (settings, saves, a chosen disc image) finds that in its private home under the folder the file is in: `~/Downloads/settings.json` is `~/.sbx-homes/NAME/Downloads/settings.json`. After a move the folder is another one, and the program would look in an empty place. So when sbx accepts a move (rules a to c, `sbx rebind`, `--rebind`) and the old file is gone, it moves what is stored under the old folder to the new folder, inside the private home only, and says so in one line. It never overwrites something that is already there, never follows a link, does nothing for a copy (the original may still be in use) or for a file outside your home, and does not touch the real folders. It happens once, when the move is accepted: a program that was moved before this existed keeps its files under the old folder in `~/.sbx-homes/NAME/`, and you can move them by hand.
 
 **Pending** means sbx did not start the program. It wrote `~/.config/sbx/pending/NAME` (old path, new path, which rule), sent a desktop notification (with an "Open sbx" button where `notify-send` supports actions, plain text otherwise) and exited with an error. Decide with `sbx rebind NAME` (it is the same program: the record moves to the new file) or `sbx rebind --dismiss NAME` (drop the question; sbx asks again the next time the program starts from there). `sbx-gui` shows the same thing: a banner on the main page ("N programs are waiting for your decision") and, on the program's page, the old and new path with **Same program, accept** and **Dismiss**. For rule d the original is still there, so the warning is stronger and accepting is asked twice. A pending decision disappears by itself when the situation does, for example when the file is back at its recorded path. `--rebind` stays as the override: accept this file now, without asking.
 

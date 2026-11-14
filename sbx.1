@@ -347,6 +347,8 @@ Other content, the old path still exists: two programs want one name. Refused an
 .B \-\-name=OTHER
 for the other one.
 .PP
+A program that writes beside its own file finds that in its private home, under the folder the file is in (~/Downloads/settings.json is ~/.sbx\-homes/NAME/Downloads/settings.json). When a move is accepted and the old file is gone, sbx moves what is stored under the old folder to the new folder, inside the private home only, and says so in one line. It never overwrites, never follows a link, and does nothing for a copy or for a file outside your home.
+.PP
 Moves between system folders (/usr, /opt, /snap, ...) are always fine. A run from the recorded path is never held up by the file's content: a changed size or modification time only updates the record. Rule b means that once the original is deleted, a file with the same file name can take over the name; the sandbox still applies to it, with that program's settings.
 .PP
 Pending means the program was not started. sbx writes
