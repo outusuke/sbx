@@ -2575,6 +2575,44 @@ class Gui(unittest.TestCase):
         btns[1].connect.call_args[0][1](None)                                  # the undo button of the CPU row
         self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "")
 
+    def test_a_program_row_in_the_list_says_what_it_may_use_like_ajails(self):
+        G = self.G; adw = G["Adw"]; os.makedirs(G["APPS"], exist_ok=True)
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("camera=1\nwhitelist=~/Shared\n")
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("net_private=1\nsound=0\nwhitelist=~/Shared\nread_only=~/Docs\n")
+        self.assertEqual(G["default_summary"]("app"), "Internet only · Graphics · Camera · 2 shared folders")      # its own file over the defaults; a shared folder counts once
+        self.assertEqual(G["default_summary"]("other"), "Network · Graphics · Sound · Camera · 1 shared folder")  # no file: the defaults
+        win = mock.MagicMock(); win.badges = {}
+        adw.ActionRow.reset_mock(); G["Win"].app_row(win, "app", True, set(), set(), True)
+        self.assertEqual(adw.ActionRow.call_args.kwargs["subtitle"], "Waiting for your decision · Internet only · Graphics · Camera · 2 shared folders")
+        G["Win"].app_row(win, "app", False, set(), set(), True)
+        self.assertEqual(adw.ActionRow.call_args.kwargs["subtitle"], "Internet only · Graphics · Camera · 2 shared folders")      # no source, no tags: they are on the program's page
+        G["Win"].app_row(win, "app")                                                                  # a program only run from the terminal keeps its source line
+        self.assertEqual(adw.ActionRow.call_args.kwargs["subtitle"], G["row_subtitle"]("app", False, set(), set(), show_running=False))
+
+    def test_the_switches_come_in_ajails_sections_and_the_seldom_used_ones_are_collapsed(self):
+        G = self.G; groups = dict(G["GROUPS"])
+        self.assertEqual([t for t, _ in G["GROUPS"]], ["What can this program use?", "Devices", "Desktop integration", "Hardening"])
+        self.assertEqual([r[0] for r in groups["What can this program use?"]], ["net", "net_private", "sound", "x11", "printing", "ssh_agent"])
+        keys = [r[0] for _, rows in G["GROUPS"] for r in rows]
+        self.assertEqual(len(keys), len(set(keys)))                                                   # every switch once
+        self.assertTrue(set(G["ADVANCED"]) <= set(keys)); self.assertNotIn("portal_screenshot", G["ADVANCED"])
+        self.assertTrue(all(k.startswith("portal_") for k in G["ADVANCED"]))
+        self.assertIn("What can this program use?", G["GROUP_INFO"])
+        for _, rows in G["GROUPS"]:
+            for key, title, sub, _d in rows: self.assertNotIn("Works only when", sub, key)            # a switch that needs another says so by being greyed out
+
+    def test_turning_on_keep_localhost_private_says_when_pasta_is_missing(self):
+        G = self.G; adw = G["Adw"]; win = mock.MagicMock(); row = adw.SwitchRow.return_value; row.get_active.return_value = True
+        handler = lambda: [c[0][1] for c in row.connect.call_args_list if c[0][0] == "notify::active"][-1]
+        with mock.patch.object(G["shutil"], "which", return_value=None):
+            G["Win"].switch_row(win, None, "net_private"); handler()(None, None)
+        self.assertEqual(G["parse"](None)[0], {"net_private": True})
+        adw.Toast.assert_called_with(title="pasta (passt) is not installed: the program won't start until you install it")
+        adw.Toast.reset_mock()
+        with mock.patch.object(G["shutil"], "which", return_value="/usr/bin/pasta"):
+            G["Win"].switch_row(win, None, "net_private"); handler()(None, None)
+        adw.Toast.assert_not_called()
+
     def test_switch_rows_do_not_carry_a_default_note(self):
         G = self.G
         os.makedirs(G["APPS"], exist_ok=True)

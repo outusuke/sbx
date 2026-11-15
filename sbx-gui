@@ -22,47 +22,47 @@ OUTSIDE = ("/mnt/", "/media/", "/run/media/", "/tmp/")      # same as DRIVES + /
 # Wording for each switch: key, title, subtitle, default. The list of switches itself comes from `sbx schema` (see
 # load_schema), so a switch added to sbx shows up here at once, under "Other", even before it has wording of its own.
 GROUPS = [
-    ("Network", [
-        ("net", "Network", "Internet and your local network", True),
-        ("net_private", "Keep this computer private", "Internet only: the program can't reach services running on this computer (databases, dev servers). Other devices on your local network are still reachable. Needs pasta (passt). Works only when “Network” is on", False)]),
-    ("Display", [
-        ("wayland", "Wayland", "Lets graphical programs open a window", True),
-        ("wayland_strict", "Wayland only if restricted", "No Wayland at all when the compositor can't limit what the program may do", False),
-        ("x11", "X11", "Weaker isolation than Wayland", False),
-        ("theme", "Your fonts, icons and GTK settings", "Shown read-only so the program looks like your desktop, with your window buttons (minimize, maximize) and cursor", True),
-        ("compat", "Graphics and toolkit variables", "Passes WGPU_*, MESA_*, SDL_*, QT_QPA_* and similar if set. Never tokens or other variables", False)]),
+    ("What can this program use?", [
+        ("net", "Internet", "Network access. Also reaches localhost and your local network.", True),
+        ("net_private", "Keep localhost private", "Internet only: the program can't reach services running on this computer (databases, dev servers). Other devices on your local network are still reachable. Needs pasta (passt).", False),
+        ("sound", "Audio", "Play sound. Also allows microphone access.", True),
+        ("x11", "X11 compatibility", "Only for programs that won't start otherwise. Weaker isolation.", False),
+        ("printing", "Printing", "Talk to the print service (CUPS)", False),
+        ("ssh_agent", "SSH agent", "Use your SSH keys without seeing them. The program can sign in as you.", False)]),
     ("Devices", [
-        ("gpu", "Graphics card", "/dev/dri and NVIDIA devices", True),
-        ("gpu_render_only", "Graphics: render only", "Of /dev/dri, share only the render nodes that programs draw with, not the card nodes that can drive the display. Does not limit NVIDIA devices. Only matters while “Graphics card” (or ROCm) is on", False),
-        ("sound", "Sound", "PipeWire and PulseAudio, which includes the microphone", True),
+        ("gpu", "Graphics acceleration", "Needed by most programs; turn off only if the program crashes", True),
+        ("gpu_render_only", "Graphics: render only", "Give the program only the GPU's render devices, not the ones that can also drive the display. Works for most programs; turn it off if graphics break. Needs Graphics acceleration.", False),
+        ("camera", "Camera", "Webcams (/dev/video*)", False),
+        ("input", "Game controllers and input devices", "Raw access to /dev/input", False),
         ("alsa", "ALSA sound devices", "/dev/snd, for programs that don't use PipeWire or PulseAudio", False),
-        ("camera", "Camera", "/dev/video*", False),
-        ("input", "Game controllers and input devices", "/dev/input", False),
         ("rocm", "AMD compute (ROCm)", "/dev/kfd", False),
         ("kvm", "Virtual machines", "/dev/kvm", False),
-        ("printing", "Printing", "The CUPS socket", False),
-        ("ssh_agent", "SSH agent", "The program can sign in as you while it runs. Far-reaching access", False)]),
-    ("Desktop", [
-        ("portals", "Notifications, links and file chooser", "Lets the program show notifications, open links, pick files and print through your desktop. Needs xdg-dbus-proxy", False),
-        ("portal_screenshot", "Screenshots", "Lets the program ask the desktop for a screenshot. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_screencast", "Screen sharing", "Lets the program ask to share your screen or a window (Discord, Teams, Slack). Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_location", "Location", "Lets the program ask the desktop where you are. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_wallpaper", "Wallpaper", "Lets the program ask to change your desktop wallpaper. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_launcher", "Create launchers", "Lets the program ask to add its own entries to your app menu. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access. Works only when “Notifications, links and file chooser” is on", False),
-        ("tray", "Tray icon and media keys", "Lets the program show a tray icon and answer media keys. Needs xdg-dbus-proxy", False)]),
-    ("Files", [
-        ("folder", "Start in the program's own folder", "For programs that read or create files in the folder they start in. The folder the program file sits in is shared read-write and the program starts there. Put the program in a folder of its own, or a subfolder: your home, Downloads, Desktop, Documents and hidden folders are never shared. On by itself when the folder is named after the program; switch it off here", False)]),
-    ("Privacy and safety", [
-        ("private", "Private home erased on exit", "Nothing the program saves in its home is kept", False),
+        ("compat", "Pass graphics and toolkit settings", "For programs that draw wrongly or won't start. Copies the graphics and toolkit variables of your session that are set (WGPU_*, MESA_*, SDL_*, QT_QPA_* and similar). Never tokens or other variables.", False)]),
+    ("Desktop integration", [
+        ("portals", "Notifications and portals", "Notifications, opening links, the file chooser, dark mode (needs xdg-dbus-proxy)", False),
+        ("portal_screenshot", "Screenshots", "Let the program ask the desktop for a screenshot. The desktop shows its own prompt.", False),
+        ("portal_screencast", "Screen sharing", "Let the program ask to share your screen or a window (Discord, Teams, Slack). The desktop shows its own picker.", False),
+        ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)", False),
+        ("wayland", "Wayland", "Lets graphical programs open a window", True),
+        ("wayland_strict", "Wayland only if restricted", "No Wayland at all when the compositor can't limit what the program may do", False),
+        ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and GTK settings, so the program looks like your desktop", True),
+        ("portal_location", "Location", "Lets the program ask the desktop where you are.", False),
+        ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window.", False),
+        ("portal_wallpaper", "Wallpaper", "Lets the program ask to change your desktop wallpaper.", False),
+        ("portal_launcher", "Create launchers", "Lets the program ask to add its own entries to your app menu.", False),
+        ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access.", False),
+        ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access.", False),
+        ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access.", False)]),
+    ("Hardening", [
+        ("private", "Temporary home", "Everything the program saves in its private home is erased when it closes. Shared folders are not affected.", False),
         ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),
-        ("privacy", "Hide your real name", "The program sees a minimal /etc/passwd: your username, root and nobody. Your full name and the other accounts on this computer stay out", False),
-        ("userns", "Allow user namespaces", "Turn off to stop the program creating nested sandboxes. Chromium, Electron and Flatpak need this on", True),
+        ("privacy", "Hide your real name", "The program sees a minimal /etc/passwd: your username, root and nobody", False),
+        ("userns", "Allow the program's own sandbox", "Chromium, Electron and Flatpak programs need this. Turn off for stricter isolation.", True),
+        ("folder", "Start in the program's own folder", "For programs that read or create files in the folder they start in. The folder the program file sits in is shared read-write and the program starts there. Put the program in a folder of its own, or a subfolder: your home, Downloads, Desktop, Documents and hidden folders are never shared. On by itself when the folder is named after the program; switch it off here", False),
         ("allow_sensitive", "Allow sharing secret folders", "Lets you share ~/.ssh, ~/.gnupg and similar. Only if you really mean it", False)]),
 ]
+GROUP_INFO = {"What can this program use?": "Changes apply the next time the program starts. Everything else on your computer stays hidden from it."}      # a line under a group's title
+ADVANCED = ("portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret")      # shown in one collapsed row, "More desktop services"
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces",
@@ -383,12 +383,12 @@ def capabilities(scope):
     return text.strip() + (" Its home is erased on exit." if is_on(scope, "private") else "")
 
 
-def default_summary():
-    """The subtitle of the 'All programs (default)' row: what a program may use unless its own settings say otherwise,
-    as 'Network · Graphics · Sound'."""
-    net = ("Network", "Internet only", None)[net_choice(None)]
-    on = [words[:1].upper() + words[1:] for key, words in CAN if key in SWITCHES and is_on(None, key)]
-    n = len({v for k in LISTS for v in parse(None)[1][k]})
+def default_summary(scope=None):
+    """What SCOPE may use, as ajail shows it under a name in the list: 'Internet only · Graphics · Sound · 2 shared folders'. With no scope: what a
+    program may use unless its own settings say otherwise (the 'All programs (default)' row)."""
+    net = ("Network", "Internet only", None)[net_choice(scope)]
+    on = [words[:1].upper() + words[1:] for key, words in CAN if key in SWITCHES and is_on(scope, key)]
+    n = len({v for s in {None, scope} for k in LISTS for v in parse(s)[1][k]})
     parts = ([net] if net else []) + on + ([f"{n} shared folder{'s' if n != 1 else ''}"] if n else [])
     return " · ".join(parts) or "No network, devices or desktop services"
 
@@ -1079,9 +1079,11 @@ class Win(Adw.ApplicationWindow):
         pg.connect("shown", lambda *_: self.set_focus(None))                      # the health text is the first thing here: don't open with all of it selected
         self.nav.push(pg)
 
-    def app_row(self, n, waiting=False, linked=None, menu=None):
-        """A program in the list: its name, where it comes from and what is set, a green "Running" while it runs, and the arrow to its page."""
-        r = Adw.ActionRow(title=n, subtitle=row_subtitle(n, waiting, linked, menu, show_running=False), activatable=True, use_markup=False)
+    def app_row(self, n, waiting=False, linked=None, menu=None, plain=False):
+        """A program in the list, with a green "Running" while it runs and the arrow to its page. PLAIN (a program that is set up): what it may use,
+        as in ajail. Not plain (only run from the terminal, so nothing to show yet): where it comes from and what is set."""
+        sub = (("Waiting for your decision · " if waiting else "") + default_summary(n)) if plain else row_subtitle(n, waiting, linked, menu, show_running=False)
+        r = Adw.ActionRow(title=n, subtitle=sub, activatable=True, use_markup=False)
         badge = Gtk.Label(label="Running", valign=Gtk.Align.CENTER, visible=program_running(n), css_classes=["success", "caption"])
         r.add_suffix(badge)
         self.badges[n] = badge                                                    # tick keeps it up to date
@@ -1121,7 +1123,7 @@ class Win(Adw.ApplicationWindow):
         dr.connect("activated", lambda *_: self.open(None))
         self.apps_group.add(dr); self.app_rows.append(dr)
         for n in setup:
-            r = self.app_row(n, n in waiting, linked, menu)
+            r = self.app_row(n, n in waiting, linked, menu, True)
             self.apps_group.add(r); self.app_rows.append(r)
         if others:
             ex = Adw.ExpanderRow(title=f"Only run from the terminal ({len(others)})", subtitle="No settings, link or app menu launcher yet", use_markup=False)
@@ -1196,34 +1198,41 @@ class Win(Adw.ApplicationWindow):
             page.add(self.program_group(scope))
         tech, refresh_tech = self.tech_group(scope)
         page_rows.append(refresh_tech)
-        sg = Adw.PreferencesGroup(title="What can this program use?" if scope is not None else "What can programs use?",
-                                  description=("Changes apply the next time the program starts. Everything else on your computer stays hidden from it."
-                                               if scope is not None else
-                                               "Used by every program unless it has its own settings. Changes apply the next time a program starts."))
-        search = Gtk.SearchEntry(placeholder_text="Search settings", hexpand=True)
-        sg.add(search)
-        page.add(sg)
-        found = []                                                                # (group, [(row, key)]) for the search
+        found = []                                                                # (group, [(row, words searched)]) for the search
         for title, rows in GROUPS:
-            g = Adw.PreferencesGroup(title=title)
-            members = []
-            for key, t, s, _d in rows:
-                if key == "net_private" and "net" in SWITCHES: continue          # part of the Network choice
-                if key == "net" and "net_private" in SWITCHES: r, key = self.network_row(scope, page_rows), "net net_private internet network"
-                else: r = self.switch_row(scope, key, page_rows)
-                g.add(r); members.append((r, key))
+            g = Adw.PreferencesGroup(title=title, description=GROUP_INFO.get(title, ""))
+            members, more = [], None
+            for key, _t, _s, _d in rows:
+                r = self.switch_row(scope, key, page_rows)
+                if key in ADVANCED:                                               # seldom needed: one collapsed row, "More desktop services"
+                    if more is None:
+                        more = Adw.ExpanderRow(title="More desktop services", subtitle="Location, shortcuts, wallpaper, launchers, remote control, secrets", use_markup=False)
+                        g.add(more)
+                    more.add_row(r)
+                else: g.add(r)
+                members.append((r, key))
             page.add(g)
-            found.append((g, members))
+            found.append((g, members, more))
 
         def filter_rows(entry):
             words = entry.get_text().lower().split()
-            for g, members in found:
+            for g, members, more in found:
                 shown = 0
                 for r, key in members:
                     hit = all(w in f"{r.get_title()} {r.get_subtitle() or ''} {key}".lower() for w in words)
                     r.set_visible(hit); shown += hit
+                    if more is not None and key in ADVANCED and hit and words: more.set_expanded(True)      # a match inside the collapsed row opens it
                 g.set_visible(shown > 0)
+        search = Gtk.SearchEntry(placeholder_text="Search settings", hexpand=True)
         search.connect("search-changed", filter_rows)
+        searchbar = Gtk.SearchBar(child=search, show_close_button=False)
+        searchbar.connect_entry(search)
+        toggle = Gtk.ToggleButton(icon_name="system-search-symbolic", tooltip_text="Search the settings")
+        toggle.connect("toggled", lambda b: searchbar.set_search_mode(b.get_active()))
+        def closed(bar, _p):
+            toggle.set_active(bar.get_search_mode())
+            if not bar.get_search_mode(): search.set_text("")                    # closing the search shows everything again
+        searchbar.connect("notify::search-mode-enabled", closed)
         page.add(self.limits_group(scope, refresh_tech))
         for grp in self.folders_group(scope, refresh_tech): page.add(grp)
         page.add(self.env_group(scope, refresh_tech))
@@ -1246,8 +1255,7 @@ class Win(Adw.ApplicationWindow):
             xg.add(fbtn)
             page.add(xg)
         refresh_tech()
-        pg = self.page(DEFAULTS_TITLE if scope is None else scope, page)
-        pg.connect("shown", lambda *_: self.set_focus(None))                      # the search entry is the first thing on the default page: no ring around it just for opening it
+        pg = self.page(DEFAULTS_TITLE if scope is None else scope, page, [toggle], banner=searchbar)
         self.program_pages[scope] = pg
         return pg
 
@@ -1408,37 +1416,6 @@ class Win(Adw.ApplicationWindow):
             return self.alert("Couldn't decide", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
         self.toasts.add_toast(Adw.Toast(title=f"{name} is accepted. Start it again." if accept else f"Dismissed. sbx asks again the next time {name} starts from there."))
 
-    def network_row(self, scope, page_rows):
-        """The switches net and net_private as one choice: full access, internet only, or none."""
-        row = Adw.ComboRow(title="Network", model=Gtk.StringList.new([c[0] for c in NET_CHOICES]), use_markup=False)
-        undo = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"])
-        row.add_suffix(undo)
-        busy = [False]
-
-        def show():
-            i = net_choice(scope)
-            busy[0] = True; row.set_selected(i); busy[0] = False
-            row.set_subtitle(NET_CHOICES[i][1])
-            sc = parse(scope)[0]
-            undo.set_visible(scope is not None and ("net" in sc or "net_private" in sc))
-            undo.set_tooltip_text("Back to the default: " + NET_CHOICES[net_choice(None)][0])
-
-        def changed():
-            show()
-            for refresh in page_rows: refresh()
-
-        def chosen(*_):
-            if busy[0]: return
-            i = row.get_selected()
-            set_key(scope, "net", i != 2); set_key(scope, "net_private", i == 1)
-            if i == 1 and not shutil.which("pasta"):
-                self.toasts.add_toast(Adw.Toast(title="pasta (passt) is not installed: the program won't start until you install it"))
-            changed()
-        row.connect("notify::selected", chosen)
-        undo.connect("clicked", lambda *_: (set_key(scope, "net", None), set_key(scope, "net_private", None), changed()))
-        show()
-        return row
-
     def switch_row(self, scope, key, page_rows=None):
         """page_rows: the refresh functions of every switch on this page, so a switch others depend on can update them."""
         title, sub, default = SWITCHES[key]
@@ -1470,7 +1447,11 @@ class Win(Adw.ApplicationWindow):
             for refresh in page_rows or (): refresh()
 
         def toggled(*_):
-            if not busy[0]: set_key(scope, key, row.get_active()); changed()
+            if busy[0]: return
+            set_key(scope, key, row.get_active())
+            if key == "net_private" and row.get_active() and not shutil.which("pasta"):
+                self.toasts.add_toast(Adw.Toast(title="pasta (passt) is not installed: the program won't start until you install it"))
+            changed()
         row.connect("notify::active", toggled)
         undo.connect("clicked", lambda *_: (set_key(scope, key, None), changed()))
         if page_rows is not None and needs(key): page_rows.append(show)

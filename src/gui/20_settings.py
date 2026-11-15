@@ -233,12 +233,12 @@ def capabilities(scope):
     return text.strip() + (" Its home is erased on exit." if is_on(scope, "private") else "")
 
 
-def default_summary():
-    """The subtitle of the 'All programs (default)' row: what a program may use unless its own settings say otherwise,
-    as 'Network · Graphics · Sound'."""
-    net = ("Network", "Internet only", None)[net_choice(None)]
-    on = [words[:1].upper() + words[1:] for key, words in CAN if key in SWITCHES and is_on(None, key)]
-    n = len({v for k in LISTS for v in parse(None)[1][k]})
+def default_summary(scope=None):
+    """What SCOPE may use, as ajail shows it under a name in the list: 'Internet only · Graphics · Sound · 2 shared folders'. With no scope: what a
+    program may use unless its own settings say otherwise (the 'All programs (default)' row)."""
+    net = ("Network", "Internet only", None)[net_choice(scope)]
+    on = [words[:1].upper() + words[1:] for key, words in CAN if key in SWITCHES and is_on(scope, key)]
+    n = len({v for s in {None, scope} for k in LISTS for v in parse(s)[1][k]})
     parts = ([net] if net else []) + on + ([f"{n} shared folder{'s' if n != 1 else ''}"] if n else [])
     return " · ".join(parts) or "No network, devices or desktop services"
 

@@ -202,9 +202,11 @@ class Win(Adw.ApplicationWindow):
         pg.connect("shown", lambda *_: self.set_focus(None))                      # the health text is the first thing here: don't open with all of it selected
         self.nav.push(pg)
 
-    def app_row(self, n, waiting=False, linked=None, menu=None):
-        """A program in the list: its name, where it comes from and what is set, a green "Running" while it runs, and the arrow to its page."""
-        r = Adw.ActionRow(title=n, subtitle=row_subtitle(n, waiting, linked, menu, show_running=False), activatable=True, use_markup=False)
+    def app_row(self, n, waiting=False, linked=None, menu=None, plain=False):
+        """A program in the list, with a green "Running" while it runs and the arrow to its page. PLAIN (a program that is set up): what it may use,
+        as in ajail. Not plain (only run from the terminal, so nothing to show yet): where it comes from and what is set."""
+        sub = (("Waiting for your decision · " if waiting else "") + default_summary(n)) if plain else row_subtitle(n, waiting, linked, menu, show_running=False)
+        r = Adw.ActionRow(title=n, subtitle=sub, activatable=True, use_markup=False)
         badge = Gtk.Label(label="Running", valign=Gtk.Align.CENTER, visible=program_running(n), css_classes=["success", "caption"])
         r.add_suffix(badge)
         self.badges[n] = badge                                                    # tick keeps it up to date
@@ -244,7 +246,7 @@ class Win(Adw.ApplicationWindow):
         dr.connect("activated", lambda *_: self.open(None))
         self.apps_group.add(dr); self.app_rows.append(dr)
         for n in setup:
-            r = self.app_row(n, n in waiting, linked, menu)
+            r = self.app_row(n, n in waiting, linked, menu, True)
             self.apps_group.add(r); self.app_rows.append(r)
         if others:
             ex = Adw.ExpanderRow(title=f"Only run from the terminal ({len(others)})", subtitle="No settings, link or app menu launcher yet", use_markup=False)
@@ -319,34 +321,41 @@ class Win(Adw.ApplicationWindow):
             page.add(self.program_group(scope))
         tech, refresh_tech = self.tech_group(scope)
         page_rows.append(refresh_tech)
-        sg = Adw.PreferencesGroup(title="What can this program use?" if scope is not None else "What can programs use?",
-                                  description=("Changes apply the next time the program starts. Everything else on your computer stays hidden from it."
-                                               if scope is not None else
-                                               "Used by every program unless it has its own settings. Changes apply the next time a program starts."))
-        search = Gtk.SearchEntry(placeholder_text="Search settings", hexpand=True)
-        sg.add(search)
-        page.add(sg)
-        found = []                                                                # (group, [(row, key)]) for the search
+        found = []                                                                # (group, [(row, words searched)]) for the search
         for title, rows in GROUPS:
-            g = Adw.PreferencesGroup(title=title)
-            members = []
-            for key, t, s, _d in rows:
-                if key == "net_private" and "net" in SWITCHES: continue          # part of the Network choice
-                if key == "net" and "net_private" in SWITCHES: r, key = self.network_row(scope, page_rows), "net net_private internet network"
-                else: r = self.switch_row(scope, key, page_rows)
-                g.add(r); members.append((r, key))
+            g = Adw.PreferencesGroup(title=title, description=GROUP_INFO.get(title, ""))
+            members, more = [], None
+            for key, _t, _s, _d in rows:
+                r = self.switch_row(scope, key, page_rows)
+                if key in ADVANCED:                                               # seldom needed: one collapsed row, "More desktop services"
+                    if more is None:
+                        more = Adw.ExpanderRow(title="More desktop services", subtitle="Location, shortcuts, wallpaper, launchers, remote control, secrets", use_markup=False)
+                        g.add(more)
+                    more.add_row(r)
+                else: g.add(r)
+                members.append((r, key))
             page.add(g)
-            found.append((g, members))
+            found.append((g, members, more))
 
         def filter_rows(entry):
             words = entry.get_text().lower().split()
-            for g, members in found:
+            for g, members, more in found:
                 shown = 0
                 for r, key in members:
                     hit = all(w in f"{r.get_title()} {r.get_subtitle() or ''} {key}".lower() for w in words)
                     r.set_visible(hit); shown += hit
+                    if more is not None and key in ADVANCED and hit and words: more.set_expanded(True)      # a match inside the collapsed row opens it
                 g.set_visible(shown > 0)
+        search = Gtk.SearchEntry(placeholder_text="Search settings", hexpand=True)
         search.connect("search-changed", filter_rows)
+        searchbar = Gtk.SearchBar(child=search, show_close_button=False)
+        searchbar.connect_entry(search)
+        toggle = Gtk.ToggleButton(icon_name="system-search-symbolic", tooltip_text="Search the settings")
+        toggle.connect("toggled", lambda b: searchbar.set_search_mode(b.get_active()))
+        def closed(bar, _p):
+            toggle.set_active(bar.get_search_mode())
+            if not bar.get_search_mode(): search.set_text("")                    # closing the search shows everything again
+        searchbar.connect("notify::search-mode-enabled", closed)
         page.add(self.limits_group(scope, refresh_tech))
         for grp in self.folders_group(scope, refresh_tech): page.add(grp)
         page.add(self.env_group(scope, refresh_tech))
@@ -369,8 +378,7 @@ class Win(Adw.ApplicationWindow):
             xg.add(fbtn)
             page.add(xg)
         refresh_tech()
-        pg = self.page(DEFAULTS_TITLE if scope is None else scope, page)
-        pg.connect("shown", lambda *_: self.set_focus(None))                      # the search entry is the first thing on the default page: no ring around it just for opening it
+        pg = self.page(DEFAULTS_TITLE if scope is None else scope, page, [toggle], banner=searchbar)
         self.program_pages[scope] = pg
         return pg
 
@@ -531,37 +539,6 @@ class Win(Adw.ApplicationWindow):
             return self.alert("Couldn't decide", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
         self.toasts.add_toast(Adw.Toast(title=f"{name} is accepted. Start it again." if accept else f"Dismissed. sbx asks again the next time {name} starts from there."))
 
-    def network_row(self, scope, page_rows):
-        """The switches net and net_private as one choice: full access, internet only, or none."""
-        row = Adw.ComboRow(title="Network", model=Gtk.StringList.new([c[0] for c in NET_CHOICES]), use_markup=False)
-        undo = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"])
-        row.add_suffix(undo)
-        busy = [False]
-
-        def show():
-            i = net_choice(scope)
-            busy[0] = True; row.set_selected(i); busy[0] = False
-            row.set_subtitle(NET_CHOICES[i][1])
-            sc = parse(scope)[0]
-            undo.set_visible(scope is not None and ("net" in sc or "net_private" in sc))
-            undo.set_tooltip_text("Back to the default: " + NET_CHOICES[net_choice(None)][0])
-
-        def changed():
-            show()
-            for refresh in page_rows: refresh()
-
-        def chosen(*_):
-            if busy[0]: return
-            i = row.get_selected()
-            set_key(scope, "net", i != 2); set_key(scope, "net_private", i == 1)
-            if i == 1 and not shutil.which("pasta"):
-                self.toasts.add_toast(Adw.Toast(title="pasta (passt) is not installed: the program won't start until you install it"))
-            changed()
-        row.connect("notify::selected", chosen)
-        undo.connect("clicked", lambda *_: (set_key(scope, "net", None), set_key(scope, "net_private", None), changed()))
-        show()
-        return row
-
     def switch_row(self, scope, key, page_rows=None):
         """page_rows: the refresh functions of every switch on this page, so a switch others depend on can update them."""
         title, sub, default = SWITCHES[key]
@@ -593,7 +570,11 @@ class Win(Adw.ApplicationWindow):
             for refresh in page_rows or (): refresh()
 
         def toggled(*_):
-            if not busy[0]: set_key(scope, key, row.get_active()); changed()
+            if busy[0]: return
+            set_key(scope, key, row.get_active())
+            if key == "net_private" and row.get_active() and not shutil.which("pasta"):
+                self.toasts.add_toast(Adw.Toast(title="pasta (passt) is not installed: the program won't start until you install it"))
+            changed()
         row.connect("notify::active", toggled)
         undo.connect("clicked", lambda *_: (set_key(scope, key, None), changed()))
         if page_rows is not None and needs(key): page_rows.append(show)

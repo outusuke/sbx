@@ -4,47 +4,47 @@
 # Wording for each switch: key, title, subtitle, default. The list of switches itself comes from `sbx schema` (see
 # load_schema), so a switch added to sbx shows up here at once, under "Other", even before it has wording of its own.
 GROUPS = [
-    ("Network", [
-        ("net", "Network", "Internet and your local network", True),
-        ("net_private", "Keep this computer private", "Internet only: the program can't reach services running on this computer (databases, dev servers). Other devices on your local network are still reachable. Needs pasta (passt). Works only when “Network” is on", False)]),
-    ("Display", [
-        ("wayland", "Wayland", "Lets graphical programs open a window", True),
-        ("wayland_strict", "Wayland only if restricted", "No Wayland at all when the compositor can't limit what the program may do", False),
-        ("x11", "X11", "Weaker isolation than Wayland", False),
-        ("theme", "Your fonts, icons and GTK settings", "Shown read-only so the program looks like your desktop, with your window buttons (minimize, maximize) and cursor", True),
-        ("compat", "Graphics and toolkit variables", "Passes WGPU_*, MESA_*, SDL_*, QT_QPA_* and similar if set. Never tokens or other variables", False)]),
+    ("What can this program use?", [
+        ("net", "Internet", "Network access. Also reaches localhost and your local network.", True),
+        ("net_private", "Keep localhost private", "Internet only: the program can't reach services running on this computer (databases, dev servers). Other devices on your local network are still reachable. Needs pasta (passt).", False),
+        ("sound", "Audio", "Play sound. Also allows microphone access.", True),
+        ("x11", "X11 compatibility", "Only for programs that won't start otherwise. Weaker isolation.", False),
+        ("printing", "Printing", "Talk to the print service (CUPS)", False),
+        ("ssh_agent", "SSH agent", "Use your SSH keys without seeing them. The program can sign in as you.", False)]),
     ("Devices", [
-        ("gpu", "Graphics card", "/dev/dri and NVIDIA devices", True),
-        ("gpu_render_only", "Graphics: render only", "Of /dev/dri, share only the render nodes that programs draw with, not the card nodes that can drive the display. Does not limit NVIDIA devices. Only matters while “Graphics card” (or ROCm) is on", False),
-        ("sound", "Sound", "PipeWire and PulseAudio, which includes the microphone", True),
+        ("gpu", "Graphics acceleration", "Needed by most programs; turn off only if the program crashes", True),
+        ("gpu_render_only", "Graphics: render only", "Give the program only the GPU's render devices, not the ones that can also drive the display. Works for most programs; turn it off if graphics break. Needs Graphics acceleration.", False),
+        ("camera", "Camera", "Webcams (/dev/video*)", False),
+        ("input", "Game controllers and input devices", "Raw access to /dev/input", False),
         ("alsa", "ALSA sound devices", "/dev/snd, for programs that don't use PipeWire or PulseAudio", False),
-        ("camera", "Camera", "/dev/video*", False),
-        ("input", "Game controllers and input devices", "/dev/input", False),
         ("rocm", "AMD compute (ROCm)", "/dev/kfd", False),
         ("kvm", "Virtual machines", "/dev/kvm", False),
-        ("printing", "Printing", "The CUPS socket", False),
-        ("ssh_agent", "SSH agent", "The program can sign in as you while it runs. Far-reaching access", False)]),
-    ("Desktop", [
-        ("portals", "Notifications, links and file chooser", "Lets the program show notifications, open links, pick files and print through your desktop. Needs xdg-dbus-proxy", False),
-        ("portal_screenshot", "Screenshots", "Lets the program ask the desktop for a screenshot. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_screencast", "Screen sharing", "Lets the program ask to share your screen or a window (Discord, Teams, Slack). Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_location", "Location", "Lets the program ask the desktop where you are. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_wallpaper", "Wallpaper", "Lets the program ask to change your desktop wallpaper. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_launcher", "Create launchers", "Lets the program ask to add its own entries to your app menu. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access. Works only when “Notifications, links and file chooser” is on", False),
-        ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access. Works only when “Notifications, links and file chooser” is on", False),
-        ("tray", "Tray icon and media keys", "Lets the program show a tray icon and answer media keys. Needs xdg-dbus-proxy", False)]),
-    ("Files", [
-        ("folder", "Start in the program's own folder", "For programs that read or create files in the folder they start in. The folder the program file sits in is shared read-write and the program starts there. Put the program in a folder of its own, or a subfolder: your home, Downloads, Desktop, Documents and hidden folders are never shared. On by itself when the folder is named after the program; switch it off here", False)]),
-    ("Privacy and safety", [
-        ("private", "Private home erased on exit", "Nothing the program saves in its home is kept", False),
+        ("compat", "Pass graphics and toolkit settings", "For programs that draw wrongly or won't start. Copies the graphics and toolkit variables of your session that are set (WGPU_*, MESA_*, SDL_*, QT_QPA_* and similar). Never tokens or other variables.", False)]),
+    ("Desktop integration", [
+        ("portals", "Notifications and portals", "Notifications, opening links, the file chooser, dark mode (needs xdg-dbus-proxy)", False),
+        ("portal_screenshot", "Screenshots", "Let the program ask the desktop for a screenshot. The desktop shows its own prompt.", False),
+        ("portal_screencast", "Screen sharing", "Let the program ask to share your screen or a window (Discord, Teams, Slack). The desktop shows its own picker.", False),
+        ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)", False),
+        ("wayland", "Wayland", "Lets graphical programs open a window", True),
+        ("wayland_strict", "Wayland only if restricted", "No Wayland at all when the compositor can't limit what the program may do", False),
+        ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and GTK settings, so the program looks like your desktop", True),
+        ("portal_location", "Location", "Lets the program ask the desktop where you are.", False),
+        ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window.", False),
+        ("portal_wallpaper", "Wallpaper", "Lets the program ask to change your desktop wallpaper.", False),
+        ("portal_launcher", "Create launchers", "Lets the program ask to add its own entries to your app menu.", False),
+        ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access.", False),
+        ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access.", False),
+        ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access.", False)]),
+    ("Hardening", [
+        ("private", "Temporary home", "Everything the program saves in its private home is erased when it closes. Shared folders are not affected.", False),
         ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),
-        ("privacy", "Hide your real name", "The program sees a minimal /etc/passwd: your username, root and nobody. Your full name and the other accounts on this computer stay out", False),
-        ("userns", "Allow user namespaces", "Turn off to stop the program creating nested sandboxes. Chromium, Electron and Flatpak need this on", True),
+        ("privacy", "Hide your real name", "The program sees a minimal /etc/passwd: your username, root and nobody", False),
+        ("userns", "Allow the program's own sandbox", "Chromium, Electron and Flatpak programs need this. Turn off for stricter isolation.", True),
+        ("folder", "Start in the program's own folder", "For programs that read or create files in the folder they start in. The folder the program file sits in is shared read-write and the program starts there. Put the program in a folder of its own, or a subfolder: your home, Downloads, Desktop, Documents and hidden folders are never shared. On by itself when the folder is named after the program; switch it off here", False),
         ("allow_sensitive", "Allow sharing secret folders", "Lets you share ~/.ssh, ~/.gnupg and similar. Only if you really mean it", False)]),
 ]
+GROUP_INFO = {"What can this program use?": "Changes apply the next time the program starts. Everything else on your computer stays hidden from it."}      # a line under a group's title
+ADVANCED = ("portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret")      # shown in one collapsed row, "More desktop services"
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces",
