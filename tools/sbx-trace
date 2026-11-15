@@ -17,8 +17,8 @@ LINE_MAX = 16_384
 PATHS_MAX = 20_000              # distinct paths kept; further new ones are only counted
 VIEW_MAX = 3000                 # rows per group in a saved report
 NOISE = ("/proc", "/sys", "/dev", "/run")
-PROBES = {                      # the system calls that take a path; the older ones don't exist on arm64
-    "x86_64": ("open", "openat", "openat2", "stat", "lstat", "newfstatat", "statx", "access", "faccessat", "faccessat2", "execve"),
+PROBES = {                      # the system calls that take a path; the older ones don't exist on arm64, and stat/lstat have no tracepoint on newer kernels (glibc uses newfstatat)
+    "x86_64": ("open", "openat", "openat2", "newfstatat", "statx", "access", "faccessat", "faccessat2", "execve"),
     "aarch64": ("openat", "openat2", "newfstatat", "statx", "faccessat", "faccessat2", "execve")}
 KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x"}       # every other call is a probe: p
 FLAGS = {"open": "args->flags", "openat": "args->flags"}                  # openat2 keeps its flags in a struct: not read, counted as a read
