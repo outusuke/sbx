@@ -407,6 +407,37 @@ class Units(unittest.TestCase):
         for f in st["keep"]: f.close()
         self.assertFalse(any(cmd[i:i + 3] == ["--ro-bind", xa, xa] for i in range(len(cmd))), "the whole file was shared")
 
+    def test_wayland_strict_that_you_never_set_fails_closed_only_where_the_compositor_supports_it(self):
+        S = self.S
+        run = f"{self.tmp}/runw"; os.makedirs(run)
+        open(f"{run}/wayland-0", "w").close()
+        S["runtime_dir"] = lambda: run
+        def go(supported, opts):
+            S["wl_supported"] = lambda p: supported
+            S["wayland_context"] = lambda *a: None                    # no restricted socket could be made
+            with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ""}):
+                _, cmd, st = S["build"]("/bin/true", [], True, opts)
+            for f in st["keep"]: f.close()
+            for fd in st["fds"]:
+                try: os.close(fd)
+                except OSError: pass
+            return cmd
+        self.assertNotIn("WAYLAND_DISPLAY", go(True, {}))                                  # supported but failed: no Wayland, not the full socket
+        self.assertTrue(any("wayland_strict is on" in w for w in self.warned), self.warned)
+        self.assertIn("WAYLAND_DISPLAY", go(False, {}))                                    # not supported: the full socket, as before
+        self.assertIn("WAYLAND_DISPLAY", go(True, {"wayland_strict": False}))              # you said no (flag or file): your choice
+        self.assertNotIn("WAYLAND_DISPLAY", go(False, {"wayland_strict": True}))           # you said yes: off wherever it can't be restricted
+
+    def test_schema_says_whether_the_desktop_can_restrict_wayland_programs(self):
+        S = self.S
+        S["wayland_path"] = lambda: "/run/user/1000/wayland-0"
+        S["wl_supported"] = lambda p: True
+        self.assertIs(S["schema"]()["wayland_restricted"], True)
+        S["wl_supported"] = lambda p: False
+        self.assertIs(S["schema"]()["wayland_restricted"], False)
+        S["wayland_path"] = lambda: None
+        self.assertIs(S["schema"]()["wayland_restricted"], False)
+
     def test_fake_files_are_private_files_not_descriptors_and_are_removed_after(self):
         S = self.S
         os.makedirs(f"{self.tmp}/run3")
@@ -2879,6 +2910,21 @@ class Gui(unittest.TestCase):
         finally: G["subprocess"] = real
         self.assertIn("brand_new", G["SWITCHES"]); self.assertEqual(G["GROUPS"][-1][0], "Other")
         self.assertEqual(G["SENSITIVE"], [".ssh", ".brand-new"])
+
+    def test_wayland_strict_is_on_by_default_only_where_the_desktop_can_restrict_programs(self):
+        G = self.G
+        def load(restricted):
+            sch = {"switches": dict(self.S["SCALARS"]), "wayland_restricted": restricted}
+            out = types.SimpleNamespace(stdout=__import__("json").dumps(sch))
+            real = G["subprocess"]
+            G["subprocess"] = types.SimpleNamespace(run=lambda *a, **k: out, TimeoutExpired=Exception)
+            try: G["load_schema"]()
+            finally: G["subprocess"] = real
+        try:
+            load(True); self.assertIs(G["SWITCHES"]["wayland_strict"][2], True); self.assertIs(G["WL_RESTRICTED"], True)
+            load(False); self.assertIs(G["SWITCHES"]["wayland_strict"][2], False); self.assertIs(G["WL_RESTRICTED"], False)
+        finally: load(False)
+        self.assertEqual(G["needs"]("wayland_strict"), ("wayland",))                       # also greyed out while Wayland itself is off
 
     def test_it_reads_and_writes_the_same_files(self):
         G = self.G

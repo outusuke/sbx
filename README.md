@@ -113,7 +113,7 @@ Failed runs are logged to `~/.local/state/sbx/sbx.log`.
 ## Limits
 
 - Convenience sandbox, not a security boundary against hostile programs. The syscall filter is a blocklist.
-- Wayland without security-context support gives the program the full socket (a warning is shown).
+- Wayland without security-context support gives the program the full socket (a warning is shown). `wayland_strict` is on by default where the compositor supports security contexts, so a failed attempt there gives no Wayland instead of the full socket; where it can't, it is off and sbx-gui greys the switch out. Set it yourself to override.
 - `net_private=1` is not a firewall: your local network stays reachable.
 - Read-write shares (`--here`, `whitelist=`) let the program plant files that later run outside the sandbox. Share only what it needs.
 - 32-bit programs (Wine, Steam) fail. Terminal programs have no `/dev/tty`, so password prompts don't work.

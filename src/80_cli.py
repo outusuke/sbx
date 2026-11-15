@@ -98,4 +98,5 @@ def parse_options(a):
 def schema():
     """What sbx-gui needs to know, so the two can't drift apart."""
     return {"version": VERSION, "switches": SCALARS, "lists": list(LISTS), "limits": {k: v for k, v in LIMITS.items()},
-            "sensitive": SENSITIVE, "outside": list(OUTSIDE), "syscalls": sorted(EXTRA_SYSCALLS) + ["io_uring"]}
+            "sensitive": SENSITIVE, "outside": list(OUTSIDE), "syscalls": sorted(EXTRA_SYSCALLS) + ["io_uring"],
+            "wayland_restricted": bool(wayland_path() and wl_supported(wayland_path()))}      # can this desktop restrict Wayland programs?

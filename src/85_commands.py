@@ -19,7 +19,9 @@ def cmd_show(a):
     if via: print(f"  {'starts via':<16} = {', '.join(via)}")
     p = read_pending(name)
     if p and not pending_stale(name, p): print(f"  {'waiting':<16} = {tilde(p['old'])} -> {tilde(p['new'])}   [sbx rebind {name} accepts it, sbx rebind --dismiss {name} drops it]")
-    for k in SCALARS: print(f"  {k:<16} = {int(cfg[k])}   [{src[k]}]")
+    for k in SCALARS:
+        auto = k == "wayland_strict" and src[k] == "default" and cfg["wayland"] and wayland_path() and wl_supported(wayland_path())
+        print(f"  {k:<16} = {int(cfg[k]) or int(bool(auto))}   [{'default, on because the compositor can restrict programs' if auto else src[k]}]")
     for k in LIMITS:
         if cfg[k]: print(f"  {k:<16} = {cfg[k]}   [{src[k]}]")
     for k in LISTS:
@@ -549,7 +551,7 @@ def doctor():
     row("OK" if sd else "WARN", "systemd-run", "" if sd else "only needed for memory/tasks/cpu limits")
     wp = wayland_path()
     if wp: row("OK" if wl_supported(wp) else "WARN", f"Wayland socket {wp}",
-               "" if wl_supported(wp) else "the compositor has no wp_security_context_v1: programs get full Wayland access (wayland_strict=1 turns Wayland off instead)")
+               "" if wl_supported(wp) else "the compositor has no wp_security_context_v1: programs get full Wayland access (wayland_strict=1 turns Wayland off instead). Where it has one, wayland_strict is on unless you set it")
     else: row("INFO", "no Wayland socket (not on a Wayland session)")
     row("INFO", f"X11 display {os.environ['DISPLAY']}" if os.environ.get("DISPLAY") else "no X11 display")
     try:

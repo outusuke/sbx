@@ -335,7 +335,7 @@ def sbx_cmd():
 
 def load_schema():
     """Ask sbx which switches and secret folders exist, so this window can't drift from the command line."""
-    global GROUPS, SWITCHES, SENSITIVE, LIMIT_PATTERNS
+    global GROUPS, SWITCHES, SENSITIVE, LIMIT_PATTERNS, WL_RESTRICTED
     try:
         r = subprocess.run([sbx_cmd(), "schema"], capture_output=True, text=True, timeout=10)
         sch = json.loads(r.stdout)
@@ -344,12 +344,14 @@ def load_schema():
     known = set(sch.get("switches", {}))
     if not known: return
     SENSITIVE = list(sch.get("sensitive", SENSITIVE))
+    WL_RESTRICTED = bool(sch.get("wayland_restricted"))
     LIMIT_PATTERNS = {k: sch.get("limits", {}).get(k, v) for k, v in LIMIT_PATTERNS.items()}      # what sbx accepts for a limit
     groups = [(t, [row for row in rows if row[0] in known]) for t, rows in GROUPS]
     missing = [k for k in sch["switches"] if k not in {row[0] for _, rows in groups for row in rows}]
     if missing: groups.append(("Other", [(k, k.replace("_", " ").capitalize(), "Setting from sbx", bool(sch["switches"][k])) for k in missing]))
     GROUPS = [(t, rows) for t, rows in groups if rows]
     SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
+    if "wayland_strict" in SWITCHES: SWITCHES["wayland_strict"] = SWITCHES["wayland_strict"][:2] + (WL_RESTRICTED,)      # automatic default
 
 
 def folder_problem(name):

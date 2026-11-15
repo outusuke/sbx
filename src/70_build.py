@@ -121,8 +121,10 @@ def build(prog, args, live=False, o=None):
             state["wl"] = wayland_context(wp, tag + ".wl", name, f"{name}-{os.getpid()}")
             if state["wl"]: bind_src = tag + ".wl"
         elif wl_supported(wp): bind_src = tag + ".wl"
-        if bind_src == wp and cfg["wayland_strict"]:
-            if live: warn("the compositor has no security-context support, and wayland_strict is on: Wayland is off")
+        # wayland_strict that you never set is on exactly where the compositor can restrict programs: if the attempt failed
+        # there, the program gets no Wayland instead of quietly getting the full socket. Where it can't, it gets the full socket.
+        if bind_src == wp and (cfg["wayland_strict"] or (live and src["wayland_strict"] == "default" and wl_supported(wp))):
+            if live: warn("no restricted Wayland socket could be made, and wayland_strict is on: Wayland is off")
             wp = None
         elif bind_src == wp and live:
             warn("the compositor has no security-context support, so the program gets full Wayland access")

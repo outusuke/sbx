@@ -564,6 +564,11 @@ class Win(Adw.ApplicationWindow):
                 ok = any(is_on(scope, k) for k in req)
                 row.set_sensitive(ok)
                 row.set_tooltip_text(None if ok else "Turn on “" + "” or “".join(SWITCHES[k][0] for k in req if k in SWITCHES) + "” first")
+            if key == "wayland_strict" and not WL_RESTRICTED:
+                why = "Your desktop can't restrict programs (it lacks the wp_security_context_v1 Wayland protocol), so this only turns Wayland off."
+                row.set_subtitle(sub + f"\n{why}")
+                if not row.get_active():                           # nothing to turn off: grey it out. One that is already on stays usable
+                    row.set_sensitive(False); row.set_tooltip_text(why)
 
         def changed():
             show()
