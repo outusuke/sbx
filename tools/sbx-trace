@@ -1,0 +1,279 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# sbx-trace - run a command with bpftrace watching and report which files it opened or looked for, and which attempts failed.
+#     sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]        e.g.   sbx-trace -- sbx firefox
+#     sbx-trace --last [NAME] [--json] [--limit N]                      show the last report again
+# A tool apart from sbx: it only starts a command and watches it from outside. It needs bpftrace, a kernel with BTF and root
+# (sudo on a terminal, else pkexec). Without --host only processes inside a new pid namespace are kept, which leaves out
+# bubblewrap's own setup work and shows what the sandboxed program did. The command is held until the probes are in place.
+import errno, json, os, platform, re, shutil, signal, subprocess, sys, tempfile, threading, time
+
+VERSION = "0.1"
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "sbx-trace")
+HOME = os.path.realpath(os.path.expanduser("~"))
+STRLEN = 200                    # longest path bpftrace copies; a path that fills it is counted as unresolved, not kept cut off
+START_WAIT = 90                 # seconds to wait for the root helper (a password prompt may be open)
+LINE_MAX = 16_384
+PATHS_MAX = 20_000              # distinct paths kept; further new ones are only counted
+VIEW_MAX = 3000                 # rows per group in a saved report
+NOISE = ("/proc", "/sys", "/dev", "/run")
+PROBES = {                      # the system calls that take a path; the older ones don't exist on arm64
+    "x86_64": ("open", "openat", "openat2", "stat", "lstat", "newfstatat", "statx", "access", "faccessat", "faccessat2", "execve"),
+    "aarch64": ("openat", "openat2", "newfstatat", "statx", "faccessat", "faccessat2", "execve")}
+KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x"}       # every other call is a probe: p
+FLAGS = {"open": "args->flags", "openat": "args->flags"}                  # openat2 keeps its flags in a struct: not read, counted as a read
+USAGE = "usage: sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
+CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def die(msg, code=1):
+    print(f"sbx-trace: {msg}", file=sys.stderr); sys.exit(code)
+
+
+def safe(s):
+    """S for a terminal: control characters (a program chooses its own file names) become '?'."""
+    return CTRL.sub("?", s)
+
+
+# ---------------------------------------------------------------- the bpftrace program
+def script(machine, sandbox_only=True):
+    """$1 is the host thread id of the process we started, $2 a random number that starts every line the program prints (so a file name
+    with a newline in it can't forge a line). It follows that process and everything it starts, keeps only tasks inside a new pid
+    namespace when SANDBOX_ONLY, and ends when the first process does. Lines: TOKEN <tab> o|p|x <tab> thread <tab> result <tab>
+    open flags <tab> path."""
+    inside = " && ((struct task_struct *)curtask)->thread_pid->level >= 1" if sandbox_only else ""
+    gone = "delete(@t[tid]); delete(@c[tid]); delete(@p[tid]); delete(@f[tid]);"
+    out = ['BEGIN { @t[(uint64)$1] = 1; printf("%u\\tREADY\\n", $2); }',
+           'tracepoint:sched:sched_process_fork /@t[(uint64)args->parent_pid]/ { @t[(uint64)args->child_pid] = 1; }',
+           f'tracepoint:sched:sched_process_exit /@t[tid]/ {{ {gone} if (tid == (uint64)$1) {{ exit(); }} }}']
+    for c in PROBES[machine]:
+        out.append(f'tracepoint:syscalls:sys_enter_{c} /@t[tid]{inside}/ {{ @c[tid] = 1; @p[tid] = str(args->filename); @f[tid] = {FLAGS.get(c, "-1")}; }}')
+        out.append(f'tracepoint:syscalls:sys_exit_{c} /@c[tid]/ {{ printf("%u\\t{KIND.get(c, "p")}\\t%d\\t%d\\t%d\\t%s\\n", $2, tid, args->ret, @f[tid], @p[tid]); delete(@c[tid]); }}')
+    out.append("END { clear(@t); clear(@c); clear(@p); clear(@f); }")
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------- reading what it prints
+class Trace:
+    """Reads bpftrace's lines one by one (feed) and keeps only counts per path, however much the program does:
+    paths -> {r, w, p, x: reads, writes, probes, execs; err: {ERRNO: n}}. A path that isn't absolute (relative to a directory descriptor
+    or the working directory) can't be told from here: it is counted in unresolved."""
+
+    def __init__(self, token=0):
+        self.token = str(token)
+        self.paths, self.pids = {}, set()
+        self.lines = self.dropped = self.unresolved = 0
+        self.ready = threading.Event()
+
+    def feed(self, line):
+        if len(line) > LINE_MAX: return
+        f = line.split("\t", 5)
+        if len(f) < 2 or f[0] != self.token: return                  # bpftrace's own messages, or the rest of a name that had a newline in it
+        if f[1] == "READY": self.ready.set(); return
+        if len(f) != 6 or f[1] not in ("o", "p", "x") or not f[5]: return
+        try: tid, ret, flags = int(f[2]), int(f[3]), int(f[4])
+        except ValueError: return
+        if len(self.pids) < 100_000: self.pids.add(tid)
+        self.lines += 1
+        path = f[5]
+        if not path.startswith("/") or len(os.fsencode(path)) >= STRLEN - 1: self.unresolved += 1; return
+        path = os.path.normpath(path)
+        if path.startswith("//"): path = "/" + path.lstrip("/")
+        key = {"p": "p", "x": "x"}.get(f[1]) or ("w" if flags >= 0 and (flags & 3 or flags & 0o3100) else "r")      # O_WRONLY|O_RDWR, O_CREAT|O_TRUNC|O_APPEND
+        self.record(path, key, ret < 0, errno.errorcode.get(-ret, "E?") if ret < 0 else None)
+
+    def record(self, path, key, failed, err):
+        c = self.paths.get(path)
+        if c is None:
+            if len(self.paths) >= PATHS_MAX: self.dropped += 1; return
+            c = self.paths[path] = {}
+        c[key] = c.get(key, 0) + 1
+        if failed:
+            e = c.setdefault("err", {}); k = err or "E?"; e[k] = e.get(k, 0) + 1
+
+    def read_pipe(self, f):
+        """Read bpftrace's output from F (binary) until it closes. The line length is bounded, so one endless line can't fill memory."""
+        try:
+            while True:
+                raw = f.readline(LINE_MAX + 1)
+                if not raw: break
+                if len(raw) > LINE_MAX and not raw.endswith(b"\n"):
+                    while raw and not raw.endswith(b"\n"): raw = f.readline(LINE_MAX)
+                    continue
+                self.feed(raw.decode("utf-8", "surrogateescape").rstrip("\n"))
+        except (OSError, ValueError):
+            pass
+
+
+# ---------------------------------------------------------------- the report
+def view(tr, host=False):
+    """The trace sorted into what a person wants to know. blocked: paths the program was refused (denied, read-only) or, in a sandbox,
+    could not find although the host has them (hidden). Rows: path, counts (r w p x) and errors."""
+    groups, blocked, checked = {"home": [], "system": [], "noise": []}, [], 0
+    for path, c in tr.paths.items():
+        errs = c.get("err", {})
+        noise = path in NOISE or path.startswith(tuple(x + "/" for x in NOISE))
+        groups["noise" if noise else "home" if path.startswith(HOME + "/") else "system"].append({"path": path, **{k: c[k] for k in "rwpx" if k in c}, "err": errs})
+        kind = "denied" if errs.get("EACCES") or errs.get("EPERM") else "read-only" if errs.get("EROFS") else None
+        if kind is None and errs.get("ENOENT") and not host and not noise and checked < 2000:
+            checked += 1
+            if os.path.lexists(path): kind = "hidden"                 # the host has something there and the program found nothing: the sandbox hid it
+        if kind: blocked.append({"path": path, "kind": kind, "n": sum(errs.get(e, 0) for e in ("EACCES", "EPERM", "EROFS", "ENOENT")) or 1})
+    weight = lambda r: -sum(r.get(k, 0) for k in "rwpx")
+    out = {g: {"total": len(rows), "rows": sorted(rows, key=lambda r: (weight(r), r["path"]))[:VIEW_MAX]} for g, rows in groups.items()}
+    out["blocked"] = sorted(blocked, key=lambda r: (r["kind"] != "denied", -r["n"], r["path"]))[:VIEW_MAX]
+    out["info"] = {"calls": tr.lines, "processes": len(tr.pids), "dropped": tr.dropped, "unresolved": tr.unresolved, "host": host}
+    return out
+
+
+def tilde(p):
+    return "~/" + p[len(HOME) + 1:] if p.startswith(HOME + "/") else p
+
+
+def show(v, limit):
+    i = v["info"]
+    print(f"{v.get('name', '?')}: {i['calls']} file calls from {i['processes']} threads" + (f", {i['dropped']} paths not kept (too many)" if i["dropped"] else "") +
+          (f", {i['unresolved']} relative or very long paths not listed" if i["unresolved"] else ""))
+    print(f"blocked ({len(v['blocked'])}): refused, or hidden by the sandbox")
+    for b in v["blocked"][:limit]: print(f"  {b['kind']:<9} {safe(tilde(b['path']))}   {b['n']}x")
+    if not v["blocked"]: print("  nothing")
+    print("r read, w write, p probe (stat/access), x run")
+    for g, title in (("home", "your home"), ("system", "the system")):
+        grp = v[g]
+        print(f"{title} ({grp['total']}):")
+        for r in grp["rows"][:limit]:
+            counts = " ".join(f"{k}{r[k]}" for k in "rwpx" if k in r)
+            errs = ", ".join(f"{e} x{n}" for e, n in r["err"].items())
+            print(f"  {safe(tilde(r['path']))}   {counts}" + (f"   [{errs}]" if errs else ""))
+        if grp["total"] > limit: print(f"  ... {grp['total'] - limit} more (--limit N, or --json)")
+    print(f"/proc, /sys, /dev and /run: {v['noise']['total']} paths not shown")
+
+
+def report_path(name):
+    return os.path.join(STATE, f"{name}.json")
+
+
+def save(name, v):
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    tmp = f"{report_path(name)}.tmp{os.getpid()}"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f: json.dump(v, f)
+        os.replace(tmp, report_path(name))
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
+
+
+def name_of(cmd):
+    """A short name for the report: the program, or for `sbx [options] PROGRAM` the program sbx runs."""
+    first = os.path.basename(cmd[0])
+    if first == "sbx":
+        rest = [a for a in cmd[1:] if not a.startswith("-")]
+        if rest: first = os.path.basename(rest[0])
+    return re.sub(r"[^A-Za-z0-9._-]", "_", first)[:64] or "command"
+
+
+# ---------------------------------------------------------------- running
+def support():
+    """((how to get root, path of bpftrace), why not)."""
+    if platform.machine() not in PROBES: return None, f"no list of system calls for {platform.machine()}"
+    exe = shutil.which("bpftrace")
+    if not exe: return None, "bpftrace is missing (install the 'bpftrace' package)"
+    if not os.path.exists("/sys/kernel/btf/vmlinux"): return None, "this kernel has no BTF (/sys/kernel/btf/vmlinux), which the trace needs"
+    esc = shutil.which("sudo") if sys.stdin.isatty() else shutil.which("pkexec")
+    esc = esc or shutil.which("pkexec") or shutil.which("sudo")
+    if not esc: return None, "tracing needs root: install sudo or polkit (pkexec)"
+    return (esc, exe), ""
+
+
+HOLD = "import os,sys;f=int(sys.argv[1]);os.read(f,1);os.close(f);os.execvp(sys.argv[2],sys.argv[2:])"      # wait for the helper, then become the command
+
+
+def tail_of(f):
+    try:
+        f.seek(0)
+        lines = f.read(4000).decode("utf-8", "replace").strip().splitlines()
+        return safe(lines[-1]) if lines else ""
+    except (OSError, ValueError):
+        return ""
+
+
+def trace(cmd, host=False):
+    """Run CMD with the helper attached. Returns (exit code, Trace). Dies, without running CMD, when the helper can't start."""
+    helper, why = support()
+    if not helper: die(f"can't trace here: {why}")
+    esc, exe = helper
+    token = str(int.from_bytes(os.urandom(7), "big"))
+    tr = Trace(token)
+    r, w = os.pipe()
+    stopped, child = [False], [None]
+    def stop(*_):
+        stopped[0] = True
+        if child[0]: child[0].terminate()
+    for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, stop)
+    try: p = child[0] = subprocess.Popen([sys.executable, "-c", HOLD, str(r)] + cmd, pass_fds=[r])
+    except OSError as e: die(f"can't start {cmd[0]}: {e.strerror or e}")
+    os.close(r)
+    errf, proc, th = tempfile.TemporaryFile(), None, None
+    print(f"sbx-trace: starting bpftrace with {os.path.basename(esc)} (needs root)", file=sys.stderr)
+    try:
+        argv = [esc, shutil.which("env") or "/usr/bin/env", f"BPFTRACE_STRLEN={STRLEN}", exe, "-e", script(platform.machine(), not host), str(p.pid), token]
+        proc = subprocess.Popen(argv, stdin=None if sys.stdin.isatty() else subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errf)
+        th = threading.Thread(target=tr.read_pipe, args=(proc.stdout,), daemon=True); th.start()
+        end = time.time() + START_WAIT
+        while not tr.ready.wait(0.2):
+            if proc.poll() is not None or stopped[0] or time.time() > end: break
+    except OSError as e:
+        errf.write(str(e.strerror or e).encode())
+    if not tr.ready.is_set():
+        p.kill(); p.wait(); os.close(w)
+        if proc and proc.poll() is None:
+            try: proc.terminate()
+            except OSError: pass
+        why = tail_of(errf); errf.close()
+        if proc and proc.stdout: proc.stdout.close()
+        die("the trace did not start" + (f": {why}" if why else "") + (" (interrupted)" if stopped[0] else ""))
+    os.write(w, b"1"); os.close(w)
+    rc = p.wait()
+    th.join(10)                                                     # the helper ends by itself when the first process is gone
+    if proc.poll() is None:
+        try: proc.terminate()                                       # (a root process may refuse; it ends on its own)
+        except OSError: pass
+    errf.close(); proc.stdout.close()
+    return (128 - rc if rc < 0 else rc), tr
+
+
+def main(argv):
+    flags, limit, last, i = set(), 40, False, 0
+    while i < len(argv) and argv[i].startswith("-") and argv[i] != "--":
+        a = argv[i]
+        if a in ("--json", "--host"): flags.add(a)
+        elif a == "--last": last = True
+        elif a == "--limit" and i + 1 < len(argv) and argv[i + 1].isdigit(): limit = int(argv[i + 1]); i += 1
+        elif a in ("-h", "--help"): print(USAGE); return 0
+        elif a == "--version": print(f"sbx-trace {VERSION}"); return 0
+        else: die(f"unknown option {a}\n{USAGE}")
+        i += 1
+    rest = argv[i + 1:] if i < len(argv) and argv[i] == "--" else argv[i:]
+    if last:
+        names = sorted((n for n in os.listdir(STATE) if n.endswith(".json")), key=lambda n: -os.stat(os.path.join(STATE, n)).st_mtime) if os.path.isdir(STATE) else []
+        name = re.sub(r"[^A-Za-z0-9._-]", "_", rest[0]) if rest else (names[0][:-5] if names else None)
+        try:
+            with open(report_path(name)) as f: v = json.load(f)
+        except (OSError, ValueError, TypeError): die("no report yet: sbx-trace -- COMMAND")
+    else:
+        if not rest: die(USAGE)
+        if os.geteuid() == 0: die("run it as your own user, not root: it asks for root itself")
+        rc, tr = trace(rest, "--host" in flags)
+        v = view(tr, "--host" in flags); v["name"] = name_of(rest); v["command"] = rest; v["exit"] = rc; v["time"] = time.time()
+        try: save(v["name"], v)
+        except OSError as e: print(f"sbx-trace: could not save the report: {e.strerror or e}", file=sys.stderr)
+    if "--json" in flags: print(json.dumps(v))
+    else: show(v, limit)
+    return v.get("exit", 0) if not last else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
