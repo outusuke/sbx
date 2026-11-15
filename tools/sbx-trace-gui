@@ -1,0 +1,472 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# sbx-trace-gui - GTK4 + libadwaita window for sbx-trace: pick a program (or type a command), trace it, read what it touched.
+#     sbx-trace-gui
+# A tool apart from sbx-gui, and it does not change sbx-trace. It starts `sbx-trace -- sbx PROGRAM` and reads the saved report back with
+# `sbx-trace --last --json`. It runs as your own user: the window has no terminal, so sbx-trace is started without one and asks for root
+# through pkexec. It needs sbx-trace next to this file or in your PATH, and the same libraries as sbx-gui (GTK 4, libadwaita 1.5, PyGObject).
+import json, os, re, shlex, shutil, subprocess, sys, threading, time
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
+
+HOME = os.path.realpath(os.path.expanduser("~"))
+HOMES = HOME + "/.sbx-homes"
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+CTRL_KEEP_NL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
+RENDER_MAX = 100                # rows drawn per group; the search narrows the rest down
+LOG_KEEP = 8192                 # bytes of sbx-trace's output kept for an error message, however much the program prints
+KINDS = {"denied": "error", "read-only": "warning", "hidden": "accent"}      # blocked kinds and the colour of their label
+COUNTS = (("r", "read"), ("w", "write"), ("p", "probe"), ("x", "run"))
+
+
+# ---------------------------------------------------------------- text
+def safe(s, keep_newlines=False):
+    """S for a label: control characters (a program chooses its own file names) become '?'."""
+    return (CTRL_KEEP_NL if keep_newlines else CTRL).sub("?", s)
+
+
+def tilde(p):
+    return "~/" + p[len(HOME) + 1:] if p.startswith(HOME + "/") else p
+
+
+def copyable(path):
+    """(the text to copy for PATH, whether control characters were replaced). A name with an escape sequence in it is not put on the
+    clipboard as it is: pasted into a terminal it could do something."""
+    return (safe(path), True) if CTRL.search(path) else (path, False)
+
+
+def counts_text(row):
+    return " · ".join(f"{word} {row[k]}" for k, word in COUNTS if k in row)
+
+
+def errors_text(err):
+    return ", ".join(f"{e} ×{n}" for e, n in sorted(err.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def row_subtitle(row):
+    parts = [counts_text(row)] + ([f"errors: {errors_text(row['err'])}"] if row["err"] else [])
+    return " · ".join(p for p in parts if p)
+
+
+def when_text(t):
+    try: return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
+    except (TypeError, ValueError, OverflowError, OSError): return ""
+
+
+def summary_text(rep):
+    i = rep["info"]
+    parts = [f"{i['calls']} file calls from {i['processes']} threads"]
+    if i["dropped"]: parts.append(f"{i['dropped']} paths not kept (too many)")
+    if i["unresolved"]: parts.append(f"{i['unresolved']} relative or very long paths not listed")
+    return ", ".join(parts)
+
+
+def title_text(rep):
+    parts = [rep["name"]] + ([f"exit {rep['exit']}"] if rep["exit"] is not None else []) + ([when_text(rep["time"])] if rep["time"] is not None else [])
+    return safe(" · ".join(p for p in parts if p))
+
+
+# ---------------------------------------------------------------- the report
+def num(x):
+    return isinstance(x, int) and not isinstance(x, bool) and x >= 0
+
+
+def clean_report(v):
+    """What `sbx-trace --last --json` printed -> the report this window shows, or ValueError. Nothing in it is trusted: it is a file
+    a program's own file names went into, so every field is checked and anything of the wrong type is dropped."""
+    if not isinstance(v, dict): raise ValueError("not a report")
+
+    def group(g):
+        grp = v.get(g)
+        if not isinstance(grp, dict) or not isinstance(grp.get("rows"), list): raise ValueError(f"the report has no '{g}' list")
+        rows = []
+        for r in grp["rows"]:
+            if not isinstance(r, dict) or not isinstance(r.get("path"), str): continue
+            err = r.get("err") if isinstance(r.get("err"), dict) else {}
+            rows.append({"path": r["path"], **{k: r[k] for k, _ in COUNTS if num(r.get(k))}, "err": {str(e): n for e, n in err.items() if num(n)}})
+        return {"total": grp["total"] if num(grp.get("total")) and grp["total"] >= len(rows) else len(rows), "rows": rows}
+
+    if not isinstance(v.get("blocked"), list): raise ValueError("the report has no 'blocked' list")
+    blocked = [{"path": b["path"], "kind": b["kind"] if b.get("kind") in KINDS else "denied", "n": b["n"] if num(b.get("n")) else 1}
+               for b in v["blocked"] if isinstance(b, dict) and isinstance(b.get("path"), str)]
+    info, noise = v.get("info"), v.get("noise")
+    info = info if isinstance(info, dict) else {}
+    cmd = v.get("command")
+    return {"name": v["name"] if isinstance(v.get("name"), str) and v["name"] else "?",
+            "command": [c for c in cmd if isinstance(c, str)] if isinstance(cmd, list) else [],
+            "exit": v["exit"] if isinstance(v.get("exit"), int) and not isinstance(v.get("exit"), bool) else None,
+            "time": v["time"] if isinstance(v.get("time"), (int, float)) and not isinstance(v.get("time"), bool) else None,
+            "blocked": blocked, "home": group("home"), "system": group("system"),
+            "noise": noise["total"] if isinstance(noise, dict) and num(noise.get("total")) else 0,
+            "info": {k: info[k] if num(info.get(k)) else 0 for k in ("calls", "processes", "dropped", "unresolved")}}
+
+
+def matches(path, terms, extra=""):
+    """Every search term is in the path (as it is, or as ~/ shows it) or in EXTRA, ignoring case."""
+    hay = f"{path}\n{tilde(path)}\n{extra}".lower()
+    return all(t in hay for t in terms)
+
+
+def search_terms(text):
+    return text.lower().split()
+
+
+def is_fresh(rep, command, started):
+    """Is REP the report of the run that was started at STARTED with COMMAND? The exit code of sbx-trace is the program's own, so a
+    program that fails is not a trace that failed: the run counts when it saved its report."""
+    return rep is not None and rep["command"] == command and rep["time"] is not None and rep["time"] >= started
+
+
+# ---------------------------------------------------------------- finding and starting things
+def trace_cmd():
+    """The sbx-trace to use: the one next to this file, else the one in the PATH."""
+    mine = os.path.join(os.path.dirname(os.path.realpath(__file__)), "sbx-trace")
+    if os.path.isfile(mine) and os.access(mine, os.X_OK): return mine
+    return shutil.which("sbx-trace")
+
+
+def sbx_cmd():
+    return shutil.which("sbx") or "/usr/local/bin/sbx"
+
+
+def split_command(text):
+    """The words of what was typed, or None when it is empty or its quotes don't close."""
+    try: words = shlex.split(text)
+    except ValueError: return None
+    return words or None
+
+
+def report_name(words):
+    """The name sbx-trace gives the report of `sbx WORDS`: its first word that isn't an option, as a file name. None when that is no name."""
+    first = next((w for w in words if not w.startswith("-")), None)
+    name = os.path.basename(first) if first else ""
+    return name if NAME_RE.match(name) else None
+
+
+def start_problem(words):
+    """Why the trace can't start, or None. Everything else that can go wrong (no bpftrace, no BTF) is said by sbx-trace itself."""
+    if os.geteuid() == 0: return "Run this window as your own user, not as root. The trace asks for root itself."
+    if not trace_cmd(): return "sbx-trace was not found. It has to be next to sbx-trace-gui or in your PATH."
+    if not shutil.which("pkexec"): return "Tracing needs root, and this window has no terminal to ask for a sudo password. Install polkit (pkexec)."
+    if not os.access(sbx_cmd(), os.X_OK): return "sbx was not found in your PATH."
+    first = next((w for w in words if not w.startswith("-")), None)
+    if first and "/" not in first and not shutil.which(first): return f"{first} is not in your PATH. Type its full path instead."
+    return None
+
+
+def trace_command(words):
+    """The sbx command that is traced, and the full command line that traces it."""
+    cmd = [sbx_cmd(), *words]
+    return cmd, [trace_cmd(), "--"] + cmd
+
+
+def parse_list(text):
+    """The program names in the output of `sbx list`. Only a line that says idle or running counts: the others are messages."""
+    names = []
+    for line in text.splitlines():
+        p = line.split()
+        if len(p) >= 2 and NAME_RE.match(p[0]) and (p[1] == "idle" or p[1] == "running"): names.append(p[0])
+    return names
+
+
+def program_names():
+    """The programs you can pick: those with a private home, and those `sbx list` shows."""
+    n = set()
+    try: n |= {f for f in os.listdir(HOMES) if os.path.isdir(f"{HOMES}/{f}")}
+    except OSError: pass
+    try: n |= set(parse_list(subprocess.run([sbx_cmd(), "list"], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL).stdout))
+    except (OSError, subprocess.SubprocessError): pass
+    return sorted(x for x in n if NAME_RE.match(x))
+
+
+def load_report(name=None):
+    """(the saved report, or None; why not). Asks sbx-trace for the report of NAME, or the newest one."""
+    exe = trace_cmd()
+    if not exe: return None, "sbx-trace was not found."
+    argv = [exe, "--last", "--json"] + ([name] if name and NAME_RE.match(name) else [])
+    try: r = subprocess.run(argv, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as e: return None, f"Couldn't run sbx-trace: {getattr(e, 'strerror', None) or e}"
+    if r.returncode != 0:
+        lines = [l for l in r.stderr.splitlines() if l.strip()]
+        return None, safe(re.sub(r"^sbx-trace: ", "", lines[-1]) if lines else f"sbx-trace exited with {r.returncode}")
+    try: return clean_report(json.loads(r.stdout)), ""
+    except ValueError as e: return None, f"The saved report can't be read: {safe(str(e))}"
+
+
+class Run:
+    """sbx-trace started with no terminal and no input (which is what makes it ask for root through pkexec), in a session of its own, with
+    the last LOG_KEEP bytes of what it and the program print kept for an error message. A program that prints a lot costs no memory."""
+    def __init__(self, argv):
+        self.tail, self.lock = b"", threading.Lock()
+        self.proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
+
+    def _read(self):
+        try:
+            while True:
+                chunk = self.proc.stdout.read1(65536)
+                if not chunk: break
+                with self.lock: self.tail = (self.tail + chunk)[-LOG_KEEP:]
+        except (OSError, ValueError):
+            pass
+        finally:
+            self.proc.stdout.close()                                                 # when the program and whatever it left behind let go of the pipe
+
+    def stop(self):
+        """Ask sbx-trace to end: it stops the program, and still saves what it saw."""
+        if self.proc.poll() is None:
+            try: self.proc.terminate()
+            except OSError: pass
+
+    def wait(self):
+        """(exit code, the end of the output). A program that left a helper behind keeps the pipe open: don't wait for it."""
+        rc = self.proc.wait()
+        self.reader.join(2)
+        return rc, self.text()
+
+    def text(self):
+        with self.lock: return safe(self.tail.decode("utf-8", "replace"), True).strip()
+
+
+def failure_text(out):
+    lines = [l for l in out.splitlines() if l.strip()]
+    return "\n".join(lines[-8:])[-700:] or "No output."
+
+
+# ---------------------------------------------------------------- window
+class Win(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="sbx trace", default_width=640, default_height=800)
+        self.run, self.report, self.closing = None, None, False
+        self.rows = {}                           # group -> the rows in it now
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        bar = Adw.HeaderBar()
+        self.search_btn = Gtk.ToggleButton(icon_name="system-search-symbolic", tooltip_text="Search the paths")
+        bar.pack_end(self.search_btn)
+        view.add_top_bar(bar)
+        self.search = Gtk.SearchEntry(placeholder_text="Search paths", hexpand=True)
+        self.search_bar = Gtk.SearchBar(child=self.search)
+        self.search_bar.connect_entry(self.search)
+        self.search_bar.set_key_capture_widget(self)                               # typing anywhere but in a text field starts a search
+        self.search_btn.connect("toggled", lambda b: self.search_bar.set_search_mode(b.get_active()))
+        self.search_bar.connect("notify::search-mode-enabled", lambda b, _p: self.search_btn.set_active(b.get_search_mode()))
+        self.search.connect("search-changed", lambda *_: self.fill_report())
+        view.add_top_bar(self.search_bar)
+        view.set_content(self.build_page())
+        self.toasts.set_child(view)
+        self.set_content(self.toasts)
+        self.connect("close-request", self.on_close)
+        self.fill_report()
+        self.show_last(None, quiet=True)                                           # the newest report, if there is one
+        self.fill_programs()
+
+    def build_page(self):
+        page = Adw.PreferencesPage()
+        g = Adw.PreferencesGroup(title="Trace a program", description="Starts it in the sandbox (sbx PROGRAM) and records every file it opens or looks for. "
+                                 "It starts after you enter your password; the report appears when it ends.")
+        self.entry = Adw.EntryRow(title="Program or command")
+        self.entry.connect("entry-activated", lambda *_: self.start_trace())
+        self.names = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["navigation-sidebar"])
+        self.names.connect("row-activated", lambda _l, row: self.pick(row.get_child().get_label()))
+        self.popover = Gtk.Popover(child=Gtk.ScrolledWindow(child=self.names, min_content_width=240, max_content_height=320, propagate_natural_height=True))
+        self.popover.connect("show", lambda *_: self.fill_programs())
+        self.entry.add_suffix(Gtk.MenuButton(icon_name="view-list-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], popover=self.popover,
+                                             tooltip_text="Programs you have set up or run"))
+        g.add(self.entry)
+        self.status = Adw.ActionRow(title="Ready", subtitle="Type a program, or pick one from the list.", use_markup=False)
+        self.spinner = Gtk.Spinner(valign=Gtk.Align.CENTER, visible=False)
+        self.last_btn = Gtk.Button(label="Last report", valign=Gtk.Align.CENTER, tooltip_text="Show the report saved for this program")
+        self.last_btn.connect("clicked", lambda *_: self.show_last(report_name(split_command(self.entry.get_text()) or [])))
+        self.go_btn = Gtk.Button(label="Trace", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+        self.go_btn.connect("clicked", lambda *_: self.start_trace())
+        self.stop_btn = Gtk.Button(label="Stop", valign=Gtk.Align.CENTER, visible=False, css_classes=["destructive-action"])
+        self.stop_btn.connect("clicked", lambda *_: self.stop_trace())
+        for w in (self.spinner, self.last_btn, self.stop_btn, self.go_btn): self.status.add_suffix(w)
+        g.add(self.status)
+        page.add(g)
+        self.head = Adw.PreferencesGroup()
+        self.head_row = Adw.ActionRow(title="No report yet", subtitle="Trace a program to see which files it touches.", use_markup=False)
+        self.head.add(self.head_row)
+        self.blocked = Adw.PreferencesGroup(description="Refused (denied, read-only), or hidden by the sandbox: the host has something there and the program found nothing.")
+        self.home = Adw.PreferencesGroup(description="A probe is a look without opening the file (stat, access).")
+        self.system = Adw.PreferencesGroup()
+        self.noise = Adw.PreferencesGroup()
+        for grp in (self.head, self.blocked, self.home, self.system, self.noise): page.add(grp)
+        return page
+
+    # -- helpers --
+    def toast(self, text):
+        self.toasts.add_toast(Adw.Toast(title=text, use_markup=False))             # some of the text is a file name or sbx-trace's message
+
+    def alert(self, heading, body=""):
+        d = Adw.AlertDialog(heading=heading, body=body)
+        d.add_response("ok", "OK")
+        d.present(self)
+
+    def copy_text(self, text, done="Copied"):
+        try: self.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(text))
+        except (TypeError, GLib.Error):
+            return self.toast("Couldn't copy")
+        self.toast(done)
+
+    def copy_path(self, path):
+        text, replaced = copyable(path)
+        self.copy_text(text, "Copied, with control characters replaced by ?" if replaced else "Copied the path")
+
+    def pick(self, name):
+        self.popover.popdown()
+        self.entry.set_text(name)
+        self.entry.grab_focus()
+
+    def fill_programs(self):
+        """The list of programs, from a thread: `sbx list` is quick, but the window never waits for it."""
+        def work():
+            names = program_names()
+            GLib.idle_add(lambda: self.show_programs(names) and False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def show_programs(self, names):
+        while (row := self.names.get_row_at_index(0)) is not None: self.names.remove(row)
+        for n in names or ["No programs yet"]:
+            self.names.append(Gtk.ListBoxRow(child=Gtk.Label(label=n, xalign=0, margin_top=6, margin_bottom=6, margin_start=12, margin_end=12), activatable=bool(names)))
+        return True
+
+    # -- the report --
+    def path_row(self, path, subtitle, kind=None):
+        row = Adw.ActionRow(title=safe(tilde(path)), subtitle=subtitle, use_markup=False)
+        if kind: row.add_suffix(Gtk.Label(label=kind, valign=Gtk.Align.CENTER, css_classes=[KINDS[kind], "caption"]))
+        copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Copy the path")
+        copy.connect("clicked", lambda *_, p=path: self.copy_path(p))
+        row.add_suffix(copy)
+        return row
+
+    def fill_group(self, group, title, total, items, make_row, filtering):
+        """Put the first RENDER_MAX of ITEMS in GROUP, and a last row that says how many more there are. Hidden when nothing is left to show."""
+        for r in self.rows.get(group, []): group.remove(r)
+        rows = self.rows[group] = []
+        shown = items[:RENDER_MAX]
+        for it in shown:
+            rows.append(make_row(it))
+        unsaved = 0 if filtering else max(0, total - len(items))                     # sbx-trace keeps only the first rows of a very long list
+        if len(items) > len(shown):
+            rows.append(Adw.ActionRow(title=f"… {len(items) - len(shown)} more", use_markup=False,
+                                      subtitle="Search to narrow it down." + (f" {unsaved} more are not in the saved report." if unsaved else "")))
+        elif unsaved:
+            rows.append(Adw.ActionRow(title=f"… {unsaved} more", subtitle="They are not in the saved report.", use_markup=False))
+        for r in rows: group.add(r)
+        group.set_title(f"{title} ({len(items)} of {total})" if filtering else f"{title} ({total})")
+        group.set_visible(bool(items))
+
+    def fill_report(self):
+        rep = self.report
+        for grp in (self.blocked, self.home, self.system, self.noise): grp.set_visible(False)
+        if rep is None:
+            self.head_row.set_title("No report yet")
+            self.head_row.set_subtitle("Trace a program to see which files it touches.")
+            return
+        terms = search_terms(self.search.get_text())
+        filtering = bool(terms)
+        self.head_row.set_title(title_text(rep))
+        self.head_row.set_subtitle(summary_text(rep))
+        blocked = [b for b in rep["blocked"] if matches(b["path"], terms, b["kind"])]
+        self.fill_group(self.blocked, "Blocked", len(rep["blocked"]), blocked,
+                        lambda b: self.path_row(b["path"], f"{b['n']}×", b["kind"]), filtering)
+        for grp, key, title in ((self.home, "home", "Your home"), (self.system, "system", "The system")):
+            rows = [r for r in rep[key]["rows"] if matches(r["path"], terms)]
+            self.fill_group(grp, title, rep[key]["total"], rows, lambda r: self.path_row(r["path"], row_subtitle(r)), filtering)
+        self.noise.set_description(f"/proc, /sys, /dev and /run: {rep['noise']} paths not shown")
+        self.noise.set_visible(True)
+        if filtering and not (self.blocked.get_visible() or self.home.get_visible() or self.system.get_visible()):
+            self.head_row.set_subtitle(f"Nothing matches “{safe(' '.join(terms))}”.")
+
+    def show_last(self, name, quiet=False):
+        """The saved report of NAME (the newest when None), read by sbx-trace from a thread."""
+        def work():
+            rep, why = load_report(name)
+            GLib.idle_add(lambda: self.got_report(rep, why, name, quiet) and False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def got_report(self, rep, why, name, quiet):
+        if self.closing: return True
+        if rep is not None:
+            self.report = rep
+            self.fill_report()
+        elif not quiet:
+            self.toast(f"No report for {name}" if name and why.startswith("no report") else why)
+        return True
+
+    # -- tracing --
+    def set_busy(self, busy, title=None, subtitle=None):
+        self.entry.set_sensitive(not busy)
+        self.go_btn.set_visible(not busy); self.last_btn.set_visible(not busy)
+        self.stop_btn.set_visible(busy); self.stop_btn.set_sensitive(busy)
+        self.spinner.set_visible(busy); self.spinner.set_spinning(busy)
+        self.status.set_title(title or "Ready")
+        self.status.set_subtitle(subtitle or "Type a program, or pick one from the list.")
+
+    def start_trace(self):
+        if self.run: return
+        words = split_command(self.entry.get_text())
+        if not words: return self.toast("Type a program, or pick one from the list")
+        problem = start_problem(words)
+        if problem: return self.alert("Can't start the trace", problem)
+        cmd, argv = trace_command(words)
+        started = time.time()
+        try: run = self.run = Run(argv)
+        except OSError as e: return self.alert("Couldn't start sbx-trace", str(getattr(e, "strerror", None) or e))
+        self.set_busy(True, f"Tracing {safe(shlex.join(words))}", "Waiting for your password. The program starts after that, and the report appears when it ends.")
+
+        def work():
+            rc, out = run.wait()
+            rep, why = load_report(None)
+            GLib.idle_add(lambda: self.finished(run, cmd, started, rc, out, rep, why) and False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def stop_trace(self):
+        if self.run:
+            self.run.stop()
+            self.status.set_title("Stopping…")
+            self.stop_btn.set_sensitive(False)
+
+    def finished(self, run, cmd, started, rc, out, rep, why):
+        if self.closing: return True
+        if self.run is run: self.run = None
+        self.set_busy(False)
+        if is_fresh(rep, cmd, started):
+            self.report = rep
+            self.fill_report()
+            self.toast("Trace finished" + (f" (the program exited with {rc})" if rc else ""))
+        else:
+            self.alert("The trace did not finish", failure_text(out) if out else (why or f"sbx-trace exited with {rc}"))
+        return True
+
+    def on_close(self, *_):
+        if not self.run or self.closing: return False
+        d = Adw.AlertDialog(heading="Stop the trace?", body="A trace is still running. Closing the window stops it, and the program with it.")
+        d.add_response("keep", "Keep tracing"); d.add_response("stop", "Stop and close")
+        d.set_response_appearance("stop", Adw.ResponseAppearance.DESTRUCTIVE)
+        d.set_close_response("keep")
+        d.choose(self, None, lambda dlg, res: dlg.choose_finish(res) == "stop" and self.stop_and_close())
+        return True
+
+    def stop_and_close(self):
+        self.closing = True
+        if self.run: self.run.stop()
+        self.close()
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="org.sbx.TraceGui", flags=Gio.ApplicationFlags.FLAGS_NONE)
+
+    def do_activate(self):
+        (self.props.active_window or Win(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))
