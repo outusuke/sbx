@@ -892,7 +892,7 @@ class Win(Adw.ApplicationWindow):
                     self.toast(r.stdout.strip().capitalize() or "Settings imported")
                 elif not force and "--force" in r.stderr:           # some of them exist and differ
                     self.ask("Replace existing settings?", self.cli_error(r).replace(" Nothing was imported; --force replaces them", "")
-                             + ". The imported settings replace them; nothing else changes.", "Replace", lambda: go(True))
+                             + " The imported settings replace them; nothing else changes.", "Replace", lambda: go(True))
                 else: self.toast(self.cli_error(r))
             go(False)
         dlg.open(self, None, cb)

@@ -262,6 +262,8 @@ def cmd_import(a):
         except OSError: old = None
         if old is None: todo.append((path, text))
         elif old.strip("\n") == text.strip("\n"): same += 1
+        # A file without a single setting (blank or comments only, e.g. after every switch went back to its default) is nothing to lose.
+        elif not any(l.strip() and not l.lstrip().startswith("#") for l in old.splitlines()): todo.append((path, text))
         else: clash.append(label); todo.append((path, text))
     if clash and not force:
         die("these settings already exist and differ: " + ", ".join(clash) + ". Nothing was imported; --force replaces them")

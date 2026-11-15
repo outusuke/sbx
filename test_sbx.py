@@ -1456,6 +1456,17 @@ class Units(unittest.TestCase):
         self.assertIsNone(self._call("cmd_import", f, "--force")[0])
         self.assertEqual(open(f"{conf}/default.conf").read(), "net=0\nwhitelist=~/Projects\n"); self.assertTrue(os.path.exists(f"{conf}/apps/a.conf"))
 
+    def test_import_overwrites_files_without_settings_without_asking(self):
+        S, conf = self._settings()
+        f = f"{self.tmp}/all.txt"; self._call("cmd_export", "-o", f)
+        with open(f"{conf}/default.conf", "w") as fh: fh.write("\n")                  # what is left once every switch is back at its default
+        with open(f"{conf}/apps/a.conf", "w") as fh: fh.write("# only a comment\n")
+        code, out, err = self._call("cmd_import", f)
+        self.assertIsNone(code, err)
+        self.assertEqual(open(f"{conf}/default.conf").read(), "net=0\nwhitelist=~/Projects\n")
+        with open(f"{conf}/default.conf", "w") as fh: fh.write("net=1\n")          # a real, different setting still needs --force
+        self.assertNotEqual(self._call("cmd_import", f)[0], 0)
+
     def test_import_rejects_anything_that_is_not_an_sbx_export(self):
         S, conf = self._settings()
         for text in ("net=0\n", "", "# ajail settings export\n# [default.conf]\nnet=0\n", "# sbx settings export\n",
