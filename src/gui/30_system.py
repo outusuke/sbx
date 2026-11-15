@@ -135,6 +135,14 @@ def link_is_ours(name):
     except OSError: return False
 
 
+def dir_size(path):
+    """A folder's size for a row ('12M'): 'none yet' when it is not there, 'unknown' when du can't say within 5 seconds."""
+    if not os.path.isdir(path): return "none yet"
+    try: r = subprocess.run(["du", "-sh", path], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError): return "unknown"
+    return (r.stdout.split() or ["unknown"])[0]
+
+
 UNUSED_BYTES = 64 * 1024        # same rule as `sbx clean --unused`
 
 
@@ -327,7 +335,7 @@ def sbx_cmd():
 
 def load_schema():
     """Ask sbx which switches and secret folders exist, so this window can't drift from the command line."""
-    global GROUPS, SWITCHES, SENSITIVE
+    global GROUPS, SWITCHES, SENSITIVE, LIMIT_PATTERNS
     try:
         r = subprocess.run([sbx_cmd(), "schema"], capture_output=True, text=True, timeout=10)
         sch = json.loads(r.stdout)
@@ -336,6 +344,7 @@ def load_schema():
     known = set(sch.get("switches", {}))
     if not known: return
     SENSITIVE = list(sch.get("sensitive", SENSITIVE))
+    LIMIT_PATTERNS = {k: sch.get("limits", {}).get(k, v) for k, v in LIMIT_PATTERNS.items()}      # what sbx accepts for a limit
     groups = [(t, [row for row in rows if row[0] in known]) for t, rows in GROUPS]
     missing = [k for k in sch["switches"] if k not in {row[0] for _, rows in groups for row in rows}]
     if missing: groups.append(("Other", [(k, k.replace("_", " ").capitalize(), "Setting from sbx", bool(sch["switches"][k])) for k in missing]))

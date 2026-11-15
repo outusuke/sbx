@@ -2425,14 +2425,155 @@ class Gui(unittest.TestCase):
 
     def test_the_program_page_says_where_the_program_comes_from(self):
         G = self.G; h = G["HOME"]; adw = G["Adw"]; win = mock.MagicMock()
-        self.assertIsNone(G["Win"].source_group(win, "never"))
+        self.assertIsNone(G["Win"].source_row(win, "never"))
         self._gui_origin("game", f"{h}/Downloads/Crash", moved=f"{h}/Old/Crash")
-        adw.ActionRow.reset_mock(); G["Win"].source_group(win, "game")
+        adw.ActionRow.reset_mock(); G["Win"].source_row(win, "game")
         kw = adw.ActionRow.call_args.kwargs
         self.assertEqual(kw["title"], "Downloaded · ~/Downloads/Crash"); self.assertIn("moved from ~/Old/Crash", kw["subtitle"])
-        os.unlink(f"{h}/Downloads/Crash"); adw.ActionRow.reset_mock(); G["Win"].source_group(win, "game")
+        os.unlink(f"{h}/Downloads/Crash"); adw.ActionRow.reset_mock(); G["Win"].source_row(win, "game")
         kw = adw.ActionRow.call_args.kwargs
         self.assertEqual(kw["title"], "Missing: ~/Downloads/Crash"); self.assertIn("The recorded file is gone", kw["subtitle"])
+
+    def test_the_list_starts_with_the_defaults_row_and_says_what_every_program_may_use(self):
+        G = self.G; adw = G["Adw"]; os.makedirs(G["APPS"], exist_ok=True)
+        self.assertEqual(G["default_summary"](), "Network · Graphics · Sound")                     # the built-in defaults
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("net_private=1\ncamera=1\nwhitelist=~/Shared\nread_only=~/Docs\nread_only=~/Shared\n")
+        self.assertEqual(G["default_summary"](), "Internet only · Graphics · Sound · Camera · 2 shared folders")
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("net=0\ngpu=0\nsound=0\n")
+        self.assertEqual(G["default_summary"](), "No network, devices or desktop services")
+        win = mock.MagicMock(); win.app_rows = []; win.others_open = False
+        adw.ActionRow.reset_mock(); G["Win"].fill_apps(win)
+        first = adw.ActionRow.call_args_list[0].kwargs                                               # before any program
+        self.assertEqual((first["title"], first["subtitle"]), ("All programs (default)", G["default_summary"]())); self.assertTrue(first["activatable"])
+        win.apps_group.set_description.assert_called_with("No programs yet. Press + to add one, or just start one with sbx.")
+        win.app_row.assert_not_called()                                                              # the defaults are not a program
+        with open(f"{G['APPS']}/x.conf", "w") as f: f.write("net=0\n")
+        G["Win"].fill_apps(win)
+        self.assertIn("Select a program", win.apps_group.set_description.call_args[0][0])
+
+    def test_a_row_in_the_list_has_a_running_badge_and_no_buttons(self):
+        G = self.G; gtk = G["Gtk"]; win = mock.MagicMock(); win.badges = {}
+        G["program_running"] = lambda n: n == "game"
+        gtk.Label.reset_mock(); gtk.Button.reset_mock()
+        G["Win"].app_row(win, "game"); kw = gtk.Label.call_args.kwargs
+        self.assertEqual((kw["label"], kw["visible"]), ("Running", True)); self.assertEqual(kw["css_classes"], ["success", "caption"])
+        G["Win"].app_row(win, "tool"); self.assertFalse(gtk.Label.call_args.kwargs["visible"])
+        self.assertEqual(set(win.badges), {"game", "tool"}); gtk.Button.assert_not_called()        # starting and stopping are on the program's page
+
+    def test_the_tick_keeps_the_badges_and_the_open_page_up_to_date_and_forgets_closed_pages(self):
+        G = self.G; yes, no = mock.MagicMock(), mock.MagicMock()
+        G["program_running"] = lambda n: n == "a"
+        page = object(); stack = types.SimpleNamespace(get_n_items=lambda: 1, get_item=lambda i: page)
+        shown, gone = mock.MagicMock(), mock.MagicMock()
+        win = types.SimpleNamespace(badges={"a": yes, "b": no}, live={"a": shown, "z": gone}, program_pages={"a": page, "z": object()},
+                                    nav=mock.MagicMock(get_navigation_stack=lambda: stack))
+        self.assertTrue(G["Win"].tick(win))                                                          # True: keep ticking
+        yes.set_visible.assert_called_with(True); no.set_visible.assert_called_with(False)
+        shown.assert_called_once(); gone.assert_not_called(); self.assertEqual(list(win.live), ["a"])
+
+    def test_dir_size_says_none_yet_unknown_or_the_size(self):
+        G = self.G; d = f"{self.tmp}/big"
+        self.assertEqual(G["dir_size"](d), "none yet")
+        os.makedirs(d)
+        with open(f"{d}/f", "w") as f: f.write("x" * 5000)
+        self.assertRegex(G["dir_size"](d), r"^\d+(\.\d)?[KMG]$")
+        with mock.patch.object(G["subprocess"], "run", side_effect=OSError("no du")): self.assertEqual(G["dir_size"](d), "unknown")
+        with mock.patch.object(G["subprocess"], "run", return_value=types.SimpleNamespace(stdout="", stderr="x")): self.assertEqual(G["dir_size"](d), "unknown")
+
+    def test_a_shared_folder_has_a_read_only_toggle_and_a_stop_sharing_button(self):
+        G = self.G; gtk = G["Gtk"]; os.makedirs(G["APPS"], exist_ok=True)
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("whitelist=~/A\nread_only=~/B\n")
+        togs, btns = [], []
+        gtk.ToggleButton.side_effect = lambda **kw: togs.append(mock.MagicMock(kw=kw)) or togs[-1]
+        gtk.Button.side_effect = lambda **kw: btns.append(mock.MagicMock(kw=kw)) or btns[-1]
+        for attr in ("ToggleButton", "Button"): self.addCleanup(setattr, getattr(gtk, attr), "side_effect", None)
+        G["Win"].folders_group(mock.MagicMock(), "app")
+        self.assertEqual([b.kw["label"] for b in btns if "label" in b.kw], ["Add folder", "Add file"])
+        self.assertEqual([t.kw["active"] for t in togs], [False, True])                              # ~/A read and write, ~/B read only
+        trash = [b for b in btns if b.kw.get("icon_name") == "user-trash-symbolic"]; self.assertEqual(len(trash), 2)
+        on = mock.MagicMock(); on.get_active.return_value = True
+        togs[0].connect.call_args[0][1](on)                                                          # ~/A: Read-only switched on
+        self.assertEqual(G["parse"]("app")[1], {"whitelist": [], "read_only": ["~/B", "~/A"]})
+        trash[1].connect.call_args[0][1](None)                                                       # ~/B: stop sharing
+        self.assertEqual(G["parse"]("app")[1], {"whitelist": [], "read_only": ["~/A"]})
+
+    def test_resetting_the_private_home_moves_it_to_the_trash_and_shows_the_new_size(self):
+        G = self.G; win = mock.MagicMock(); refresh = mock.MagicMock(); G["program_running"] = lambda n: False
+        G["Win"].trash_home(win, "a", mock.MagicMock(), refresh)                                     # nothing saved yet
+        G["Gio"].File.new_for_path.assert_not_called(); refresh.assert_not_called(); G["Adw"].Toast.assert_called_with(title="Nothing saved yet")
+        os.makedirs(f"{G['HOMES']}/a")
+        G["Win"].trash_home(win, "a", mock.MagicMock(), refresh)
+        G["Gio"].File.new_for_path.assert_called_with(f"{G['HOMES']}/a"); refresh.assert_called_once(); G["Adw"].Toast.assert_called_with(title="Moved to the Trash")
+        G["program_running"] = lambda n: True; refresh.reset_mock(); G["Gio"].File.new_for_path.reset_mock()
+        G["Win"].trash_home(win, "a", mock.MagicMock(), refresh)                                     # running: nothing is touched
+        G["Gio"].File.new_for_path.assert_not_called(); refresh.assert_not_called(); win.alert.assert_called_once()
+
+    def test_the_command_in_the_technical_details_is_what_sbx_preview_prints(self):
+        G = self.G; cli = G["sbx_cmd"](); win = mock.MagicMock(); game = f"{G['HOME']}/Games/Crash"
+        with mock.patch.dict(os.environ, {"PATH": f"{G['HOME']}/nowhere"}):
+            self.assertIn("not in your PATH", G["Win"].command_text(win, "Crash"))                  # nothing to preview: it says why
+            self._gui_origin("Crash", game)
+            done = types.SimpleNamespace(returncode=0, stdout="bwrap --ro-bind / /\n", stderr="")
+            with mock.patch.object(G["subprocess"], "run", return_value=done) as run:
+                self.assertEqual(G["Win"].command_text(win, "Crash"), "bwrap --ro-bind / /")
+                self.assertEqual(run.call_args[0][0][:2], [cli, "preview"])
+            with mock.patch.object(G["subprocess"], "run", side_effect=OSError(2, "No such file")):
+                self.assertEqual(G["Win"].command_text(win, "Crash"), "Couldn't run sbx: No such file")
+
+    def test_limits_are_shown_as_mb_percent_and_counts_and_written_the_way_sbx_reads_them(self):
+        G = self.G; num = G["limit_number"]
+        self.assertEqual([num("memory", t) for t in ("", "512M", "2G", "1T", "1048576K", "1073741824")],
+                         [(0, True), (512, True), (2048, True), (1048576, True), (1024, True), (1024, True)])
+        self.assertEqual([num("memory", t) for t in ("50%", "1500K", "0")], [(0, False), (1, False), (0, False)])   # not shown exactly: the row must not rewrite them
+        self.assertEqual([num("cpu", "200%"), num("cpu", "0%"), num("tasks", "512"), num("tasks", "0")], [(200, True), (0, False), (512, True), (0, False)])
+        self.assertEqual([G["limit_write"]("memory", n) for n in (512, 2048, 1536)], ["512M", "2G", "1536M"])
+        self.assertEqual((G["limit_write"]("cpu", 200), G["limit_write"]("tasks", 512)), ("200%", "512"))
+        for key, text in (("memory", "512M"), ("memory", "2G"), ("memory", "7"), ("cpu", "50%"), ("tasks", "9")):      # what the window writes, sbx accepts
+            self.assertRegex(text, G["LIMIT_PATTERNS"][key])
+
+    def test_a_program_limit_overrides_the_default_and_an_empty_one_means_none_on_purpose(self):
+        G = self.G; os.makedirs(G["APPS"], exist_ok=True); own, text, choice = G["limit_own"], G["limit_text"], G["limit_choice"]
+        self.assertEqual((text(None, "memory"), own("app", "memory")), ("", None))
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("memory=2G\ncpu=banana\ntasks=100\ntasks=200 # last valid line wins\n")
+        self.assertEqual((text("app", "memory"), own("app", "memory"), text(None, "cpu"), text(None, "tasks")), ("2G", None, "", "200"))     # an invalid line is ignored, as sbx does
+        self.assertIsNone(choice("app", "memory", 2048))                       # the default already says this: no line
+        self.assertEqual(choice("app", "memory", 4096), "4G")
+        self.assertEqual(choice("app", "memory", 0), "")                       # unlimited although the default has a limit
+        self.assertEqual(choice(None, "memory", 0), None)                      # on the default page 0 is the built-in default
+        G["set_limit"]("app", "memory", "")
+        self.assertEqual((text("app", "memory"), own("app", "memory")), ("", ""))
+        G["set_limit"]("app", "memory", None)
+        self.assertEqual((text("app", "memory"), own("app", "memory")), ("2G", None))
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("memory=50%\n")
+        self.assertEqual(choice("app", "memory", 0), "")                       # the row shows 0 for 50%, but 0 is not "the default": it must say none
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("net=0\ngpu=0\n")
+        G["set_limit"]("app", "cpu", "200%")
+        self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "net=0\ngpu=0\ncpu=200%\n")                # other lines stay
+
+    def test_a_limit_row_writes_only_when_changed_and_undo_gives_back_the_default(self):
+        G = self.G; adw = G["Adw"]; gtk = G["Gtk"]; os.makedirs(G["APPS"], exist_ok=True)
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("memory=2G\n")
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("memory=50%\ncpu=50%\n")
+        spins, btns = [], []
+        adw.SpinRow.side_effect = lambda **kw: spins.append(mock.MagicMock(kw=kw)) or spins[-1]
+        gtk.Button.side_effect = lambda **kw: btns.append(mock.MagicMock(kw=kw)) or btns[-1]
+        for o in (adw.SpinRow, gtk.Button): self.addCleanup(setattr, o, "side_effect", None)
+        changed = mock.MagicMock(); win = types.SimpleNamespace(limit_row=lambda *a: G["Win"].limit_row(win, *a))      # the real rows, on a window that is not a GTK one
+        G["Win"].limits_group(win, "app", changed)
+        self.assertEqual([m.kw["title"] for m in spins], ["Memory limit (MB)", "CPU limit (% of one core)", "Process limit"])
+        mem, cpu, tasks = spins
+        self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "memory=50%\ncpu=50%\n")      # showing never writes
+        self.assertIn("50%", mem.set_subtitle.call_args[0][0])                 # the file says what the row can't show (a share of the memory)...
+        self.assertEqual(cpu.set_subtitle.call_args[0][0], "100 is one full core, 400 is four.")      # ...and nothing extra for what it can
+        self.assertEqual(cpu.set_value.call_args[0][0], 50)
+        self.assertEqual([b.set_visible.call_args[0][0] for b in btns], [True, True, False])    # undo only where this program's file sets it
+        handler = lambda row: [c[0][1] for c in row.connect.call_args_list if c[0][0] == "notify::value"][0]
+        mem.get_value.return_value = 3072; handler(mem)(None)                  # changing the memory row replaces the 50%
+        self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "cpu=50%\nmemory=3G\n"); changed.assert_called_once()
+        mem.get_value.return_value = 2048; handler(mem)(None)                  # back to what the default says: the line goes
+        self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "cpu=50%\n")
+        btns[1].connect.call_args[0][1](None)                                  # the undo button of the CPU row
+        self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "")
 
     def test_switch_rows_do_not_carry_a_default_note(self):
         G = self.G

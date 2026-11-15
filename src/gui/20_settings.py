@@ -81,6 +81,53 @@ def set_key(scope, key, val):
     save(scope, lines)
 
 
+def limit_own(scope, key):
+    """What the file of SCOPE says for the limit KEY: its last valid line (sbx ignores the others), '' when that line says no limit on purpose,
+    None when the file says nothing."""
+    vals = [strip(l).partition("=")[2].strip() for l in read_lines(scope) if key_of(l) == key]
+    vals = [v for v in vals if v == "" or re.fullmatch(LIMIT_PATTERNS[key], v)]
+    return vals[-1] if vals else None
+
+
+def limit_text(scope, key):
+    """The limit KEY as sbx reads it for SCOPE: its own file, else the default file, else '' (none)."""
+    own = limit_own(scope, key)
+    if own is None and scope is not None: own = limit_own(None, key)
+    return own or ""
+
+
+def limit_number(key, text):
+    """(number, exact) for TEXT as a spin row shows it: MB, % of one core or a count, 0 for none. exact is False for what a row can't show as it is:
+    a share of the memory (50%), bytes that are not whole MB, or 0, which sbx passes on to systemd as a real limit."""
+    if not text: return 0, True
+    if key == "tasks": n = int(text); return n, n > 0
+    if key == "cpu": n = int(text[:-1]); return n, n > 0
+    if text.endswith("%"): return 0, False
+    unit = text[-1] if text[-1] in "KMGT" else ""
+    b = int(text[:-1] if unit else text) * {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3, "T": 1024 ** 4}[unit]
+    return b // 1024 ** 2, b > 0 and b % 1024 ** 2 == 0
+
+
+def limit_write(key, n):
+    """How a settings file says N (not 0) from a spin row: memory 2048 is 2G, 512 is 512M; cpu 200 is 200%; tasks 512 is 512."""
+    if key == "memory": return f"{n // 1024}G" if n % 1024 == 0 else f"{n}M"
+    return f"{n}%" if key == "cpu" else str(n)
+
+
+def limit_choice(scope, key, n):
+    """What the file of SCOPE should say once a spin row shows N: None (no line: the default already says it), '' (no limit, though the
+    defaults have one) or the text of the limit."""
+    default = (limit_own(None, key) or "") if scope is not None else ""
+    dn, exact = limit_number(key, default)
+    if n == dn and exact: return None
+    return limit_write(key, n) if n else ""
+
+
+def set_limit(scope, key, text):
+    """Write KEY=TEXT ('' keeps the program unlimited whatever the defaults say), or, with None, drop the line so the default applies."""
+    save(scope, [l for l in read_lines(scope) if key_of(l) != key] + ([f"{key}={text}"] if text is not None else []))
+
+
 def raw_list(scope, key):
     """The values of the KEY= lines of a settings file, for lists that parse() does not keep (setenv)."""
     return [strip(l).partition("=")[2].strip() for l in read_lines(scope) if key_of(l) == key]
@@ -184,6 +231,16 @@ def capabilities(scope):
     text = f"Network: {net}. " + ("Can use: " + ", ".join(on) + ". " if on else "Can use no devices or desktop services. ")
     if shared: text += f"Shares {len(shared)} folder{'s' if len(shared) != 1 else ''} or file{'s' if len(shared) != 1 else ''}. "
     return text.strip() + (" Its home is erased on exit." if is_on(scope, "private") else "")
+
+
+def default_summary():
+    """The subtitle of the 'All programs (default)' row: what a program may use unless its own settings say otherwise,
+    as 'Network · Graphics · Sound'."""
+    net = ("Network", "Internet only", None)[net_choice(None)]
+    on = [words[:1].upper() + words[1:] for key, words in CAN if key in SWITCHES and is_on(None, key)]
+    n = len({v for k in LISTS for v in parse(None)[1][k]})
+    parts = ([net] if net else []) + on + ([f"{n} shared folder{'s' if n != 1 else ''}"] if n else [])
+    return " · ".join(parts) or "No network, devices or desktop services"
 
 
 def program_name(text):

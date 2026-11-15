@@ -57,6 +57,12 @@ SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
 SOURCE_RANK = {"System": 0, "Downloaded": 2}   # same order as `sbx list --all`: of the programs only run from the terminal, System first, Downloaded last
 LISTS = ("whitelist", "read_only")
+# Resource limits: (key in the settings file, row title, subtitle, largest value, step). A row shows memory in MB, cpu in % of one core and tasks as a count;
+# the file takes what sbx takes (2G, 50%, 200%, 512). The patterns are replaced by sbx's own, see load_schema.
+LIMIT_ROWS = (("memory", "Memory limit (MB)", "The program can't use more memory than this.", 262144, 256),
+              ("cpu", "CPU limit (% of one core)", "100 is one full core, 400 is four.", 6400, 25),
+              ("tasks", "Process limit", "Most processes and threads the program may have at once.", 100000, 50))
+LIMIT_PATTERNS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%"}
 HINT_LISTS = ("setenv",)        # lists a troubleshooting hint may add to
 ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    # same as in sbx: env= and setenv= can't touch these
 # The window edits whitelist, read_only, setenv and env; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
@@ -124,3 +130,4 @@ LOG_COLORS = {      # kind -> (light theme, dark theme); readable on both
     "exit_ok": ("#1a7f4b", "#8ff0a4"), "exit_err": ("#c01c28", "#ff7b63"),
 }
 CURRENT = []                                              # the scope (None or a name) of the page being shown
+DEFAULTS_TITLE = "All programs (default)"                 # the first row of the list and the title of its page: the settings every program starts from
