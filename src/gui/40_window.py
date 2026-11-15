@@ -548,6 +548,16 @@ class Win(Adw.ApplicationWindow):
         row.add_suffix(undo)
         busy = [False]
 
+        WL_WHY = "Your desktop can't restrict programs (it lacks the wp_security_context_v1 Wayland protocol), so this only turns Wayland off."
+
+        def blocked():
+            """Why this switch can't be turned on right now, or "" (e.g. the extra portals do nothing until portals itself is on)."""
+            req = needs(key)
+            if req and not any(is_on(scope, k) for k in req):
+                return "Turn on “" + "” or “".join(SWITCHES[k][0] for k in req if k in SWITCHES) + "” first"
+            if key == "wayland_strict" and not WL_RESTRICTED: return WL_WHY
+            return ""
+
         def show():
             sc = parse(scope)[0]
             dsc = parse(None)[0] if scope is not None else {}
@@ -559,16 +569,15 @@ class Win(Adw.ApplicationWindow):
             row.set_subtitle(sub + (f"\n⚠ {prob}" if prob else ""))      # an overridden switch shows the undo button; a folder that can't be shared says why
             undo.set_visible(scope is not None and own)
             undo.set_tooltip_text("Back to the default: " + ("on" if dsc.get(key, default) else "off"))
-            req = needs(key)                                       # e.g. the extra portals do nothing until portals itself is on
-            if req:
-                ok = any(is_on(scope, k) for k in req)
-                row.set_sensitive(ok)
-                row.set_tooltip_text(None if ok else "Turn on “" + "” or “".join(SWITCHES[k][0] for k in req if k in SWITCHES) + "” first")
+            why = blocked()
+            can_undo = scope is not None and own
+            if why:                         # greying the row greys its undo button too, so a row holding an override stays usable
+                row.set_sensitive(can_undo or (key == "wayland_strict" and row.get_active()))
+                row.set_tooltip_text(why)
+            else:
+                row.set_sensitive(True); row.set_tooltip_text(None)
             if key == "wayland_strict" and not WL_RESTRICTED:
-                why = "Your desktop can't restrict programs (it lacks the wp_security_context_v1 Wayland protocol), so this only turns Wayland off."
-                row.set_subtitle(sub + f"\n{why}")
-                if not row.get_active():                           # nothing to turn off: grey it out. One that is already on stays usable
-                    row.set_sensitive(False); row.set_tooltip_text(why)
+                row.set_subtitle(sub + f"\n{WL_WHY}")
 
         def changed():
             show()
@@ -576,6 +585,11 @@ class Win(Adw.ApplicationWindow):
 
         def toggled(*_):
             if busy[0]: return
+            why = blocked()
+            if row.get_active() and why:       # a row kept usable for its undo button still can't be turned on
+                busy[0] = True; row.set_active(False); busy[0] = False
+                self.toasts.add_toast(Adw.Toast(title=why))
+                return
             set_key(scope, key, row.get_active())
             if key == "net_private" and row.get_active() and not shutil.which("pasta"):
                 self.toasts.add_toast(Adw.Toast(title="pasta (passt) is not installed: the program won't start until you install it"))

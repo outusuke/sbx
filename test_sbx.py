@@ -2654,6 +2654,25 @@ class Gui(unittest.TestCase):
             G["Win"].switch_row(mock.MagicMock(), scope, key)
             row.set_subtitle.assert_called_with(G["SWITCHES"][key][1])
 
+    def test_a_blocked_switch_row_stays_usable_for_its_undo_button_but_cannot_be_turned_on(self):
+        """set_sensitive(False) on a row greys the undo button inside it too, so an overridden row must stay usable."""
+        G = self.G; os.makedirs(G["APPS"], exist_ok=True)
+        conf = f"{G['APPS']}/app.conf"
+        row = G["Adw"].SwitchRow.return_value
+        for text, usable in (("net=0\nnet_private=1\n", True), ("net=0\n", False)):       # net_private needs net, which is off
+            with open(conf, "w") as f: f.write(text)
+            row.set_sensitive.reset_mock()
+            G["Win"].switch_row(mock.MagicMock(), "app", "net_private")
+            self.assertEqual(row.set_sensitive.call_args[0][0], usable)
+        with open(conf, "w") as f: f.write("net=0\nnet_private=1\n")
+        win = types.SimpleNamespace(toasts=mock.MagicMock())
+        row.connect.reset_mock(); row.get_active.return_value = False
+        G["Win"].switch_row(win, "app", "net_private")
+        toggled = [c[0][1] for c in row.connect.call_args_list if c[0][0] == "notify::active"][0]
+        with open(conf, "w") as f: f.write("net=0\n")
+        row.get_active.return_value = True; toggled(None, None)                       # turning on while blocked is refused
+        self.assertEqual(open(conf).read(), "net=0\n"); win.toasts.add_toast.assert_called_once()
+
     def test_the_window_will_not_trash_the_home_of_a_running_program(self):
         G = self.G
         G["RUNNING"] = f"{self.tmp}/run"; os.makedirs(G["RUNNING"])
