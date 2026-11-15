@@ -56,6 +56,8 @@ sbx stop NAME
 sbx clean NAME      delete a private home
 sbx reset NAME      delete settings files, defaults apply again
 sbx rebind NAME     accept a moved program as the same one
+sbx export [NAME]   settings as one text file (-o FILE)
+sbx import FILE     load an export back
 sbx link NAME       typing NAME starts it through sbx
 sbx open FILE       run a downloaded program ("Open with")
 ```
@@ -95,6 +97,8 @@ A program that reads or creates files in the folder it starts in needs `folder=1
 Environment variables: `setenv=NAME=value` sets one for the program, `env=NAME` passes your own value through (also `--setenv=NAME=value`). `sbx-gui` has a list for both on each program's page.
 
 `sbx show NAME` lists every setting. Flags beat files and can only make things stricter.
+
+Back up or move settings with `sbx export -o FILE` and `sbx import FILE` (`--force` replaces settings that differ); `sbx-gui` has the same buttons.
 
 ## Test
 

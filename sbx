@@ -1696,7 +1696,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
                "--loader": "loader"}
-COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind")
+COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind", "export", "import")
 
 USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx preview [options] PROGRAM [args]   print the command instead of running it\n"
@@ -1707,6 +1707,8 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx stop NAME                          stop a running program\n"
          "sbx clean [--yes] NAME | --unused      delete a program's private home and machine-id (not while it runs); --unused: every nearly empty home nobody set up\n"
          "sbx reset [--yes] NAME|--default|--all  delete settings so the built-in defaults apply again (data stays)\n"
+         "sbx export [NAME|--default|--all] [-o FILE] [--force]  write settings (default: all) as one text file, to stdout or FILE\n"
+         "sbx import FILE [--force]               load an export back; --force replaces settings that differ\n"
          "sbx link NAME [--desktop] | --remove NAME [--desktop]  make typing NAME in a terminal start it through sbx (a link in ~/.local/bin); --desktop covers its app-menu launchers too\n"
          "sbx open FILE                          run a downloaded program with sensible defaults (for \"Open with\")\n"
          "sbx desktop NAME | --remove NAME       make a launcher start the program through sbx (NAME = its id, or the program it starts)\n"
@@ -1933,6 +1935,126 @@ def cmd_reset(a):
         if input("Reset? [y/N] ").strip().lower() not in ("y", "yes"): die("nothing deleted", 0)
     for p in files: os.unlink(p)
     print(f"deleted {len(files)} settings file{'s' if len(files) != 1 else ''}; the built-in defaults apply again")
+
+
+# ---------------------------------------------------------------- export / import
+EXPORT_MAGIC = "# sbx settings export"
+EXPORT_MARK = re.compile(r"# \[(default\.conf|apps/[A-Za-z0-9][A-Za-z0-9._-]*\.conf)\]")
+EXPORT_MAX = 1 << 20                  # a settings file is a few lines; refuse to read anything bigger as a bundle
+
+
+def export_files():
+    """[(label, path)] for default.conf and every apps/NAME.conf that exists."""
+    out = []
+    if os.path.isfile(f"{CONF}/default.conf"): out.append(("default.conf", f"{CONF}/default.conf"))
+    try: names = sorted(os.listdir(f"{CONF}/apps"))
+    except OSError: names = []
+    for f in names:
+        if f.endswith(".conf") and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", f[:-5]) and os.path.isfile(f"{CONF}/apps/{f}"):
+            out.append((f"apps/{f}", f"{CONF}/apps/{f}"))
+    return out
+
+
+def export_text(target):
+    """The bundle for TARGET: '--all', '--default' or a program name. Dies when there is nothing to export."""
+    want = None if target == "--all" else "default.conf" if target == "--default" else f"apps/{target}.conf"
+    files = [(l, p) for l, p in export_files() if want in (None, l)]
+    if not files: die("no settings to export" if want is None else f"no settings file for {target}: the default settings apply to it")
+    out = [EXPORT_MAGIC]
+    for label, path in files:
+        try:
+            with open(path, errors="replace") as f: lines = f.read().splitlines()
+        except OSError as e: die(f"could not read {tilde(path)}: {e.strerror or e}")
+        out.append(f"# [{label}]")
+        # A comment that looks like a section marker would split the file on import: keep it a plain comment.
+        out += [("#" + l) if EXPORT_MARK.fullmatch(l.strip()) or l.strip() == EXPORT_MAGIC else l for l in lines]
+    return "\n".join(out) + "\n"
+
+
+def write_private(path, text, replace):
+    """Write TEXT to PATH (mode 600, all or nothing). An existing file is only replaced when REPLACE is true."""
+    if os.path.lexists(path) and not replace: die(f"{path} already exists; --force replaces it")
+    tmp = f"{path}.tmp{os.getpid()}"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f: f.write(text)
+        os.replace(tmp, path)
+    except OSError as e:
+        try: os.unlink(tmp)
+        except OSError: pass
+        die(f"could not write {path}: {e.strerror or e}")
+
+
+def cmd_export(a):
+    """sbx export [NAME | --default | --all] [-o FILE] [--force]: settings files as one text file (stdout without -o)."""
+    force, out, target, i = False, None, None, 0
+    while i < len(a):
+        x = a[i]
+        if x == "--force": force = True
+        elif x == "-o":
+            if i + 1 >= len(a): die("-o needs a file name")
+            out = a[i + 1]; i += 1
+        elif x in ("--default", "--all") or not x.startswith("-"):
+            if target: die("usage: sbx export [NAME | --default | --all] [-o FILE] [--force]")
+            target = x
+        else: die(f"unknown option {x}")
+        i += 1
+    target = target or "--all"
+    if not target.startswith("-") and clean(target) != target: die(f"'{target}' is not a program name")
+    text = export_text(target)
+    if out is None: sys.stdout.write(text); return
+    write_private(out, text, force)
+    n = text.count("\n# [")
+    print(f"exported {n} settings file{'s' if n != 1 else ''} to {out}")
+
+
+def parse_bundle(text):
+    """{label: file text} from an export. Dies when the text is not one of ours."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != EXPORT_MAGIC: die(f"not an sbx settings export (the first line must be '{EXPORT_MAGIC}')")
+    secs, cur = {}, None
+    for l in lines[1:]:
+        m = EXPORT_MARK.fullmatch(l.strip())
+        if m:
+            if m.group(1) in secs: die(f"{m.group(1)} appears twice in the export")
+            cur = secs[m.group(1)] = []
+        elif cur is None:
+            if l.strip() and not l.lstrip().startswith("#"): die("the export has settings before its first [section]")
+        else: cur.append(l)
+    if not secs: die("the export holds no settings")
+    return {k: "\n".join(v).strip("\n") + "\n" for k, v in secs.items()}
+
+
+def cmd_import(a):
+    """sbx import FILE|- [--force]: put the settings of an export back. Nothing is written when a file would be replaced without --force."""
+    force = "--force" in a
+    rest = [x for x in a if x != "--force"]
+    bad = [x for x in rest if x.startswith("-") and x != "-"]
+    if bad: die(f"unknown option {bad[0]}")
+    if len(rest) != 1: die("usage: sbx import FILE [--force]")
+    if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
+    try:
+        if rest[0] == "-": raw = sys.stdin.read(EXPORT_MAX + 1)
+        else:
+            with open(rest[0], errors="replace") as f: raw = f.read(EXPORT_MAX + 1)
+    except OSError as e: die(f"could not read {rest[0]}: {e.strerror or e}")
+    if len(raw) > EXPORT_MAX or "\0" in raw: die("that is not an sbx settings export")
+    secs = parse_bundle(raw)
+    todo, same, clash = [], 0, []
+    for label, text in secs.items():
+        path = f"{CONF}/{label}"
+        try:
+            with open(path, errors="replace") as f: old = f.read()
+        except OSError: old = None
+        if old is None: todo.append((path, text))
+        elif old.strip("\n") == text.strip("\n"): same += 1
+        else: clash.append(label); todo.append((path, text))
+    if clash and not force:
+        die("these settings already exist and differ: " + ", ".join(clash) + ". Nothing was imported; --force replaces them")
+    try: os.makedirs(f"{CONF}/apps", mode=0o700, exist_ok=True)
+    except OSError as e: die(f"could not create {tilde(CONF)}/apps: {e.strerror or e}")
+    for path, text in todo: write_private(path, text, True)
+    print(f"imported {len(todo)} settings file{'s' if len(todo) != 1 else ''}" + (f", {same} already the same" if same else ""))
 
 
 def cmd_link(a):
@@ -2376,6 +2498,8 @@ def main(argv=None):
     if cmd == "desktop": return cmd_desktop(a)
     if cmd == "open": return cmd_open(a)
     if cmd == "show": return cmd_show(a)
+    if cmd == "export": return cmd_export(a)
+    if cmd == "import": return cmd_import(a)
     opts, a = parse_options(a)
     if not a: die("usage: sbx [preview] [options] PROGRAM [args]")
     if cmd == "preview":

@@ -9,7 +9,7 @@ end
 function __sbx_homes
     ls ~/.sbx-homes 2>/dev/null
 end
-set -l cmds preview show doctor clean reset link desktop open schema list stop rebind
+set -l cmds preview show doctor clean reset link desktop open schema list stop rebind export import
 set -l c "not __fish_seen_subcommand_from $cmds"
 complete -c sbx -f -n $c -a "$cmds"
 complete -c sbx -n $c -F
@@ -70,3 +70,9 @@ complete -c sbx -n $c -l memory -x -d "Memory limit, e.g. 2G"
 complete -c sbx -n $c -l tasks -x -d "Task limit"
 complete -c sbx -n $c -l cpu -x -d "CPU limit, e.g. 200%"
 complete -c sbx -n $c -l name -x -d "Use another home and settings name"
+complete -c sbx -f -n "__fish_seen_subcommand_from export" -a "(__sbx_apps)"
+complete -c sbx -f -n "__fish_seen_subcommand_from export" -l default -d "Export the default settings only"
+complete -c sbx -f -n "__fish_seen_subcommand_from export" -l all -d "Export every settings file"
+complete -c sbx -n "__fish_seen_subcommand_from export" -s o -r -F -d "Write to a file instead of the terminal"
+complete -c sbx -f -n "__fish_seen_subcommand_from export import" -l force -d "Replace an existing file or settings that differ"
+complete -c sbx -n "__fish_seen_subcommand_from import" -F

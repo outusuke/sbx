@@ -1385,6 +1385,113 @@ class Units(unittest.TestCase):
         with open(f"{HERE}/README.md") as f: readme = f.read()
         self.assertIn("sbx reset", man); self.assertIn("sbx reset", readme); self.assertIn("sbx reset", self.S["USAGE"]); self.assertIn("reset", self.S["COMMANDS"])
 
+    # -- export / import
+    def _settings(self):
+        S = self.S; conf = S["CONF"]; os.makedirs(f"{conf}/apps", exist_ok=True)
+        for rel, text in (("default.conf", "net=0\nwhitelist=~/Projects\n"), ("apps/a.conf", "gpu=0\n# my note\n"), ("apps/empty.conf", "")):
+            with open(f"{conf}/{rel}", "w") as f: f.write(text)
+        return S, conf
+
+    def _call(self, fn, *args, stdin=None):
+        """(exit code or None, stdout, stderr) of calling one of sbx's commands."""
+        out, err, code = io.StringIO(), io.StringIO(), None
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), mock.patch.object(sys, "stdin", io.StringIO(stdin or "")):
+            try: self.S[fn](list(args))
+            except SystemExit as e: code = e.code if e.code is not None else 0
+        return code, out.getvalue(), err.getvalue()
+
+    def test_export_writes_every_settings_file_with_a_marker_each(self):
+        S, conf = self._settings()
+        code, out, _ = self._call("cmd_export")
+        self.assertIsNone(code)
+        self.assertEqual(out.splitlines()[0], "# sbx settings export")
+        for label in ("default.conf", "apps/a.conf", "apps/empty.conf"): self.assertIn(f"# [{label}]", out.splitlines())
+        _, one, _ = self._call("cmd_export", "a")
+        self.assertIn("gpu=0", one); self.assertNotIn("net=0", one)
+        _, dflt, _ = self._call("cmd_export", "--default")
+        self.assertIn("net=0", dflt); self.assertNotIn("gpu=0", dflt)
+
+    def test_export_to_a_file_is_private_and_needs_force_to_replace(self):
+        S, conf = self._settings()
+        f = f"{self.tmp}/out.txt"
+        code, out, _ = self._call("cmd_export", "-o", f)
+        self.assertIsNone(code); self.assertIn("exported 3 settings files", out)
+        self.assertEqual(os.stat(f).st_mode & 0o777, 0o600)
+        code, _, err = self._call("cmd_export", "-o", f)
+        self.assertNotEqual(code, 0); self.assertIn("--force", err)
+        self.assertIsNone(self._call("cmd_export", "-o", f, "--force")[0])
+
+    def test_export_refuses_what_it_cannot_do(self):
+        S, conf = self._settings()
+        for args, msg in ((("--bogus",), "unknown option"), (("nope",), "no settings file for nope"), (("-o",), "needs a file"),
+                          (("a", "b"), "usage"), (("../x",), "not a program name")):
+            code, _, err = self._call("cmd_export", *args)
+            self.assertNotEqual(code, 0, args); self.assertIn(msg, err, args)
+        for rel in ("default.conf", "apps/a.conf", "apps/empty.conf"): os.unlink(f"{conf}/{rel}")
+        code, _, err = self._call("cmd_export"); self.assertNotEqual(code, 0); self.assertIn("no settings to export", err)
+
+    def test_import_round_trips_and_leaves_other_files_alone(self):
+        S, conf = self._settings()
+        f = f"{self.tmp}/all.txt"; self._call("cmd_export", "-o", f)
+        before = {}
+        for r in ("default.conf", "apps/a.conf", "apps/empty.conf"):
+            with open(f"{conf}/{r}") as fh: before[r] = fh.read()
+        shutil.rmtree(conf); os.makedirs(f"{S['HOMES']}/a")
+        code, out, err = self._call("cmd_import", f)
+        self.assertIsNone(code, err); self.assertIn("imported 3 settings files", out)
+        for r, v in before.items():
+            with open(f"{conf}/{r}") as fh: self.assertEqual(fh.read().strip("\n"), v.strip("\n"), r)      # an empty file comes back as one newline
+        self.assertEqual(os.stat(f"{conf}/apps/a.conf").st_mode & 0o777, 0o600)
+        self.assertTrue(os.path.isdir(f"{S['HOMES']}/a"))
+        self.assertIn("3 already the same", self._call("cmd_import", f)[1])
+
+    def test_import_replaces_differing_settings_only_with_force_and_otherwise_writes_nothing(self):
+        S, conf = self._settings()
+        f = f"{self.tmp}/all.txt"; self._call("cmd_export", "-o", f)
+        with open(f"{conf}/default.conf", "w") as fh: fh.write("net=1\n")
+        os.unlink(f"{conf}/apps/a.conf")
+        code, _, err = self._call("cmd_import", f)
+        self.assertNotEqual(code, 0); self.assertIn("default.conf", err); self.assertIn("--force", err)
+        self.assertEqual(open(f"{conf}/default.conf").read(), "net=1\n"); self.assertFalse(os.path.exists(f"{conf}/apps/a.conf"))
+        self.assertIsNone(self._call("cmd_import", f, "--force")[0])
+        self.assertEqual(open(f"{conf}/default.conf").read(), "net=0\nwhitelist=~/Projects\n"); self.assertTrue(os.path.exists(f"{conf}/apps/a.conf"))
+
+    def test_import_rejects_anything_that_is_not_an_sbx_export(self):
+        S, conf = self._settings()
+        for text in ("net=0\n", "", "# ajail settings export\n# [default.conf]\nnet=0\n", "# sbx settings export\n",
+                     "# sbx settings export\nnet=0\n# [default.conf]\n", "# sbx settings export\n# [default.conf]\n# [default.conf]\n",
+                     "# sbx settings export\n# [apps/../evil.conf]\nnet=0\n", "# sbx settings export\n# [default.conf]\n\0"):
+            code, _, _ = self._call("cmd_import", "-", stdin=text)
+            self.assertNotEqual(code, 0, repr(text))
+        self.assertFalse(os.path.exists(f"{os.path.dirname(conf)}/evil.conf")); self.assertFalse(os.path.exists(f"{conf}/apps/../evil.conf"))
+        self.assertNotEqual(self._call("cmd_import", f"{self.tmp}/missing.txt")[0], 0)
+        self.assertIn("unknown option", self._call("cmd_import", "--forse", "x")[2])
+        self.assertNotEqual(self._call("cmd_import")[0], 0)
+
+    def test_import_is_refused_inside_a_sandbox(self):
+        S, conf = self._settings()
+        text = self._call("cmd_export")[1]
+        with mock.patch.dict(os.environ, {"SBX_ACTIVE": "1"}):
+            code, _, err = self._call("cmd_import", "-", "--force", stdin=text)
+        self.assertNotEqual(code, 0); self.assertIn("sandbox", err)
+
+    def test_a_comment_that_looks_like_a_marker_stays_a_comment(self):
+        S, conf = self._settings()
+        with open(f"{conf}/apps/a.conf", "w") as fh: fh.write("gpu=0\n# [default.conf]\n")
+        out = self._call("cmd_export", "a")[1]
+        self.assertNotIn("# [default.conf]", out.splitlines()); self.assertIn("## [default.conf]", out.splitlines())
+        os.unlink(f"{conf}/apps/a.conf")
+        self.assertIsNone(self._call("cmd_import", "-", stdin=out)[0])
+        self.assertEqual(open(f"{conf}/apps/a.conf").read(), "gpu=0\n## [default.conf]\n")
+
+    def test_export_and_import_are_documented_and_completed(self):
+        with open(f"{HERE}/sbx.1") as f: man = f.read()
+        with open(f"{HERE}/README.md") as f: readme = f.read()
+        for c in ("export", "import"):
+            self.assertIn(f"sbx {c}", man); self.assertIn(f"sbx {c}", readme); self.assertIn(f"sbx {c}", self.S["USAGE"]); self.assertIn(c, self.S["COMMANDS"])
+            for f in ("sbx.bash", "_sbx", "sbx.fish"):
+                with open(f"{HERE}/completions/{f}") as fh: self.assertIn(c, fh.read(), f)
+
     def test_link_makes_typing_the_name_start_the_program_through_sbx(self):
         S, h = self.S, self.home
         inst = f"{h}/inst"; bindir = f"{h}/bin"; os.makedirs(inst); os.makedirs(bindir)

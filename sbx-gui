@@ -984,6 +984,16 @@ class Win(Adw.ApplicationWindow):
         self.app_rows = []
         self.others_open = False                 # is the terminal-only group open?
         page.add(self.apps_group)
+        bg = Adw.PreferencesGroup(title="Backup", description="Saves the default settings and every program's own settings in one text file, and loads such a file back. "
+                                                              "Private homes are not included.")
+        exp_row = Adw.ActionRow(title="Export settings…", activatable=True)
+        exp_row.add_suffix(Gtk.Image.new_from_icon_name("document-save-symbolic"))
+        exp_row.connect("activated", lambda *_: self.export_settings("--all", "sbx-settings.txt"))
+        imp_row = Adw.ActionRow(title="Import settings…", activatable=True)
+        imp_row.add_suffix(Gtk.Image.new_from_icon_name("document-open-symbolic"))
+        imp_row.connect("activated", lambda *_: self.import_settings())
+        bg.add(exp_row); bg.add(imp_row)
+        page.add(bg)
         rg = Adw.PreferencesGroup()
         rbtn = Gtk.Button(label="Reset all settings…", halign=Gtk.Align.CENTER, css_classes=["destructive-action"])
         rbtn.connect("clicked", lambda *_: self.reset_all())
@@ -1242,6 +1252,9 @@ class Win(Adw.ApplicationWindow):
         if scope is not None: page.add(self.storage_group(scope))
         page.add(tech)
         dg = Adw.PreferencesGroup()
+        ebtn = Gtk.Button(label="Export settings…", halign=Gtk.Align.CENTER)
+        ebtn.connect("clicked", lambda *_: self.export_settings(scope or "--default", f"sbx-{scope or 'default'}.txt"))
+        dg.add(ebtn)
         rbtn = Gtk.Button(label="Reset settings…", halign=Gtk.Align.CENTER, css_classes=["destructive-action"])
         rbtn.connect("clicked", lambda *_: self.ask("Reset settings?",
                                                     ("The default settings are deleted. Programs with their own settings keep them. " if scope is None
@@ -1717,6 +1730,50 @@ class Win(Adw.ApplicationWindow):
         done = reset_settings(scope)
         self.nav.replace([self.main, self.program_page(scope)])
         self.toasts.add_toast(Adw.Toast(title="Settings reset to the defaults" if done else "Already using the defaults"))
+
+    def cli_error(self, r):
+        """The message sbx printed, without its 'sbx: ' prefix. Shown in a toast, which never parses markup from it."""
+        lines = [l for l in (r.stderr or "").splitlines() if l.strip()]
+        return re.sub(r"^sbx: ", "", lines[-1] if lines else f"sbx exited with {r.returncode}")
+
+    def toast(self, text):
+        self.toasts.add_toast(Adw.Toast(title=text))
+
+    def sbx_run(self, *args):
+        try: return subprocess.run([sbx_cmd(), *args], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as e: return subprocess.CompletedProcess(args, 127, "", f"sbx: {getattr(e, 'strerror', None) or e}")
+
+    def export_settings(self, target, name):
+        """Save settings to a text file with 'sbx export'. TARGET is --all, --default or a program name; NAME is the suggested file name.
+        The file dialog already asks before replacing a file, hence --force."""
+        dlg = Gtk.FileDialog(title="Export settings", initial_name=name)
+        def cb(d, res):
+            try: f = d.save_finish(res)
+            except GLib.Error: return
+            if not f.get_path(): return self.toast("Choose a folder on this computer")
+            r = self.sbx_run("export", target, "-o", f.get_path(), "--force")
+            self.toast("Settings exported" if r.returncode == 0 else self.cli_error(r))
+        dlg.save(self, None, cb)
+
+    def import_settings(self):
+        """Load an export with 'sbx import'. Settings that would be replaced are only replaced after a confirmation."""
+        dlg = Gtk.FileDialog(title="Import settings")
+        def cb(d, res):
+            try: f = d.open_finish(res)
+            except GLib.Error: return
+            path = f.get_path()
+            if not path: return self.toast("Choose a file on this computer")
+            def go(force):
+                r = self.sbx_run("import", path, *(["--force"] if force else []))
+                if r.returncode == 0:
+                    self.fill_apps()
+                    self.toast(r.stdout.strip().capitalize() or "Settings imported")
+                elif not force and "--force" in r.stderr:           # some of them exist and differ
+                    self.ask("Replace existing settings?", self.cli_error(r).replace(" Nothing was imported; --force replaces them", "")
+                             + ". The imported settings replace them; nothing else changes.", "Replace", lambda: go(True))
+                else: self.toast(self.cli_error(r))
+            go(False)
+        dlg.open(self, None, cb)
 
     def reset_all(self):
         n = len(settings_files())

@@ -7,7 +7,7 @@ _sbx_homes() { local -a a; a=(${(f)"$(ls ~/.sbx-homes 2>/dev/null)"}); (( $#a ))
 
 _sbx() {
     local -a cmds opts
-    cmds=(preview show doctor clean reset link desktop open schema list stop rebind)
+    cmds=(preview show doctor clean reset link desktop open schema list stop rebind export import)
     opts=(--net=none --net-private --private --here --no-wayland --wayland-strict --x11 --no-gpu --gpu-render-only --no-sound --portals --tray --hostname --privacy
           --no-userns --no-theme --camera --alsa --input --kvm --rocm --printing --ssh-agent --allow-sensitive --compat
           --ignore-config --rebind --portal-screenshot --portal-screencast --portal-location --portal-shortcuts
@@ -28,6 +28,9 @@ _sbx() {
             stop) (( CURRENT == i + 1 )) && _sbx_homes; return ;;
             list) compadd -- --all; return ;;
             rebind) compadd -- --dismiss; _sbx_pending; return ;;
+            export) _arguments '--default[export the default settings only]' '--all[export every settings file]' '--force[replace an existing file]' \
+                              '-o[write to a file instead of the terminal]:file:_files' '*:program:_sbx_apps'; return ;;
+            import) _arguments '--force[replace settings that differ]' '*:file:_files'; return ;;
             doctor|schema) return ;;
             desktop) compadd -- --install-opener --remove-opener --install-menu --remove-menu --remove; return ;;
             *) _files; return ;;                          # the program's own arguments

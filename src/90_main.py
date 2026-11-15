@@ -18,6 +18,8 @@ def main(argv=None):
     if cmd == "desktop": return cmd_desktop(a)
     if cmd == "open": return cmd_open(a)
     if cmd == "show": return cmd_show(a)
+    if cmd == "export": return cmd_export(a)
+    if cmd == "import": return cmd_import(a)
     opts, a = parse_options(a)
     if not a: die("usage: sbx [preview] [options] PROGRAM [args]")
     if cmd == "preview":

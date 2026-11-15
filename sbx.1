@@ -29,6 +29,12 @@ sbx \- run a program in a bubblewrap sandbox
 .B sbx reset
 [\fB\-\-yes\fR] \fINAME\fR | \fB\-\-default\fR | \fB\-\-all\fR
 .br
+.B sbx export
+[\fINAME\fR | \fB\-\-default\fR | \fB\-\-all\fR] [\fB\-o\fR \fIFILE\fR] [\fB\-\-force\fR]
+.br
+.B sbx import
+\fIFILE\fR [\fB\-\-force\fR]
+.br
 .B sbx link
 \fINAME\fR | \fB\-\-remove\fR \fINAME\fR
 .br
@@ -104,6 +110,25 @@ machine\-ids and menu launchers are not touched; see
 .B sbx clean
 and
 .BR "sbx desktop \-\-remove" .
+.TP
+.B sbx export [NAME | \-\-default | \-\-all] [\-o FILE] [\-\-force]
+Write settings files as one text file: every settings file (\fB\-\-all\fR, the default), the default settings, or one program's.
+Without
+.B \-o
+it prints to the terminal. The file is created readable by you only; an existing file is replaced only with
+.BR \-\-force .
+Each settings file is a section starting with a line like
+.BR "# [apps/NAME.conf]" ,
+so the export is still plain comment-and-settings text. Private homes, machine\-ids and launchers are not included.
+.TP
+.B sbx import FILE [\-\-force]
+Load an export made by
+.BR "sbx export" ,
+or \fB\-\fR for standard input. Settings files that do not exist yet are created. If a file exists and differs, nothing is
+written unless
+.B \-\-force
+is given, which replaces those files. Not from inside a sandbox. Imported values are checked when a program starts, like
+hand\-edited files.
 .TP
 .B sbx link NAME [\-\-desktop] | \-\-remove NAME [\-\-desktop]
 Make typing NAME in a terminal start the program through sbx, like firejail's firecfg: a link
