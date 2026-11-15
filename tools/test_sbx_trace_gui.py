@@ -322,20 +322,20 @@ class Window(unittest.TestCase):
         G, w = self.G, self.win(); Adw = G["Adw"]; group = mock.MagicMock(); made = []
         def row(it): made.append(it); return mock.MagicMock()
         Adw.ActionRow.reset_mock()
-        G["Win"].fill_group(w, group, "Your home", 250, list(range(250)), row, False)
+        G["Win"].fill_group(w, group, "Your home", 250, 250, list(range(250)), row, False)
         self.assertEqual(made, list(range(G["RENDER_MAX"]))); self.assertEqual(group.add.call_count, G["RENDER_MAX"] + 1)
         self.assertEqual(Adw.ActionRow.call_args.kwargs["title"], f"… {250 - G['RENDER_MAX']} more")
         group.set_title.assert_called_with("Your home (250)"); group.set_visible.assert_called_with(True)
         old = list(w.rows[group]); group.reset_mock()
-        G["Win"].fill_group(w, group, "Your home", 400, list(range(3)), row, True)         # a search: the count of what matched, of all of them
+        G["Win"].fill_group(w, group, "Your home", 400, 3, list(range(3)), row, True)         # a search: the count of what matched, of all of them
         self.assertEqual([c[0][0] for c in group.remove.call_args_list], old)              # the rows it drew before are taken out first
         group.set_title.assert_called_with("Your home (3 of 400)"); self.assertEqual(group.add.call_count, 3)
-        group.reset_mock(); G["Win"].fill_group(w, group, "Your home", 400, [], row, True); group.set_visible.assert_called_with(False)
-        Adw.ActionRow.reset_mock(); G["Win"].fill_group(w, group, "The system", 3100, list(range(3000)), row, False)    # sbx-trace saves 3000 of 3100
+        group.reset_mock(); G["Win"].fill_group(w, group, "Your home", 400, 0, [], row, True); group.set_visible.assert_called_with(False)
+        Adw.ActionRow.reset_mock(); G["Win"].fill_group(w, group, "The system", 3100, 3000, list(range(3000)), row, False)    # sbx-trace saves 3000 of 3100
         self.assertEqual(Adw.ActionRow.call_args.kwargs["title"], "… 2900 more")
-        self.assertEqual(Adw.ActionRow.call_args.kwargs["subtitle"], "Search to narrow it down. 100 more are not in the saved report.")
-        Adw.ActionRow.reset_mock(); G["Win"].fill_group(w, group, "The system", 120, list(range(100)), row, False)
-        self.assertEqual(Adw.ActionRow.call_args.kwargs["title"], "… 20 more")
+        self.assertEqual(Adw.ActionRow.call_args.kwargs["subtitle"], "Search to narrow it down. 100 more files are not in the saved report.")
+        Adw.ActionRow.reset_mock(); G["Win"].fill_group(w, group, "The system", 120, 100, list(range(100)), row, False)
+        self.assertEqual(Adw.ActionRow.call_args.kwargs["title"], "… 20 more files")
 
     def test_start_does_nothing_without_a_command_and_stops_at_a_problem(self):
         G, w = self.G, self.win()
@@ -385,12 +385,71 @@ class Window(unittest.TestCase):
         G, w = self.G, self.win()
         rep = G["clean_report"]({"name": "a", "blocked": [], "home": {"total": 1, "rows": [{"path": "/home/u/x"}]}, "system": {"total": 0, "rows": []},
                                  "noise": {"total": 12, "rows": [{"path": "/proc/1"}]}})
-        w.report = rep; w.search.get_text.return_value = ""
+        w.report = rep; w.search.get_text.return_value = ""; w.grouped.get_active.return_value = True; w.only_errors.get_active.return_value = False
         G["Win"].fill_report(w)
         w.noise.set_description.assert_called_with("/proc, /sys, /dev and /run: 12 paths not shown")
         self.assertFalse(hasattr(rep["noise"], "rows"))                                     # no rows of it are kept
         w.search.get_text.return_value = "zzz"; w.blocked.get_visible.return_value = w.home.get_visible.return_value = w.system.get_visible.return_value = False
         G["Win"].fill_report(w); w.head_row.set_subtitle.assert_called_with("Nothing matches “zzz”.")
+        w.search.get_text.return_value = ""; w.only_errors.get_active.return_value = True
+        G["Win"].fill_report(w); w.head_row.set_subtitle.assert_called_with("No path has an error.")
+
+
+class Folders(Base):
+    """What keeps a long report readable: one line per folder, and only the paths that had a problem."""
+    def test_a_file_is_listed_under_its_first_two_folders(self):
+        G, H = self.G, self.home
+        for path, want in ((f"{H}/.config/mozilla/firefox/p/x.db", f"{H}/.config/mozilla"), (f"{H}/.ssh/config", f"{H}/.ssh"), (f"{H}/notes.txt", H),
+                           ("/usr/lib/x86_64-linux-gnu/libc.so.6", "/usr/lib"), ("/etc/passwd", "/etc"), ("/passwd", "/")):
+            self.assertEqual(G["folder_of"](path), want, path)
+        self.assertEqual((G["folder_title"](f"{H}/.ssh"), G["folder_title"](H), G["folder_title"]("/etc")), ("~/.ssh", "~", "/etc"))
+
+    def test_folders_keep_the_order_of_their_heaviest_file_and_the_flat_list_is_unchanged(self):
+        G, H = self.G, self.home
+        items = [{"path": p} for p in (f"{H}/.cache/a", "/etc/x", f"{H}/.cache/b", "/etc/y", "/usr/lib/z")]
+        grouped = G["layout"](items, True)
+        self.assertEqual([f for f, _ in grouped], [f"{H}/.cache", "/etc", "/usr/lib"])
+        self.assertEqual([[i["path"] for i in its] for _, its in grouped], [[f"{H}/.cache/a", f"{H}/.cache/b"], ["/etc/x", "/etc/y"], ["/usr/lib/z"]])
+        self.assertEqual(G["layout"](items, False), [(None, [i]) for i in items])
+
+    def test_a_folder_says_what_is_in_it(self):
+        G = self.G
+        rows = [{"path": "/etc/a", "r": 3, "err": {}}, {"path": "/etc/b", "r": 2, "p": 2, "err": {"ENOENT": 2}}, {"path": "/etc/c", "p": 1, "err": {"ENOENT": 1, "EACCES": 1}}]
+        self.assertEqual(G["folder_subtitle"](rows), "3 files · read 5 · probe 3 · errors: ENOENT ×3, EACCES ×1")
+        self.assertEqual(G["blocked_subtitle"]([{"kind": "hidden"}, {"kind": "denied"}, {"kind": "hidden"}]), "denied 1 · hidden 2")
+
+    def test_a_folder_row_opens_to_its_files_and_copies_the_folder(self):
+        G, H = self.G, self.home; w = mock.MagicMock(); Adw, Gtk = G["Adw"], G["Gtk"]
+        made = lambda it: ("row", it["path"])
+        self.assertEqual(G["Win"].entry_row(w, (None, [{"path": "/a"}]), made, G["folder_subtitle"], False), ("row", "/a"))      # not grouped
+        self.assertEqual(G["Win"].entry_row(w, (f"{H}/d", [{"path": f"{H}/d/f"}]), made, G["folder_subtitle"], False), ("row", f"{H}/d/f"))   # one file: just the file
+        Adw.ExpanderRow.reset_mock(); Gtk.Button.reset_mock()
+        items = [{"path": f"{H}/.cache/<b>{i}", "r": 1, "err": {}} for i in range(130)]
+        row = G["Win"].entry_row(w, (f"{H}/.cache", items), made, G["folder_subtitle"], True)
+        kw = Adw.ExpanderRow.call_args.kwargs
+        self.assertEqual((kw["title"], kw["subtitle"], kw["use_markup"]), ("~/.cache", "130 files · read 130", False))
+        row = Adw.ExpanderRow.return_value
+        self.assertEqual(row.add_row.call_count, G["RENDER_MAX"] + 1)                                # the files, then a row for the rest
+        self.assertEqual(G["Adw"].ActionRow.call_args.kwargs["title"], "… 30 more"); row.set_expanded.assert_called_with(True)
+        Gtk.Button.return_value.connect.call_args[0][1](); w.copy_path.assert_called_once_with(f"{H}/.cache")
+        G["Win"].entry_row(w, (f"{H}/.cache", items[:2]), made, G["folder_subtitle"], False); row.set_expanded.assert_called_with(False)
+
+    def test_the_report_is_grouped_by_default_and_can_be_cut_down_to_the_errors(self):
+        G, H = self.G, self.home; w = mock.MagicMock()
+        rep = G["clean_report"](json.loads(json.dumps(self.real_report())))
+        w.report = rep; w.search.get_text.return_value = ""; w.grouped.get_active.return_value = True; w.only_errors.get_active.return_value = False
+        calls = {}
+        w.fill_group.side_effect = lambda group, title, total, matched, entries, make, narrowed: calls.update({title: (total, matched, entries, narrowed)})
+        G["Win"].fill_report(w)
+        total, matched, entries, narrowed = calls["Your home"]
+        self.assertEqual((total, matched, narrowed), (rep["home"]["total"], rep["home"]["total"], False)); self.assertEqual(entries[0][0], f"{H}/.config/foo")
+        self.assertEqual(calls["Blocked"][1], len(rep["blocked"])); w.view.set_visible.assert_called_with(True)
+        w.grouped.get_active.return_value = False; G["Win"].fill_report(w)
+        self.assertTrue(all(f is None for f, _ in calls["Your home"][2]))                              # one entry per file
+        w.only_errors.get_active.return_value = True; G["Win"].fill_report(w)
+        total, matched, entries, narrowed = calls["Your home"]
+        self.assertTrue(narrowed); self.assertLess(matched, total); self.assertTrue(all(it["err"] for _, its in entries for it in its))
+        self.assertEqual(calls["Blocked"][1], len(rep["blocked"]))                                     # what was blocked is never cut away
 
 
 class Whole(unittest.TestCase):

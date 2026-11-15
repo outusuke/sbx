@@ -16,7 +16,8 @@ HOMES = HOME + "/.sbx-homes"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 CTRL_KEEP_NL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
-RENDER_MAX = 100                # rows drawn per group; the search narrows the rest down
+RENDER_MAX = 100                # rows drawn per group (and per folder); the search narrows the rest down
+FOLDER_DEPTH = 2                # a file is listed under its first two folders: ~/.config/mozilla, /usr/lib
 LOG_KEEP = 8192                 # bytes of sbx-trace's output kept for an error message, however much the program prints
 KINDS = {"denied": "error", "read-only": "warning", "hidden": "accent"}      # blocked kinds and the colour of their label
 COUNTS = (("r", "read"), ("w", "write"), ("p", "probe"), ("x", "run"))
@@ -49,6 +50,41 @@ def errors_text(err):
 def row_subtitle(row):
     parts = [counts_text(row)] + ([f"errors: {errors_text(row['err'])}"] if row["err"] else [])
     return " · ".join(p for p in parts if p)
+
+
+def folder_of(path):
+    """The folder PATH is listed under: its first FOLDER_DEPTH folders (counted from your home for a path inside it)."""
+    if path.startswith(HOME + "/"):
+        parts = path[len(HOME) + 1:].split("/")[:-1]
+        return HOME + ("/" + "/".join(parts[:FOLDER_DEPTH]) if parts else "")
+    return "/" + "/".join(path.split("/")[1:-1][:FOLDER_DEPTH])
+
+
+def folder_title(folder):
+    return "~" + folder[len(HOME):] if folder == HOME or folder.startswith(HOME + "/") else folder
+
+
+def layout(items, grouped):
+    """ITEMS (each has a "path", heaviest first) as the entries to draw: [(folder, its items)] in the order the folders first appear, or
+    one entry per item, with no folder, when not GROUPED."""
+    if not grouped: return [(None, [it]) for it in items]
+    out = {}
+    for it in items: out.setdefault(folder_of(it["path"]), []).append(it)
+    return list(out.items())
+
+
+def folder_subtitle(rows):
+    tot, err = {}, {}
+    for r in rows:
+        for k, _ in COUNTS:
+            if k in r: tot[k] = tot.get(k, 0) + r[k]
+        for e, n in r["err"].items(): err[e] = err.get(e, 0) + n
+    parts = [f"{len(rows)} files", counts_text(tot)] + ([f"errors: {errors_text(err)}"] if err else [])
+    return " · ".join(p for p in parts if p)
+
+
+def blocked_subtitle(items):
+    return " · ".join(f"{k} {sum(1 for b in items if b['kind'] == k)}" for k in KINDS if any(b["kind"] == k for b in items))
 
 
 def when_text(t):
@@ -292,11 +328,17 @@ class Win(Adw.ApplicationWindow):
         self.head = Adw.PreferencesGroup()
         self.head_row = Adw.ActionRow(title="No report yet", subtitle="Trace a program to see which files it touches.", use_markup=False)
         self.head.add(self.head_row)
+        self.view = Adw.PreferencesGroup(title="Show")
+        self.grouped = Adw.SwitchRow(title="Group by folder", subtitle="One line per folder, with the counts of everything in it. Open a folder to see its files.", active=True)
+        self.only_errors = Adw.SwitchRow(title="Only paths with errors", subtitle="Hides the files that were opened without a problem.")
+        for sw in (self.grouped, self.only_errors):
+            sw.connect("notify::active", lambda *_: self.fill_report())
+            self.view.add(sw)
         self.blocked = Adw.PreferencesGroup(description="Refused (denied, read-only), or hidden by the sandbox: the host has something there and the program found nothing.")
         self.home = Adw.PreferencesGroup(description="A probe is a look without opening the file (stat, access).")
         self.system = Adw.PreferencesGroup()
         self.noise = Adw.PreferencesGroup()
-        for grp in (self.head, self.blocked, self.home, self.system, self.noise): page.add(grp)
+        for grp in (self.head, self.view, self.blocked, self.home, self.system, self.noise): page.add(grp)
         return page
 
     # -- helpers --
@@ -345,44 +387,61 @@ class Win(Adw.ApplicationWindow):
         row.add_suffix(copy)
         return row
 
-    def fill_group(self, group, title, total, items, make_row, filtering):
-        """Put the first RENDER_MAX of ITEMS in GROUP, and a last row that says how many more there are. Hidden when nothing is left to show."""
+    def entry_row(self, entry, make_item, summarize, expand):
+        """One line of a group: a file, or a folder that opens to show its files (a folder with one file is just that file)."""
+        folder, items = entry
+        if folder is None or len(items) == 1: return make_item(items[0])
+        row = Adw.ExpanderRow(title=safe(folder_title(folder)), subtitle=summarize(items), use_markup=False)
+        copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Copy the folder")
+        copy.connect("clicked", lambda *_: self.copy_path(folder))
+        row.add_suffix(copy)
+        for it in items[:RENDER_MAX]: row.add_row(make_item(it))
+        if len(items) > RENDER_MAX: row.add_row(Adw.ActionRow(title=f"… {len(items) - RENDER_MAX} more", subtitle="Search to narrow it down.", use_markup=False))
+        row.set_expanded(bool(expand))
+        return row
+
+    def fill_group(self, group, title, total, matched, entries, make_row, narrowed):
+        """Put the first RENDER_MAX of ENTRIES in GROUP, and a last row that says how many more there are. MATCHED files of TOTAL are in
+        ENTRIES. Hidden when nothing is left to show."""
         for r in self.rows.get(group, []): group.remove(r)
-        rows = self.rows[group] = []
-        shown = items[:RENDER_MAX]
-        for it in shown:
-            rows.append(make_row(it))
-        unsaved = 0 if filtering else max(0, total - len(items))                     # sbx-trace keeps only the first rows of a very long list
-        if len(items) > len(shown):
-            rows.append(Adw.ActionRow(title=f"… {len(items) - len(shown)} more", use_markup=False,
-                                      subtitle="Search to narrow it down." + (f" {unsaved} more are not in the saved report." if unsaved else "")))
+        shown = entries[:RENDER_MAX]
+        rows = self.rows[group] = [make_row(e) for e in shown]
+        unsaved = 0 if narrowed else max(0, total - matched)                       # sbx-trace keeps only the first rows of a very long list
+        if len(entries) > len(shown):
+            rows.append(Adw.ActionRow(title=f"… {len(entries) - len(shown)} more", use_markup=False,
+                                      subtitle="Search to narrow it down." + (f" {unsaved} more files are not in the saved report." if unsaved else "")))
         elif unsaved:
-            rows.append(Adw.ActionRow(title=f"… {unsaved} more", subtitle="They are not in the saved report.", use_markup=False))
+            rows.append(Adw.ActionRow(title=f"… {unsaved} more files", subtitle="They are not in the saved report.", use_markup=False))
         for r in rows: group.add(r)
-        group.set_title(f"{title} ({len(items)} of {total})" if filtering else f"{title} ({total})")
-        group.set_visible(bool(items))
+        group.set_title(f"{title} ({matched} of {total})" if narrowed else f"{title} ({total})")
+        group.set_visible(bool(entries))
 
     def fill_report(self):
         rep = self.report
-        for grp in (self.blocked, self.home, self.system, self.noise): grp.set_visible(False)
+        for grp in (self.view, self.blocked, self.home, self.system, self.noise): grp.set_visible(False)
         if rep is None:
             self.head_row.set_title("No report yet")
             self.head_row.set_subtitle("Trace a program to see which files it touches.")
             return
         terms = search_terms(self.search.get_text())
-        filtering = bool(terms)
+        grouped, only_errors = self.grouped.get_active(), self.only_errors.get_active()
+        narrowed = bool(terms) or only_errors
+        self.view.set_visible(True)
         self.head_row.set_title(title_text(rep))
         self.head_row.set_subtitle(summary_text(rep))
         blocked = [b for b in rep["blocked"] if matches(b["path"], terms, b["kind"])]
-        self.fill_group(self.blocked, "Blocked", len(rep["blocked"]), blocked,
-                        lambda b: self.path_row(b["path"], f"{b['n']}×", b["kind"]), filtering)
+        item = lambda b: self.path_row(b["path"], f"{b['n']}×", b["kind"])
+        self.fill_group(self.blocked, "Blocked", len(rep["blocked"]), len(blocked), layout(blocked, grouped),
+                        lambda e: self.entry_row(e, item, blocked_subtitle, bool(terms) and len(blocked) <= RENDER_MAX), bool(terms))
         for grp, key, title in ((self.home, "home", "Your home"), (self.system, "system", "The system")):
-            rows = [r for r in rep[key]["rows"] if matches(r["path"], terms)]
-            self.fill_group(grp, title, rep[key]["total"], rows, lambda r: self.path_row(r["path"], row_subtitle(r)), filtering)
+            rows = [r for r in rep[key]["rows"] if matches(r["path"], terms) and (r["err"] or not only_errors)]
+            item = lambda r: self.path_row(r["path"], row_subtitle(r))
+            self.fill_group(grp, title, rep[key]["total"], len(rows), layout(rows, grouped),
+                            lambda e: self.entry_row(e, item, folder_subtitle, narrowed and len(rows) <= RENDER_MAX), narrowed)
         self.noise.set_description(f"/proc, /sys, /dev and /run: {rep['noise']} paths not shown")
         self.noise.set_visible(True)
-        if filtering and not (self.blocked.get_visible() or self.home.get_visible() or self.system.get_visible()):
-            self.head_row.set_subtitle(f"Nothing matches “{safe(' '.join(terms))}”.")
+        if narrowed and not (self.blocked.get_visible() or self.home.get_visible() or self.system.get_visible()):
+            self.head_row.set_subtitle(f"Nothing matches “{safe(' '.join(terms))}”." if terms else "No path has an error.")
 
     def show_last(self, name, quiet=False):
         """The saved report of NAME (the newest when None), read by sbx-trace from a thread."""
