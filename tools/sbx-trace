@@ -40,15 +40,15 @@ def script(machine, sandbox_only=True):
     """$1 is the host thread id of the process we started, $2 a random number that starts every line the program prints (so a file name
     with a newline in it can't forge a line). It follows that process and everything it starts, keeps only tasks inside a new pid
     namespace when SANDBOX_ONLY, and ends when the first process does. Lines: TOKEN <tab> o|p|x <tab> thread <tab> result <tab>
-    open flags <tab> path."""
+    open flags <tab> path. The token is printed with %llu: bpftrace 0.26 prints %u as 32 bits, which cut the token short."""
     inside = " && ((struct task_struct *)curtask)->thread_pid->level >= 1" if sandbox_only else ""
     gone = "delete(@t[tid]); delete(@c[tid]); delete(@p[tid]); delete(@f[tid]);"
-    out = ['BEGIN { @t[(uint64)$1] = 1; printf("%u\\tREADY\\n", $2); }',
+    out = ['BEGIN { @t[(uint64)$1] = 1; printf("%llu\\tREADY\\n", $2); }',
            'tracepoint:sched:sched_process_fork /@t[(uint64)args->parent_pid]/ { @t[(uint64)args->child_pid] = 1; }',
            f'tracepoint:sched:sched_process_exit /@t[tid]/ {{ {gone} if (tid == (uint64)$1) {{ exit(); }} }}']
     for c in PROBES[machine]:
         out.append(f'tracepoint:syscalls:sys_enter_{c} /@t[tid]{inside}/ {{ @c[tid] = 1; @p[tid] = str(args->filename); @f[tid] = {FLAGS.get(c, "-1")}; }}')
-        out.append(f'tracepoint:syscalls:sys_exit_{c} /@c[tid]/ {{ printf("%u\\t{KIND.get(c, "p")}\\t%d\\t%d\\t%d\\t%s\\n", $2, tid, args->ret, @f[tid], @p[tid]); delete(@c[tid]); }}')
+        out.append(f'tracepoint:syscalls:sys_exit_{c} /@c[tid]/ {{ printf("%llu\\t{KIND.get(c, "p")}\\t%d\\t%d\\t%d\\t%s\\n", $2, tid, args->ret, @f[tid], @p[tid]); delete(@c[tid]); }}')
     out.append("END { clear(@t); clear(@c); clear(@p); clear(@f); }")
     return "\n".join(out)
 

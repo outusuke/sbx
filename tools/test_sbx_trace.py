@@ -91,7 +91,7 @@ class Program(unittest.TestCase):
             self.assertNotIn("->level", T.script(m, False))
             for c in T.PROBES[m]: self.assertIn(f"sys_enter_{c} ", sc); self.assertIn(f"sys_exit_{c} ", sc)
             self.assertEqual(sc.count("printf"), len(T.PROBES[m]) + 1)               # READY and one line per call
-            self.assertTrue(all('printf("%u\\t' in l for l in sc.splitlines() if "printf" in l))   # the token comes first on every line
+            self.assertTrue(all('printf("%llu\\t' in l for l in sc.splitlines() if "printf" in l))   # the token comes first on every line, in 64 bits: %u is 32 bits in bpftrace 0.26
         self.assertIn("args->flags", T.script("x86_64").split("sys_enter_openat ")[1].split("\n")[0])
         self.assertNotIn("sys_enter_open ", T.script("aarch64"))                     # the old calls don't exist on arm64
         for m in T.PROBES: self.assertNotIn("sys_enter_stat ", T.script(m)); self.assertNotIn("sys_enter_lstat ", T.script(m))   # no tracepoint on newer kernels: bpftrace refuses the whole script
