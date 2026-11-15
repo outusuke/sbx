@@ -2673,6 +2673,23 @@ class Gui(unittest.TestCase):
         row.get_active.return_value = True; toggled(None, None)                       # turning on while blocked is refused
         self.assertEqual(open(conf).read(), "net=0\n"); win.toasts.add_toast.assert_called_once()
 
+    def test_toggling_a_switch_back_to_the_default_clears_its_override(self):
+        G = self.G; os.makedirs(G["APPS"], exist_ok=True)
+        conf = f"{G['APPS']}/app.conf"
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("camera=1\n")
+        row = G["Adw"].SwitchRow.return_value
+        def toggle(key, value, text):
+            with open(conf, "w") as f: f.write(text)
+            row.connect.reset_mock(); row.get_active.return_value = value
+            G["Win"].switch_row(mock.MagicMock(), "app", key)
+            [c[0][1] for c in row.connect.call_args_list if c[0][0] == "notify::active"][0](None, None)
+            return open(conf).read()
+        self.assertEqual(toggle("camera", True, "camera=0\n"), "")                   # the default says on: back on removes the line
+        self.assertEqual(toggle("camera", False, ""), "camera=0\n")                  # away from the default writes it
+        self.assertEqual(toggle("sound", True, "sound=0\n"), "")                     # the built-in default for a program with no default-file line
+        G["WL_RESTRICTED"] = True
+        self.assertEqual(toggle("wayland_strict", False, ""), "wayland_strict=0\n")  # on by default where the desktop can restrict: off is an override
+
     def test_the_window_will_not_trash_the_home_of_a_running_program(self):
         G = self.G
         G["RUNNING"] = f"{self.tmp}/run"; os.makedirs(G["RUNNING"])

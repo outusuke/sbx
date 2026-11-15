@@ -590,7 +590,12 @@ class Win(Adw.ApplicationWindow):
                 busy[0] = True; row.set_active(False); busy[0] = False
                 self.toasts.add_toast(Adw.Toast(title=why))
                 return
-            set_key(scope, key, row.get_active())
+            val = row.get_active()
+            if scope is not None:           # back to what the default says: drop the override, so the undo button goes too
+                dsc = parse(None)[0]
+                inherited = dsc[key] if key in dsc else WL_RESTRICTED if key == "wayland_strict" else default
+                if bool(inherited) == val: val = None
+            set_key(scope, key, val)
             if key == "net_private" and row.get_active() and not shutil.which("pasta"):
                 self.toasts.add_toast(Adw.Toast(title="pasta (passt) is not installed: the program won't start until you install it"))
             changed()
