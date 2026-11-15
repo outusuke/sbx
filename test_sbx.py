@@ -2592,7 +2592,7 @@ class Gui(unittest.TestCase):
     def test_the_switches_come_in_ajails_sections_and_the_seldom_used_ones_are_collapsed(self):
         G = self.G; groups = dict(G["GROUPS"])
         self.assertEqual([t for t, _ in G["GROUPS"]], ["What can this program use?", "Devices", "Desktop integration", "Hardening"])
-        self.assertEqual([r[0] for r in groups["What can this program use?"]], ["net", "net_private", "sound", "x11", "printing", "ssh_agent"])
+        self.assertEqual([r[0] for r in groups["What can this program use?"]], ["net", "net_private", "sound", "wayland", "wayland_strict", "x11", "printing", "ssh_agent"])
         keys = [r[0] for _, rows in G["GROUPS"] for r in rows]
         self.assertEqual(len(keys), len(set(keys)))                                                   # every switch once
         self.assertTrue(set(G["ADVANCED"]) <= set(keys)); self.assertNotIn("portal_screenshot", G["ADVANCED"])
