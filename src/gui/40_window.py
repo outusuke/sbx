@@ -571,6 +571,10 @@ class Win(Adw.ApplicationWindow):
             if key == "wayland_strict" and not WL_RESTRICTED: return WL_WHY
             return ""
 
+        def inherited(dsc):
+            """What this switch is without its own line: the default file's value for a program, else the built-in one."""
+            return dsc[key] if key in dsc else WL_RESTRICTED if key == "wayland_strict" else default
+
         def show():
             sc = parse(scope)[0]
             dsc = parse(None)[0] if scope is not None else {}
@@ -580,10 +584,10 @@ class Win(Adw.ApplicationWindow):
             busy[0] = False
             prob = folder_problem(scope) if key == "folder" and scope is not None and row.get_active() else None
             row.set_subtitle(sub + (f"\n⚠ {prob}" if prob else ""))      # an overridden switch shows the undo button; a folder that can't be shared says why
-            undo.set_visible(scope is not None and own)
-            undo.set_tooltip_text("Back to the default: " + ("on" if dsc.get(key, default) else "off"))
+            undo.set_visible(own)                                           # on the defaults page it goes back to the built-in value
+            undo.set_tooltip_text("Back to the " + ("default" if scope is not None else "built-in setting") + ": " + ("on" if inherited(dsc) else "off"))
             why = blocked()
-            can_undo = scope is not None and own
+            can_undo = own
             if why:                         # greying the row greys its undo button too, so a row holding an override stays usable
                 row.set_sensitive(can_undo or (key == "wayland_strict" and row.get_active()))
                 row.set_tooltip_text(why)
@@ -604,10 +608,8 @@ class Win(Adw.ApplicationWindow):
                 self.toasts.add_toast(Adw.Toast(title=why))
                 return
             val = row.get_active()
-            if scope is not None:           # back to what the default says: drop the override, so the undo button goes too
-                dsc = parse(None)[0]
-                inherited = dsc[key] if key in dsc else WL_RESTRICTED if key == "wayland_strict" else default
-                if bool(inherited) == val: val = None
+            dsc = parse(None)[0] if scope is not None else {}
+            if bool(inherited(dsc)) == val: val = None      # back to what the default (or, on the defaults page, the built-in) says: drop the line, so the undo button goes too
             set_key(scope, key, val)
             if key == "net_private" and row.get_active() and not shutil.which("pasta"):
                 self.toasts.add_toast(Adw.Toast(title="pasta (passt) is not installed: the program won't start until you install it"))
@@ -642,7 +644,7 @@ class Win(Adw.ApplicationWindow):
             row.set_value(min(n, upper))
             busy[0] = False
             row.set_subtitle(sub if exact and n <= upper else f"{sub} The settings file says {text}; changing this replaces it.")
-            undo.set_visible(scope is not None and limit_own(scope, key) is not None)
+            undo.set_visible(limit_own(scope, key) is not None)
 
         def changed(*_):
             if busy[0]: return
