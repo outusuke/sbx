@@ -308,9 +308,45 @@ class Live(Base):
         self.assertIn("/etc/shadow", [b["path"] for b in rep["blocked"]])
         self.assertIn("blocked so far", G["live_text"](rep))
 
+    def test_the_live_view_keeps_its_rows_and_only_changes_their_subtitles(self):
+        G = self.G
+        class Row:
+            def __init__(self, key): self.key, self.sub, self.live_make = key, None, None
+            def set_subtitle(self, t): self.sub = t
+        class Grp:
+            def __init__(self): self.rows = []
+            def add(self, r): self.rows.append(r)
+            def remove(self, r): self.rows.remove(r)
+            def set_title(self, t): self.title = t
+            def set_visible(self, v): self.visible = v
+        w = mock.MagicMock(); w.rows = {}; w.render_max = 30; w.live_cache = {}; w.live_pending = False; group = Grp(); made = []
+        describe = G["describer"](lambda it: f"read {it['r']}", G["folder_subtitle"])
+        def make(e): r = Row(e[1][0]["path"]); r.sub = describe(e)[1]; made.append(r); return r
+        ent = lambda n, r=1: (None, [{"path": f"/f{n}", "r": r, "err": {}}])
+        fill = lambda entries, total=None: G["Win"].fill_group_live(w, group, "The system", total or len(entries), len(entries), entries, make, False, describe)
+        fill([ent(1), ent(2)])
+        self.assertEqual(len(made), 2); self.assertEqual([r.sub for r in group.rows], ["read 1", "read 1"])
+        fill([ent(1, 5), ent(2), ent(3)])                                           # one grew, one is new: nothing is made again
+        self.assertEqual(len(made), 3); self.assertEqual([r.sub for r in group.rows], ["read 5", "read 1", "read 1"])
+        self.assertIs(group.rows[0], made[0])
+        fill([ent(3)])                                                              # the others are gone
+        self.assertEqual(group.rows, [made[2]])
+        many = [ent(i) for i in range(100, 100 + G["LIVE_NEW_MAX"] + 5)]
+        w.live_cache = {}; group.rows.clear(); made.clear(); fill(many)
+        self.assertEqual(len(made), G["LIVE_NEW_MAX"]); self.assertTrue(w.live_pending)       # the rest comes with the next update
+        w.live_pending = False; fill(many)
+        self.assertEqual(len(made), len(many)); self.assertFalse(w.live_pending)
+
+    def test_when_the_trace_ends_the_rows_of_the_live_view_are_taken_out(self):
+        G = self.G
+        w = mock.MagicMock(); group, r1, r2 = mock.MagicMock(), object(), object()
+        w.live_cache = {group: {"rows": {"a": (r1, 1)}, "more": r2}}
+        G["Win"].drop_live(w)
+        self.assertIsNone(w.live_cache); self.assertEqual([c.args[0] for c in group.remove.call_args_list], [r1, r2])
+
     def test_the_window_does_not_redraw_the_rows_too_often_or_when_nothing_changed(self):
         G = self.G
-        w = mock.MagicMock(); run = object(); w.run = run; w.closing = False; w.live_sig, w.live_mtime, w.live_next = None, 0, 0.0
+        w = mock.MagicMock(); run = object(); w.run = run; w.closing = False; w.live_sig, w.live_mtime, w.live_next = None, 0, 0.0; w.live_pending = False
         rep = G["clean_report"](self.real_report())
         with mock.patch.dict(G, {"time": mock.MagicMock(monotonic=mock.MagicMock(return_value=100.0))}):
             G["Win"].got_live(w, run, rep, 5)
@@ -463,7 +499,7 @@ class Window(unittest.TestCase):
         w.toast.assert_called_with("Trace finished (the program exited with 3)"); w.alert.assert_not_called()
         w.run = run; w.report = None; w.fill_report.reset_mock()
         G["Win"].finished(w, run, ["sbx", "a"], 101.0, 1, "sbx-trace: the trace did not start: ~~~~", rep, "")     # the report is an older one
-        self.assertIsNone(w.report); w.fill_report.assert_not_called()
+        self.assertIsNone(w.report); w.fill_report.assert_called_once()                  # what the window had, drawn in full
         w.alert.assert_called_with("The trace did not finish", "sbx-trace: the trace did not start: ~~~~")
         G["Win"].finished(w, run, ["sbx", "a"], 101.0, 1, "", None, "no report yet"); w.alert.assert_called_with("The trace did not finish", "no report yet")
         w.alert.reset_mock(); w.closing = True; G["Win"].finished(w, run, ["sbx", "a"], 99.0, 0, "", rep, ""); w.alert.assert_not_called()     # window already closed
@@ -588,6 +624,7 @@ class Folders(Base):
 
     def test_a_folder_row_opens_to_its_files_and_copies_the_folder(self):
         G, H = self.G, self.home; w = mock.MagicMock(); w.render_max = G["RENDER_MAX"]; Adw, Gtk = G["Adw"], G["Gtk"]
+        w.fill_kids = lambda row, items: G["Win"].fill_kids(w, row, items); w.open_folders = set()
         made = lambda it: ("row", it["path"])
         self.assertEqual(G["Win"].entry_row(w, (None, [{"path": "/a"}]), made, G["folder_subtitle"], False), ("row", "/a"))      # not grouped
         self.assertEqual(G["Win"].entry_row(w, (f"{H}/d", [{"path": f"{H}/d/f"}]), made, G["folder_subtitle"], False), ("row", f"{H}/d/f"))   # one file: just the file
@@ -607,7 +644,7 @@ class Folders(Base):
         rep = G["clean_report"](json.loads(json.dumps(self.real_report())))
         w.report = rep; w.search.get_text.return_value = ""; w.grouped.get_active.return_value = True; w.only_errors.get_active.return_value = False
         calls = {}
-        w.fill_group.side_effect = lambda group, title, total, matched, entries, make, narrowed: calls.update({title: (total, matched, entries, narrowed)})
+        w.fill_group.side_effect = lambda group, title, total, matched, entries, make, narrowed, describe=None: calls.update({title: (total, matched, entries, narrowed)})
         G["Win"].fill_report(w)
         total, matched, entries, narrowed = calls["Your home"]
         self.assertEqual((total, matched, narrowed), (rep["home"]["total"], rep["home"]["total"], False)); self.assertEqual(entries[0][0], f"{H}/.config/foo")
