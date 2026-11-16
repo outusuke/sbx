@@ -135,7 +135,7 @@ def raw_list(scope, key):
 
 def add_item(scope, key, v):
     lines = read_lines(scope)
-    if re.search(r"(^|\s)#", v): return False        # sbx would read the rest as a comment
+    if re.search(r"(^|\s)#", v) or re.search(r"[\x00-\x1f\x7f]", v): return False        # sbx would read the rest as a comment; a line break would start a new setting
     if v not in raw_list(scope, key): save(scope, lines + [f"{key}={v}"])
     return True
 
@@ -189,13 +189,6 @@ def app_names():
     try: n |= {f for f in os.listdir(HOMES) if os.path.isdir(f"{HOMES}/{f}")}
     except OSError: pass
     return sorted(x for x in n if NAME_RE.match(x))
-
-
-def portals_on(scope):
-    """Is the portals switch on for this program (its own setting, else the default settings, else off)?"""
-    sc = parse(scope)[0]
-    if "portals" in sc or scope is None: return sc.get("portals", SWITCHES["portals"][2])
-    return parse(None)[0].get("portals", SWITCHES["portals"][2])
 
 
 def needs(key):
@@ -345,7 +338,7 @@ def path_problem(p):
         if p == g or p.startswith(g + "/") or g.startswith(p + "/"):
             return "That would expose sbx's own settings or private homes."
     if p == HOME: return "That is your whole home folder. Pick a folder inside it."
-    if not parse(CURRENT[0] if CURRENT else None)[0].get("allow_sensitive", False):
+    if not is_on(CURRENT[0] if CURRENT else None, "allow_sensitive"):
         for rel in SENSITIVE:
             g = f"{HOME}/{rel}"
             if p == g or p.startswith(g + "/") or g.startswith(p + "/"):

@@ -2383,6 +2383,90 @@ class Gui(unittest.TestCase):
         G["Win"].open_defaults(win)
         self.assertEqual(G["CURRENT"], [None]); win.nav.replace.assert_called_once()
 
+    def test_a_line_break_in_a_shared_path_cannot_start_a_new_setting(self):
+        G = self.G; os.makedirs(G["APPS"], exist_ok=True)
+        self.assertFalse(G["add_item"]("app", "read_only", "~/x\nallow_sensitive=1"))
+        self.assertFalse(G["add_item"]("app", "read_only", "~/x\rwhitelist=~/.ssh"))
+        self.assertFalse(os.path.exists(G["path_for"]("app")), "nothing may be written")
+        self.assertTrue(G["add_item"]("app", "read_only", "~/Projects"))
+        self.assertEqual(G["parse"]("app")[1]["read_only"], ["~/Projects"])
+
+    def test_secret_folders_follow_the_default_settings_too(self):
+        G = self.G; os.makedirs(G["APPS"], exist_ok=True)
+        ssh = f"{G['HOME']}/.ssh"; os.makedirs(ssh, exist_ok=True)
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("net=0\n")
+        G["CURRENT"][:] = ["app"]
+        self.assertIn("secret", G["path_problem"](ssh))
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("allow_sensitive=1\n")      # the defaults allow it: so does sbx for this program
+        self.assertIsNone(G["path_problem"](ssh))
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("allow_sensitive=0\n")          # its own file wins
+        self.assertIn("secret", G["path_problem"](ssh))
+
+    def test_live_sbx_needs_sbx_to_be_the_program_not_just_a_word_in_the_command_line(self):
+        G = self.G
+        fake = f"{self.tmp}/sbx"
+        with open(fake, "w") as f: f.write("import time; time.sleep(30)\n")
+        procs = [subprocess.Popen([sys.executable, fake]),                                              # python3 sbx: it is sbx
+                 subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "sbx-report"])]   # only mentions sbx
+        for p in procs: self.addCleanup(lambda p=p: (p.kill(), p.wait()))
+        self.assertTrue(G["live_sbx"](procs[0].pid))
+        self.assertFalse(G["live_sbx"](procs[1].pid))
+
+    def test_every_start_from_the_window_gets_its_own_systemd_unit(self):
+        G = self.G
+        self.assertNotEqual(G["unit_name"]("app"), G["unit_name"]("app"))
+        self.assertTrue(G["unit_name"]("app").startswith("sbx-app-"))
+        cmds = []
+        fake_proc = mock.MagicMock(); fake_proc.poll.return_value = 0
+        with mock.patch.dict(G, {"start_command": lambda n: (["/usr/bin/sbx", n], None)}), \
+             mock.patch.object(G["shutil"], "which", lambda n: "/usr/bin/systemd-run"), \
+             mock.patch.object(G["subprocess"], "Popen", lambda cmd, **kw: cmds.append(cmd) or fake_proc):
+            win = mock.MagicMock()
+            G["Win"].run_program(win, "app"); G["Win"].run_program(win, "app")      # "Launch" while it runs starts another copy
+        units = [c for cmd in cmds for c in cmd if c.startswith("--unit=")]
+        self.assertEqual(len(units), 2); self.assertNotEqual(units[0], units[1])
+
+    def test_launch_closes_its_error_file_when_the_start_fails(self):
+        G = self.G
+        tmpf = mock.MagicMock()
+        def boom(*a, **k): raise OSError(2, "No such file or directory")
+        with mock.patch.dict(G, {"start_command": lambda n: (["/usr/bin/sbx", n], None), "tempfile": types.SimpleNamespace(TemporaryFile=lambda: tmpf)}), \
+             mock.patch.object(G["shutil"], "which", lambda n: None), mock.patch.object(G["subprocess"], "Popen", boom):
+            win = mock.MagicMock()
+            G["Win"].run_program(win, "app")
+        tmpf.close.assert_called()
+        win.alert.assert_called()
+
+    def test_open_home_says_so_when_xdg_open_is_missing(self):
+        G = self.G
+        os.makedirs(f"{G['HOMES']}/app", exist_ok=True)
+        win = mock.MagicMock()
+        G["Gtk"].Button.reset_mock()
+        G["Win"].storage_group(win, "app")
+        cbs = [c.args[1] for c in G["Gtk"].Button.return_value.connect.call_args_list if getattr(c.args[1], "__name__", "") == "open_home"]
+        self.assertEqual(len(cbs), 1)
+        def boom(*a, **k): raise OSError(2, "No such file or directory")
+        G["Adw"].Toast.reset_mock()
+        with mock.patch.object(G["subprocess"], "Popen", boom): cbs[0]()
+        self.assertIn("Couldn't open it", G["Adw"].Toast.call_args.kwargs["title"])
+
+    def test_the_health_checks_run_off_the_window_thread(self):
+        G = self.G
+        started, ran = [], []
+        class FakeThread:
+            def __init__(self, target=None, daemon=None, **kw): started.append(target)
+            def start(self): pass
+        fake_run = lambda argv, **kw: ran.append(argv) or types.SimpleNamespace(stdout="all fine", stderr="", returncode=0)
+        win = mock.MagicMock()
+        with mock.patch.dict(G, {"threading": types.SimpleNamespace(Thread=FakeThread)}), \
+             mock.patch.object(G["subprocess"], "run", fake_run):
+            G["Win"].open_trouble(win, None)
+            self.assertFalse(any("doctor" in a for a in ran), "sbx doctor must not run on the window thread")
+            self.assertTrue(started, "it has to be handed to a thread")
+            for t in started: t()
+            self.assertTrue(any("doctor" in a for a in ran))
+            self.assertEqual(G["doctor_text"](), "all fine")
+
     def test_reset_deletes_the_settings_file_instead_of_emptying_it(self):
         G = self.G; os.makedirs(G["APPS"], exist_ok=True)
         for p in (f"{G['CONF']}/default.conf", f"{G['APPS']}/a.conf", f"{G['APPS']}/b.conf"):

@@ -287,7 +287,7 @@ def raw_list(scope, key):
 
 def add_item(scope, key, v):
     lines = read_lines(scope)
-    if re.search(r"(^|\s)#", v): return False        # sbx would read the rest as a comment
+    if re.search(r"(^|\s)#", v) or re.search(r"[\x00-\x1f\x7f]", v): return False        # sbx would read the rest as a comment; a line break would start a new setting
     if v not in raw_list(scope, key): save(scope, lines + [f"{key}={v}"])
     return True
 
@@ -341,13 +341,6 @@ def app_names():
     try: n |= {f for f in os.listdir(HOMES) if os.path.isdir(f"{HOMES}/{f}")}
     except OSError: pass
     return sorted(x for x in n if NAME_RE.match(x))
-
-
-def portals_on(scope):
-    """Is the portals switch on for this program (its own setting, else the default settings, else off)?"""
-    sc = parse(scope)[0]
-    if "portals" in sc or scope is None: return sc.get("portals", SWITCHES["portals"][2])
-    return parse(None)[0].get("portals", SWITCHES["portals"][2])
 
 
 def needs(key):
@@ -497,7 +490,7 @@ def path_problem(p):
         if p == g or p.startswith(g + "/") or g.startswith(p + "/"):
             return "That would expose sbx's own settings or private homes."
     if p == HOME: return "That is your whole home folder. Pick a folder inside it."
-    if not parse(CURRENT[0] if CURRENT else None)[0].get("allow_sensitive", False):
+    if not is_on(CURRENT[0] if CURRENT else None, "allow_sensitive"):
         for rel in SENSITIVE:
             g = f"{HOME}/{rel}"
             if p == g or p.startswith(g + "/") or g.startswith(p + "/"):
@@ -537,10 +530,16 @@ RUNNING = HOME + "/.local/state/sbx/running"      # written by sbx: RUNNING/PID 
 
 
 def live_sbx(pid):
+    """True if this PID is really an sbx process (same rule as sbx): started as `sbx` or `python3 sbx`, or through a link made by `sbx link`."""
     try:
-        with open(f"/proc/{pid}/cmdline", "rb") as f: return b"sbx" in f.read()
+        with open(f"/proc/{pid}/cmdline", "rb") as f: argv = [x.decode(errors="replace") for x in f.read().split(b"\0") if x]
+        cwd = os.readlink(f"/proc/{pid}/cwd")
     except OSError:
         return False
+    def is_link(p):
+        try: return os.path.islink(p) and os.path.basename(os.readlink(p)) == "sbx"
+        except OSError: return False
+    return any(os.path.basename(x) == "sbx" or is_link(os.path.join(cwd, x)) for x in argv[:3])
 
 
 def program_running(name):
@@ -556,6 +555,24 @@ def program_running(name):
             continue
         if who.strip() == name and start.strip() == now and live_sbx(pid): return True
     return False
+
+
+LAUNCHES = [0]
+
+
+def unit_name(name):
+    """A systemd unit name for one start from this window. Each start gets its own, so "Launch" while the program runs can start another copy."""
+    LAUNCHES[0] += 1
+    return f"sbx-{name}-{os.getpid()}-{LAUNCHES[0]}"
+
+
+def doctor_text():
+    """What `sbx doctor` prints (it can take a while: call it off the UI thread)."""
+    try:
+        r = subprocess.run([sbx_cmd(), "doctor"], capture_output=True, text=True, timeout=20)
+        return (r.stdout + r.stderr).strip() or "No output. Is sbx installed?"
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"Couldn't run sbx doctor: {e}"
 
 
 def use_window_icon():
@@ -1074,13 +1091,20 @@ class Win(Adw.ApplicationWindow):
                     if chunk: buf.insert_with_tags(buf.get_end_iter(), chunk, tags[tag]) if tag else buf.insert(buf.get_end_iter(), chunk)
             GLib.idle_add(lambda: sw.get_vadjustment().set_value(sw.get_vadjustment().get_upper()) and False)     # newest line in view
 
+        latest = [0]
+
         def refresh(*_):
-            try:
-                r = subprocess.run([sbx_cmd(), "doctor"], capture_output=True, text=True, timeout=20)
-                out = (r.stdout + r.stderr).strip()
-            except (OSError, subprocess.TimeoutExpired) as e:
-                out = f"Couldn't run sbx doctor: {e}"
-            hl.set_text(out or "No output. Is sbx installed?")
+            latest[0] += 1
+            mine = latest[0]
+            hl.set_text("Running the checks…")
+
+            def work():
+                text = doctor_text()
+                def show():
+                    if mine == latest[0]: hl.set_text(text)                       # a newer refresh has its own answer coming
+                    return False
+                GLib.idle_add(show)
+            threading.Thread(target=work, daemon=True).start()                    # sbx doctor can take seconds: the window never waits for it
             show_log()
             show_hints()
         rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
@@ -1373,7 +1397,9 @@ class Win(Adw.ApplicationWindow):
 
         def open_home(*_):
             if not os.path.isdir(home): return self.toasts.add_toast(Adw.Toast(title="Nothing saved yet"))
-            subprocess.Popen(["xdg-open", home], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try: p = subprocess.Popen(["xdg-open", home], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError as e: return self.toasts.add_toast(Adw.Toast(title=f"Couldn't open it: {e.strerror or e}"))
+            threading.Thread(target=p.wait, daemon=True).start()                  # reaped when it ends, no zombie
         openb = Gtk.Button(label="Open", valign=Gtk.Align.CENTER)
         openb.connect("clicked", open_home)
         resetb = Gtk.Button(label="Reset…", valign=Gtk.Align.CENTER, css_classes=["destructive-action"])
@@ -1644,7 +1670,7 @@ class Win(Adw.ApplicationWindow):
                 bad = path_problem(f.get_path())
                 if bad: self.alert("Can't share that", bad)
                 elif not add_item(scope, "read_only", tilde(f.get_path())):      # starts read only; the row's toggle changes it
-                    self.alert("Can't share that", "Names containing ' #' can't be stored in the settings file.")
+                    self.alert("Can't share that", "Names containing ' #' or a line break can't be stored in the settings file.")
                 else: refill()
             (dlg.select_folder if folder else dlg.open)(self, None, done)
         box = Gtk.Box(spacing=6)
@@ -1701,7 +1727,7 @@ class Win(Adw.ApplicationWindow):
         if problem: return self.alert(f"Can't start {name}", problem)
         sr = shutil.which("systemd-run")
         if sr:
-            cmd = [sr, "--user", "--collect", "--quiet", "--same-dir", f"--unit=sbx-{name}-{os.getpid()}",
+            cmd = [sr, "--user", "--collect", "--quiet", "--same-dir", f"--unit={unit_name(name)}",
                    f"--property=SyslogIdentifier={name}"]
             for k in ("WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
                       "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE",
@@ -1713,6 +1739,7 @@ class Win(Adw.ApplicationWindow):
         err = tempfile.TemporaryFile()
         try: p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
         except OSError as e:
+            err.close()
             return self.alert("Couldn't start sbx", str(e))
         self.toasts.add_toast(Adw.Toast(title=f"Starting {name}…"))
 

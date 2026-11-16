@@ -193,13 +193,20 @@ class Win(Adw.ApplicationWindow):
                     if chunk: buf.insert_with_tags(buf.get_end_iter(), chunk, tags[tag]) if tag else buf.insert(buf.get_end_iter(), chunk)
             GLib.idle_add(lambda: sw.get_vadjustment().set_value(sw.get_vadjustment().get_upper()) and False)     # newest line in view
 
+        latest = [0]
+
         def refresh(*_):
-            try:
-                r = subprocess.run([sbx_cmd(), "doctor"], capture_output=True, text=True, timeout=20)
-                out = (r.stdout + r.stderr).strip()
-            except (OSError, subprocess.TimeoutExpired) as e:
-                out = f"Couldn't run sbx doctor: {e}"
-            hl.set_text(out or "No output. Is sbx installed?")
+            latest[0] += 1
+            mine = latest[0]
+            hl.set_text("Running the checks…")
+
+            def work():
+                text = doctor_text()
+                def show():
+                    if mine == latest[0]: hl.set_text(text)                       # a newer refresh has its own answer coming
+                    return False
+                GLib.idle_add(show)
+            threading.Thread(target=work, daemon=True).start()                    # sbx doctor can take seconds: the window never waits for it
             show_log()
             show_hints()
         rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
@@ -492,7 +499,9 @@ class Win(Adw.ApplicationWindow):
 
         def open_home(*_):
             if not os.path.isdir(home): return self.toasts.add_toast(Adw.Toast(title="Nothing saved yet"))
-            subprocess.Popen(["xdg-open", home], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try: p = subprocess.Popen(["xdg-open", home], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError as e: return self.toasts.add_toast(Adw.Toast(title=f"Couldn't open it: {e.strerror or e}"))
+            threading.Thread(target=p.wait, daemon=True).start()                  # reaped when it ends, no zombie
         openb = Gtk.Button(label="Open", valign=Gtk.Align.CENTER)
         openb.connect("clicked", open_home)
         resetb = Gtk.Button(label="Reset…", valign=Gtk.Align.CENTER, css_classes=["destructive-action"])
@@ -763,7 +772,7 @@ class Win(Adw.ApplicationWindow):
                 bad = path_problem(f.get_path())
                 if bad: self.alert("Can't share that", bad)
                 elif not add_item(scope, "read_only", tilde(f.get_path())):      # starts read only; the row's toggle changes it
-                    self.alert("Can't share that", "Names containing ' #' can't be stored in the settings file.")
+                    self.alert("Can't share that", "Names containing ' #' or a line break can't be stored in the settings file.")
                 else: refill()
             (dlg.select_folder if folder else dlg.open)(self, None, done)
         box = Gtk.Box(spacing=6)
@@ -820,7 +829,7 @@ class Win(Adw.ApplicationWindow):
         if problem: return self.alert(f"Can't start {name}", problem)
         sr = shutil.which("systemd-run")
         if sr:
-            cmd = [sr, "--user", "--collect", "--quiet", "--same-dir", f"--unit=sbx-{name}-{os.getpid()}",
+            cmd = [sr, "--user", "--collect", "--quiet", "--same-dir", f"--unit={unit_name(name)}",
                    f"--property=SyslogIdentifier={name}"]
             for k in ("WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
                       "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE",
@@ -832,6 +841,7 @@ class Win(Adw.ApplicationWindow):
         err = tempfile.TemporaryFile()
         try: p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
         except OSError as e:
+            err.close()
             return self.alert("Couldn't start sbx", str(e))
         self.toasts.add_toast(Adw.Toast(title=f"Starting {name}…"))
 

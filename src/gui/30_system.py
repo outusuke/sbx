@@ -28,10 +28,16 @@ RUNNING = HOME + "/.local/state/sbx/running"      # written by sbx: RUNNING/PID 
 
 
 def live_sbx(pid):
+    """True if this PID is really an sbx process (same rule as sbx): started as `sbx` or `python3 sbx`, or through a link made by `sbx link`."""
     try:
-        with open(f"/proc/{pid}/cmdline", "rb") as f: return b"sbx" in f.read()
+        with open(f"/proc/{pid}/cmdline", "rb") as f: argv = [x.decode(errors="replace") for x in f.read().split(b"\0") if x]
+        cwd = os.readlink(f"/proc/{pid}/cwd")
     except OSError:
         return False
+    def is_link(p):
+        try: return os.path.islink(p) and os.path.basename(os.readlink(p)) == "sbx"
+        except OSError: return False
+    return any(os.path.basename(x) == "sbx" or is_link(os.path.join(cwd, x)) for x in argv[:3])
 
 
 def program_running(name):
@@ -47,6 +53,24 @@ def program_running(name):
             continue
         if who.strip() == name and start.strip() == now and live_sbx(pid): return True
     return False
+
+
+LAUNCHES = [0]
+
+
+def unit_name(name):
+    """A systemd unit name for one start from this window. Each start gets its own, so "Launch" while the program runs can start another copy."""
+    LAUNCHES[0] += 1
+    return f"sbx-{name}-{os.getpid()}-{LAUNCHES[0]}"
+
+
+def doctor_text():
+    """What `sbx doctor` prints (it can take a while: call it off the UI thread)."""
+    try:
+        r = subprocess.run([sbx_cmd(), "doctor"], capture_output=True, text=True, timeout=20)
+        return (r.stdout + r.stderr).strip() or "No output. Is sbx installed?"
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"Couldn't run sbx doctor: {e}"
 
 
 def use_window_icon():
