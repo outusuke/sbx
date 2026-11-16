@@ -7,7 +7,8 @@ def machine_id(name, create):
     p = f"{CONF}/ids/{name}"
     if create and not os.path.exists(p):
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w") as f: f.write(uuid.uuid4().hex + "\n")
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as f: f.write(uuid.uuid4().hex + "\n")
     return p
 
 
@@ -73,10 +74,20 @@ def sandbox_path():
     return ":".join(p)
 
 
+def bwrap_help():
+    """The text of `bwrap --help`, or "" if it can't be run. Asked once per run of sbx."""
+    if not BWRAP_HELP:
+        try: r = subprocess.run(["bwrap", "--help"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired): return ""
+        BWRAP_HELP.append(r.stdout + r.stderr)
+    return BWRAP_HELP[0]
+
+
+BWRAP_HELP = []
+
+
 def bwrap_has(flag):
-    try: r = subprocess.run(["bwrap", "--help"], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired): return False
-    return flag in r.stdout + r.stderr
+    return flag in bwrap_help()
 
 
 def private_net(cfg):
@@ -125,7 +136,7 @@ def scoped_xauth(src, disp, dst):
     if not keep: return None
     try:
         os.makedirs(os.path.dirname(dst), mode=0o700, exist_ok=True)
-        fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "wb") as f: f.write(b"".join(keep))
     except OSError:
         return None

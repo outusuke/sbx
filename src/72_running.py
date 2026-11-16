@@ -15,11 +15,14 @@ def proc_start(pid):
 
 
 def live_sbx(pid):
-    """True if this PID is really an sbx process (a stale file may point at a reused PID)."""
+    """True if this PID is really an sbx process (a stale file may point at a reused PID). Started by its name (`sbx`, `python3
+    sbx`) or through a link made by `sbx link`, whose command line has only the link's name (`python3 ~/.local/bin/firefox`)."""
     try:
-        with open(f"/proc/{pid}/cmdline", "rb") as f: return b"sbx" in f.read()
+        with open(f"/proc/{pid}/cmdline", "rb") as f: argv = [x.decode(errors="replace") for x in f.read().split(b"\0") if x]
+        cwd = os.readlink(f"/proc/{pid}/cwd")
     except OSError:
         return False
+    return any(os.path.basename(x) == "sbx" or is_sbx_link(os.path.join(cwd, x)) for x in argv[:3])
 
 
 def pid_app(pid):

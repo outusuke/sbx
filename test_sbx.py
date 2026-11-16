@@ -1255,6 +1255,18 @@ class Units(unittest.TestCase):
         self.running_file(me, "app"); S["live_sbx"] = lambda pid: False      # not an sbx process
         self.assertEqual(S["running"]("app"), [])
 
+    def test_a_program_started_through_an_sbx_link_counts_as_sbx(self):
+        S = self.S; d = tempfile.mkdtemp(prefix="lnk-"); self.addCleanup(shutil.rmtree, d, True)      # a path without "sbx" in it
+        with open(f"{d}/sbx", "w") as f: f.write("#!/usr/bin/python3\nimport time\ntime.sleep(30)\n")
+        os.chmod(f"{d}/sbx", 0o755); os.symlink("sbx", f"{d}/firefox")
+        import time
+        procs = [subprocess.Popen([f"{d}/firefox"]), subprocess.Popen(["sleep", "30"])]
+        try:
+            time.sleep(0.3)
+            self.assertTrue(S["live_sbx"](procs[0].pid)); self.assertFalse(S["live_sbx"](procs[1].pid))
+        finally:
+            for p in procs: p.kill(); p.wait()
+
     def test_mark_running_drops_stale_files_and_unmark_removes_ours(self):
         S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
         os.makedirs(S["RUNNING"])
