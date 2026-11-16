@@ -244,9 +244,27 @@ def start_problem(words):
 
 
 def trace_command(words):
-    """The sbx command that is traced, and the full command line that traces it."""
+    """The sbx command that is traced, and the full command line that traces it. --yes: the window has asked already about a program that is running."""
     cmd = [sbx_cmd(), *words]
-    return cmd, [trace_cmd(), "--"] + cmd
+    return cmd, [trace_cmd(), "--yes", "--"] + cmd
+
+
+def parse_running(text):
+    """The program names in the output of `sbx list` that are running now."""
+    names = []
+    for line in text.splitlines():
+        p = line.split()
+        if len(p) >= 2 and NAME_RE.match(p[0]) and p[1] == "running": names.append(p[0])
+    return names
+
+
+def running_now(words):
+    """The name of the program that `sbx WORDS` starts, when `sbx list` says it is running already; else None."""
+    name = report_name(words)
+    if not name: return None
+    try: r = subprocess.run([sbx_cmd(), "list"], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError): return None
+    return name if name in parse_running(r.stdout) else None
 
 
 def parse_list(text):
@@ -388,6 +406,7 @@ class Win(Adw.ApplicationWindow):
         self.rows = {}                           # group -> the rows in it now
         self.open_folders = set()                # folders the person opened: they stay open when the live view redraws
         self.live_sig, self.live_mtime, self.live_next = None, 0, 0.0
+        self.checking = False                    # asking sbx whether the program runs already
         self.live_cache, self.live_pending = None, False      # while a trace runs: group -> the rows made for it, which are updated in place
         self.render_max = RENDER_MAX             # rows drawn per group and folder: fewer while a trace runs
         self.toasts = Adw.ToastOverlay()
@@ -710,6 +729,30 @@ class Win(Adw.ApplicationWindow):
         if not words: return self.toast("Type a program, or pick one from the list")
         problem = start_problem(words)
         if problem: return self.alert("Can't start the trace", problem)
+        if self.checking: return
+        self.checking = True
+        def work():
+            busy = running_now(words)
+            GLib.idle_add(lambda: self.checked(words, busy) and False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def checked(self, words, busy):
+        """The program is not running: trace it. It is: say what can happen, and ask."""
+        self.checking = False
+        if self.closing or self.run: return True
+        if not busy:
+            self.begin_trace(words)
+            return True
+        d = Adw.AlertDialog(heading=f"{safe(busy)} is already running", body="A second copy shares its private home, so it can lock or damage its files (a browser can lose its logins). "
+                            f"Stop it first (sbx stop {safe(busy)}), or trace it anyway.")
+        d.add_response("cancel", "Cancel"); d.add_response("go", "Trace anyway")
+        d.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE)
+        d.set_close_response("cancel")
+        d.choose(self, None, lambda dlg, res: dlg.choose_finish(res) == "go" and self.begin_trace(words))
+        return True
+
+    def begin_trace(self, words):
+        if self.run: return
         cmd, argv = trace_command(words)
         started = time.time()
         try: run = self.run = Run(argv)

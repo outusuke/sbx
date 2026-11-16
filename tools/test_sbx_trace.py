@@ -427,6 +427,40 @@ print(token + "\\to\\t1\\t-2\\t0\\t/etc/missing", flush=True)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): T.main(["--last", "nothing"])
 
 
+class Running(Base):
+    def listing(self, text):
+        return mock.patch.object(T.subprocess, "run", return_value=mock.MagicMock(stdout=text))
+
+    def test_only_sbx_can_say_that_the_program_runs_already(self):
+        with self.listing("chrome running\nfirefox idle\n") as run:
+            self.assertEqual(T.running_now(["sbx", "--net=none", "chrome"]), "chrome"); self.assertIsNone(T.running_now(["sbx", "firefox"]))
+            self.assertEqual(run.call_args[0][0], ["sbx", "list"])
+            run.reset_mock(); self.assertIsNone(T.running_now(["/bin/sh", "-c", "exit 0"])); run.assert_not_called()      # not an sbx command: nothing to ask
+        with mock.patch.object(T.subprocess, "run", side_effect=OSError): self.assertIsNone(T.running_now(["sbx", "chrome"]))
+
+    def test_a_running_program_is_said_and_on_a_terminal_asked_about(self):
+        def go(answer, tty=True, yes=False):
+            err = io.StringIO()
+            with mock.patch.object(T, "running_now", return_value="chrome"), contextlib.redirect_stderr(err), mock.patch("sys.stdin", mock.MagicMock(isatty=lambda: tty)), \
+                    mock.patch("builtins.input", return_value=answer):
+                return T.go_on_if_running(["sbx", "chrome"], yes), err.getvalue()
+        ok, said = go("n"); self.assertFalse(ok); self.assertIn("chrome is already running", said); self.assertIn("sbx stop chrome", said); self.assertIn("[y/N]", said)
+        self.assertFalse(go("")[0]); self.assertTrue(go("y")[0]); self.assertTrue(go("YES")[0])
+        ok, said = go("n", tty=False); self.assertTrue(ok); self.assertIn("no terminal", said)       # nobody to ask: say it and go on
+        with mock.patch.object(T, "running_now") as r: self.assertTrue(T.go_on_if_running(["sbx", "chrome"], True)); r.assert_not_called()
+        with mock.patch.object(T, "running_now", return_value=None): self.assertTrue(T.go_on_if_running(["sbx", "chrome"], False))
+
+    def test_main_does_not_start_the_trace_when_the_person_says_no_and_does_not_ask_with_yes(self):
+        with mock.patch.object(T.os, "geteuid", return_value=1000), mock.patch.object(T, "trace", return_value=(0, self.tr())) as tr, contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(T, "go_on_if_running", return_value=False), self.assertRaises(SystemExit): T.main(["--", "sbx", "chrome"])
+            tr.assert_not_called()
+            with mock.patch.object(T, "go_on_if_running", return_value=True) as g: T.main(["--yes", "--", "sbx", "chrome"])
+            self.assertTrue(g.call_args[0][1]); tr.assert_called_once()
+            with mock.patch.object(T, "go_on_if_running", return_value=True) as g: T.main(["-y", "--", "sbx", "chrome"])
+            self.assertTrue(g.call_args[0][1])
+
+
 class Live(Base):
     def test_a_snapshot_is_a_report_with_no_exit_code_in_a_folder_that_last_does_not_read(self):
         T.write_live(self.tr(), False, {"name": "foo", "command": ["foo"]})

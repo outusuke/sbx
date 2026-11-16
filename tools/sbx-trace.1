@@ -46,6 +46,9 @@ Print the report (or suggestions, or comparison) as JSON.
 .B \-\-host
 Keep every process, not only those in a new pid namespace. Use it to trace a program that is not sandboxed.
 .TP
+.B \-\-yes
+(\fB\-y\fR) Do not ask when the program is already running. A second copy shares the private home of the first, so by default sbx-trace says so, and on a terminal asks whether to go on; without a terminal it says so and goes on.
+.TP
 .BI \-\-limit " N"
 Rows to print per group (default 40).
 .TP

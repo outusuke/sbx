@@ -71,7 +71,7 @@ class Base(unittest.TestCase):
             f.write("""#!/usr/bin/python3
 import json, os, sys, time
 state = os.path.join(os.environ["FAKE_STATE"], "r.json")
-a = sys.argv[1:]
+a = [x for x in sys.argv[1:] if x != "--yes"]
 if a[:1] == ["--last"]:
     try: print(open(state).read())
     except OSError: print("sbx-trace: no report yet: sbx-trace -- COMMAND", file=sys.stderr); sys.exit(1)
@@ -231,7 +231,7 @@ class Starting(Base):
     def test_the_traced_command_is_sbx_with_the_typed_words(self):
         G = self.G; G["trace_cmd"] = lambda: "/x/sbx-trace"; G["sbx_cmd"] = lambda: "/usr/bin/sbx"
         self.assertEqual(G["trace_command"](["--net=none", "python3", "a b.py"]),
-                         (["/usr/bin/sbx", "--net=none", "python3", "a b.py"], ["/x/sbx-trace", "--", "/usr/bin/sbx", "--net=none", "python3", "a b.py"]))
+                         (["/usr/bin/sbx", "--net=none", "python3", "a b.py"], ["/x/sbx-trace", "--yes", "--", "/usr/bin/sbx", "--net=none", "python3", "a b.py"]))
 
     def test_sbx_trace_is_found_next_to_the_window_before_the_path(self):
         G = self.G
@@ -417,7 +417,7 @@ class Window(unittest.TestCase):
         self.G = load_gui(self.tmp)
 
     def win(self):
-        w = mock.MagicMock(); w.rows = {}; w.closing = False; w.run = None; w.render_max = self.G["RENDER_MAX"]
+        w = mock.MagicMock(); w.rows = {}; w.closing = False; w.run = None; w.checking = False; w.render_max = self.G["RENDER_MAX"]
         return w
 
     def test_the_page_builds(self):                                                        # no GTK, but a typo or a missing name would show here
@@ -484,12 +484,37 @@ class Window(unittest.TestCase):
         rep = {"command": ["/usr/bin/sbx", "firefox", "-p"]}; G["load_report"] = lambda name=None: (rep, "")
         G["threading"] = types.SimpleNamespace(Thread=lambda target, daemon=None: types.SimpleNamespace(start=target))
         G["GLib"].idle_add.side_effect = lambda f: f()
-        w.entry.get_text.return_value = "firefox -p"
+        w.entry.get_text.return_value = "firefox -p"; G["running_now"] = lambda words: None
+        w.checked = lambda words, busy: G["Win"].checked(w, words, busy); w.begin_trace = lambda words: G["Win"].begin_trace(w, words)
         G["Win"].start_trace(w)
-        G["Run"].assert_called_once_with(["/x/sbx-trace", "--", "/usr/bin/sbx", "firefox", "-p"]); w.set_busy.assert_called_once()
+        G["Run"].assert_called_once_with(["/x/sbx-trace", "--yes", "--", "/usr/bin/sbx", "firefox", "-p"]); w.set_busy.assert_called_once()
         cmd, started = w.finished.call_args[0][1], w.finished.call_args[0][2]
         self.assertEqual(cmd, ["/usr/bin/sbx", "firefox", "-p"]); self.assertLessEqual(started, time.time())
         self.assertEqual(w.finished.call_args[0][3:], (3, "out", rep, ""))
+
+    def test_sbx_list_tells_which_program_runs_already(self):
+        G = self.G
+        self.assertEqual(G["parse_running"]("chrome running\nfirefox idle\nNo programs yet.\nzed running 12:03\n"), ["chrome", "zed"])
+        G["sbx_cmd"] = lambda: "/usr/bin/sbx"
+        out = lambda text: types.SimpleNamespace(stdout=text)
+        with mock.patch.object(subprocess, "run", return_value=out("chrome running\nfirefox idle\n")) as run:
+            self.assertEqual(G["running_now"](["--net=none", "chrome"]), "chrome"); self.assertIsNone(G["running_now"](["firefox"]))
+            self.assertEqual(run.call_args[0][0], ["/usr/bin/sbx", "list"])
+        with mock.patch.object(subprocess, "run", side_effect=OSError): self.assertIsNone(G["running_now"](["chrome"]))          # no answer: no question
+        self.assertIsNone(G["running_now"](["--net=none"]))
+
+    def test_a_program_that_runs_already_is_asked_about_and_traced_only_when_the_person_says_so(self):
+        G, w = self.G, self.win(); Adw = G["Adw"]
+        G["Win"].checked(w, ["firefox"], None)
+        w.begin_trace.assert_called_once_with(["firefox"])                              # not running: no question
+        w.begin_trace.reset_mock(); Adw.AlertDialog.reset_mock()
+        G["Win"].checked(w, ["chrome"], "chrome")
+        w.begin_trace.assert_not_called()
+        self.assertIn("chrome is already running", Adw.AlertDialog.call_args.kwargs["heading"]); self.assertIn("sbx stop chrome", Adw.AlertDialog.call_args.kwargs["body"])
+        dlg = Adw.AlertDialog.return_value; ask = dlg.choose.call_args[0][2]
+        dlg.choose_finish.return_value = "cancel"; ask(dlg, object()); w.begin_trace.assert_not_called()
+        dlg.choose_finish.return_value = "go"; ask(dlg, object()); w.begin_trace.assert_called_once_with(["chrome"])
+        self.assertFalse(w.checking)
 
     def test_finished_shows_the_report_or_says_what_went_wrong(self):
         G, w = self.G, self.win(); run = object(); w.run = run

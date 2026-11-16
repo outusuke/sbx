@@ -36,7 +36,7 @@ FIELD = {**WRITES, **READS}                                                # eve
 KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x"}       # a write is w (n for the new name of a rename or link), every other call is a probe: p
 FLAGS = {"open": "args->flags", "openat": "args->flags"}                  # openat2 keeps its flags in a struct (RICH_FLAGS); without them it is counted as a read
 RICH_FLAGS = {"openat2": "args->how->flags"}                              # checked on kernel 7.3 with bpftrace 0.26; the basic set does not use it, so it can fall back without
-USAGE = ("usage: sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
+USAGE = ("usage: sbx-trace [--json] [--host] [--yes] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
          "   |   sbx-trace --suggest [NAME] [--json] [--limit N]   |   sbx-trace --diff [NAME] [--json] [--limit N]   |   sbx-trace --html [-o FILE] [NAME]")
 VERSION_OF_REPORT = 1           # saved in every report, so a later change to what a report holds can be told from this one
 SENSITIVE = (".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".local/share/keyrings", ".config/gcloud", ".netrc", ".git-credentials")   # never suggested
@@ -641,6 +641,33 @@ def fail_text(why):
     return "the trace did not start" + (f": {why}" if why else "")
 
 
+def running_now(cmd):
+    """The name of the program CMD (`sbx [options] PROGRAM`) starts, when `sbx list` says it is running already; else None. Only sbx can say."""
+    if os.path.basename(cmd[0]) != "sbx": return None
+    name = name_of(cmd)
+    try: r = subprocess.run([cmd[0], "list"], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError): return None
+    for line in r.stdout.splitlines():
+        p = line.split()
+        if len(p) >= 2 and p[0] == name and p[1] == "running": return name
+    return None
+
+
+def go_on_if_running(cmd, yes):
+    """False when the person, asked on the terminal, does not want to trace a program that is running already. A second copy shares the
+    private home of the first: a browser can lose its logins, and files in the profile can be locked or damaged."""
+    if yes: return True
+    name = running_now(cmd)
+    if not name: return True
+    print(f"sbx-trace: {safe(name)} is already running. A second copy shares its private home, so it can lock or damage its files (a browser can lose its logins). Stop it first: sbx stop {safe(name)}", file=sys.stderr)
+    if not sys.stdin.isatty():
+        print("sbx-trace: there is no terminal to ask on, so it goes on (--yes skips this check)", file=sys.stderr)
+        return True
+    sys.stderr.write("Trace it anyway? [y/N] "); sys.stderr.flush()
+    try: return input().strip().lower() in ("y", "yes")
+    except EOFError: return False
+
+
 def start(cmd, host, helper, names, rich=True, live=None):
     """Run CMD with the helper watching the system calls NAMES. Returns (exit code, Trace). Dies, without running CMD, when the helper can't
     start; raises Rejected when bpftrace ran and refused the program."""
@@ -712,7 +739,8 @@ def main(argv):
     flags, limit, last, ask, cmp, page, out, i = set(), 40, False, False, False, False, None, 0
     while i < len(argv) and argv[i].startswith("-") and argv[i] != "--":
         a = argv[i]
-        if a in ("--json", "--host"): flags.add(a)
+        if a in ("--json", "--host", "--yes"): flags.add(a)
+        elif a == "-y": flags.add("--yes")
         elif a == "--last": last = True
         elif a == "--suggest": last = ask = True
         elif a == "--diff": last = cmp = True
@@ -738,6 +766,7 @@ def main(argv):
     else:
         if not rest: die(USAGE)
         if os.geteuid() == 0: die("run it as your own user, not root: it asks for root itself")
+        if not go_on_if_running(rest, "--yes" in flags): die("not started")
         rc, tr = trace(rest, "--host" in flags, {"name": name_of(rest), "command": rest})
         v = view(tr, "--host" in flags); v["version"] = VERSION_OF_REPORT; v["name"] = name_of(rest); v["command"] = rest; v["exit"] = rc; v["time"] = time.time()
         try: save(v["name"], v)
