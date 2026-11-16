@@ -434,6 +434,49 @@ class Suggestions(Base):
         w.suggestions = s; G["Win"].copy_suggestions(w); w.copy_text.assert_called_with("read_only=~/a\n", "Copied all the settings")
 
 
+class Comparison(Base):
+    def test_a_foreign_comparison_cannot_break_it(self):
+        G = self.G
+        for bad in ([], "x", None, {}, {"fixed": "x", "new_blocked": []}, {"fixed": [], "new_blocked": {}}):
+            with self.assertRaises(ValueError, msg=repr(bad)): G["clean_diff"](bad)
+        c = G["clean_diff"]({"fixed": [{"path": "/a", "now": "works"}, {"path": "/b", "now": "<b>x</b>"}, {"path": 3}, "x"],
+                             "new_blocked": [{"path": "/c", "kind": "hidden", "n": 2}, {"path": "/d", "kind": "weird", "n": -1}, {"path": None}],
+                             "still_blocked": True, "before": True})
+        self.assertEqual(c["fixed"], [{"path": "/a", "now": "works"}, {"path": "/b", "now": "not touched"}])
+        self.assertEqual(c["new_blocked"], [{"path": "/c", "kind": "hidden", "n": 2}, {"path": "/d", "kind": "denied", "n": 1}])
+        self.assertEqual((c["still"], c["before"]), (0, None))
+        self.assertEqual(G["compare_text"](c), "2 no longer blocked, 2 newly blocked, 0 still blocked")
+        self.assertIn("compared with the run of", G["compare_text"]({**c, "before": 100.0}))
+
+    def test_it_reads_what_the_real_sbx_trace_compares(self):
+        G, H = self.G, self.home
+        G["trace_cmd"] = lambda: f"{HERE}/sbx-trace"
+        v1 = self.real_report(); v2 = json.loads(json.dumps(v1))
+        v1["time"], v2["time"] = 1.0, 2.0
+        v2["blocked"] = [b for b in v2["blocked"] if b["path"] != "/etc/shadow"]
+        v2["system"]["rows"] = [r for r in v2["system"]["rows"] if r["path"] != "/etc/shadow"]
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": f"{self.tmp}/state", "HOME": H}):
+            c, why = G["load_diff"]("foo"); self.assertIsNone(c); self.assertIn("no report yet", why)
+            self.T.save("foo", v1)
+            c, why = G["load_diff"]("foo"); self.assertIsNone(c); self.assertIn("no earlier report", why)             # one run is nothing to compare
+            self.T.save("foo", v2)
+            c, why = G["load_diff"]("foo")
+        self.assertEqual(why, ""); self.assertEqual([(x["path"], x["now"]) for x in c["fixed"]], [("/etc/shadow", "not touched")]); self.assertEqual(c["before"], 1.0)
+        self.assertEqual(G["load_diff"]("../x"), (None, "")); self.assertEqual(G["load_diff"](None), (None, ""))
+
+    def test_the_window_draws_it_and_ignores_one_for_an_old_report(self):
+        G = self.G
+        w = mock.MagicMock(); w.rows = {}; w.closing = False
+        c = {"fixed": [{"path": "/a", "now": "works"}], "new_blocked": [], "still": 3, "before": None}
+        w.compare = c; w.compare_group = mock.MagicMock()
+        G["Win"].fill_compare(w); w.compare_group.set_visible.assert_called_with(True); self.assertEqual(w.compare_group.add.call_count, 1)    # one folder row: no newly blocked
+        w.compare_group.set_description.assert_called_with("1 no longer blocked, 0 newly blocked, 3 still blocked")
+        w.compare = None; w.compare_group.reset_mock(); G["Win"].fill_compare(w); w.compare_group.set_visible.assert_called_with(False)
+        rep, other = object(), object()
+        w.report = rep; G["Win"].got_diff(w, other, c); self.assertIsNone(w.compare); w.fill_report.assert_not_called()
+        G["Win"].got_diff(w, rep, c); self.assertIs(w.compare, c); w.fill_report.assert_called_once()
+
+
 class Folders(Base):
     """What keeps a long report readable: one line per folder, and only the paths that had a problem."""
     def test_a_file_is_listed_under_its_first_two_folders(self):

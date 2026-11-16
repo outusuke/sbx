@@ -26,6 +26,7 @@ Man page and completions:
 
 ```
 sudo install -Dm644 sbx.1 /usr/local/share/man/man1/sbx.1
+sudo install -Dm644 tools/sbx-trace.1 /usr/local/share/man/man1/sbx-trace.1
 sudo install -Dm644 completions/sbx.bash /usr/local/share/bash-completion/completions/sbx
 sudo install -Dm644 completions/_sbx /usr/local/share/zsh/site-functions/_sbx
 sudo install -Dm644 completions/sbx.fish /usr/local/share/fish/vendor_completions.d/sbx.fish
