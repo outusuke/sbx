@@ -99,7 +99,8 @@ def cmd_clean(a):
     if a[0] == "--unused": return clean_unused(yes)
     name = a[0]
     home, mid = f"{HOMES}/{name}", f"{CONF}/ids/{name}"
-    if clean(name) != name or not (os.path.isdir(home) or os.path.exists(mid)): die(f"nothing to clean for '{name}'")
+    if clean(name) != name: die(bad_name(name))
+    if not (os.path.isdir(home) or os.path.exists(mid)): die(f"nothing to clean for '{name}'")
     if running(name): die(f"'{name}' is running. Stop it first: sbx stop {name}")
     if home_problem(name): die(home_problem(name))
     if not yes:
@@ -141,7 +142,7 @@ def cmd_reset(a):
         except OSError: pass
     elif a[0] == "--default": files = [f"{CONF}/default.conf"]
     else:
-        if clean(a[0]) != a[0]: die(f"'{a[0]}' is not a program name")
+        if clean(a[0]) != a[0]: die(bad_name(a[0]))
         files = [f"{apps}/{a[0]}.conf"]
     files = [p for p in files if os.path.lexists(p)]
     if not files: print("Nothing to reset: already using the built-in defaults."); return
@@ -217,7 +218,7 @@ def cmd_export(a):
         else: die(f"unknown option {x}")
         i += 1
     target = target or "--all"
-    if not target.startswith("-") and clean(target) != target: die(f"'{target}' is not a program name")
+    if not target.startswith("-") and clean(target) != target: die(bad_name(target))
     text = export_text(target)
     if out is None: sys.stdout.write(text); return
     write_private(out, text, force)
@@ -392,7 +393,7 @@ def cmd_rebind(a):
     if len(a) != 1 or a[0].startswith("-"): die("usage: sbx rebind NAME   |   sbx rebind --dismiss NAME")
     if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
     name = a[0]
-    if clean(name) != name: die(f"'{name}' is not a program name")
+    if clean(name) != name: die(bad_name(name))
     p = read_pending(name)
     if dismiss:
         if not os.path.lexists(pending_path(name)): die(f"nothing is waiting for a decision for '{name}'")

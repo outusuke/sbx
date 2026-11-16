@@ -16,6 +16,11 @@ def clean(n):
     return (re.sub(r"[^A-Za-z0-9._-]", "_", n).lstrip("._-")[:64]) or "app"
 
 
+def bad_name(n):
+    """The error for a command that takes a program name and was given something clean() would change: it also says what that runs as."""
+    return f"'{n}' is not a program name; it runs as '{clean(n)}'"
+
+
 def tilde(p):
     return "~/" + p[len(HOME) + 1:] if p.startswith(HOME + "/") else p
 

@@ -1505,6 +1505,16 @@ class Units(unittest.TestCase):
         for rel in ("default.conf", "apps/a.conf", "apps/empty.conf"): os.unlink(f"{conf}/{rel}")
         code, _, err = self._call("cmd_export"); self.assertNotEqual(code, 0); self.assertIn("no settings to export", err)
 
+    def test_a_name_sbx_would_change_is_refused_with_the_name_it_runs_as(self):
+        self._settings()
+        for fn, args in (("cmd_clean", ("my app",)), ("cmd_reset", ("my app",)), ("cmd_export", ("my app",)), ("cmd_rebind", ("my app",))):
+            code, _, err = self._call(fn, *args)
+            self.assertNotEqual(code, 0, fn)
+            self.assertIn("'my app' is not a program name; it runs as 'my_app'", err, fn)
+        self.assertEqual(self.S["bad_name"]("--x"), "'--x' is not a program name; it runs as 'x'")
+        code, _, err = self._call("cmd_clean", "nobody")                            # a good name that has nothing to clean keeps its own message
+        self.assertIn("nothing to clean for 'nobody'", err)
+
     def test_import_round_trips_and_leaves_other_files_alone(self):
         S, conf = self._settings()
         f = f"{self.tmp}/all.txt"; self._call("cmd_export", "-o", f)
