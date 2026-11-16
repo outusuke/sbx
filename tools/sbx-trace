@@ -43,7 +43,21 @@ SENSITIVE = (".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".local/share
              ".azure", ".docker", ".config/gh", ".config/rclone", ".config/op", ".config/Bitwarden", ".mozilla", ".thunderbird",
              ".config/google-chrome", ".config/chromium", ".config/BraveSoftware", ".var/app/org.mozilla.firefox", "snap/firefox/common/.mozilla",
              ".npmrc", ".pypirc", ".cargo/credentials", ".cargo/credentials.toml", ".terraform.d/credentials.tfrc.json",
-             ".bash_history", ".zsh_history", ".config/Signal", ".config/discord", ".bitcoin", ".electrum", ".ethereum")   # never suggested
+             ".bash_history", ".zsh_history", ".config/Signal", ".config/discord", ".bitcoin", ".electrum", ".ethereum",
+             # database and package-registry logins, and their command histories
+             ".pgpass", ".pg_service.conf", ".my.cnf", ".mylogin.cnf", ".psql_history", ".mysql_history", ".dockercfg", ".config/containers/auth.json",
+             ".yarnrc", ".yarnrc.yml", ".gem/credentials", ".config/composer/auth.json", ".composer/auth.json", ".m2/settings.xml", ".m2/settings-security.xml",
+             ".gradle/gradle.properties", ".config/pip/pip.conf", ".pip/pip.conf", ".config/NuGet/NuGet.Config", ".nuget/NuGet/NuGet.Config", ".config/helm/repositories.yaml",
+             # mail
+             ".mail", ".mutt", ".muttrc", ".config/mutt", ".config/neomutt", ".config/aerc", ".msmtprc", ".mbsyncrc", ".offlineimaprc", ".fetchmailrc", ".authinfo", ".authinfo.gpg",
+             ".config/thunderbird", "snap/thunderbird/common/.thunderbird", ".config/evolution", ".local/share/evolution", ".config/geary", ".local/share/geary",
+             ".local/share/kmail2", ".local/share/akonadi", ".config/kmail2rc",
+             ".var/app/org.mozilla.Thunderbird", ".var/app/org.gnome.Evolution", ".var/app/org.gnome.Geary",
+             # chat
+             ".config/Slack", ".config/Element", ".config/Session", ".config/Mattermost", ".config/Rocket.Chat", ".config/Zulip", ".config/teams-for-linux",
+             ".config/discordcanary", ".config/discordptb", ".config/vesktop", ".local/share/TelegramDesktop", ".local/share/signal-cli", ".purple", ".weechat",
+             ".config/weechat", ".irssi", ".var/app/org.signal.Signal", ".var/app/com.discordapp.Discord", ".var/app/org.telegram.desktop", ".var/app/com.slack.Slack",
+             ".var/app/im.riot.Element")   # never suggested
 # Places in your home and in /etc that start a program later: at login or boot, in a shell or an editor. Reading them is harmless, a write is not, so they
 # only count when the program wrote there or was refused a write, and no whitelist= (read-write) line is suggested for them.
 PERSIST = (".config/autostart", ".config/systemd/user", ".local/share/systemd/user", ".config/environment.d", ".pam_environment",
@@ -57,7 +71,7 @@ REACHED = re.compile(r"^/(?:var/)?run/(?:docker|podman/podman)\.sock\Z|^/run/con
                      r"|^/tmp/ssh-[^/]+/agent\.\d+\Z|^/dev/(?:uinput|mem|kmem|kmsg|port)\Z|^/dev/input/[^/]+"
                      r"|^/proc/(?!self/|thread-self/)\d+/(?:environ|mem)\Z")
 # Files named like ones that hold secrets, wherever they sit in a place you can share (your home, a drive, /tmp): .env, private keys, token files.
-SECRET_NAMES = re.compile(r"/\.env(?:\.(?!(?:example|sample|template|dist|defaults)\Z)[^/]+)?\Z|/\.(?:npmrc|pypirc|htpasswd|netrc|git-credentials)\Z"
+SECRET_NAMES = re.compile(r"/\.env(?:\.(?!(?:example|sample|template|dist|defaults)\Z)[^/]+)?\Z|/\.(?:npmrc|pypirc|htpasswd|netrc|git-credentials|pgpass|my\.cnf|mylogin\.cnf|dockercfg|msmtprc|fetchmailrc|authinfo)\Z"
                           r"|/id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?:\.pem)?\Z|/[^/]+\.(?:key|p12|pfx|kdbx?|jks|keystore)\Z|/(?:priv(?:ate)?key|[^/]*[-_.]key)\.pem\Z"
                           r"|/(?:credentials|secrets?)\.(?:json|ya?ml|toml)\Z|/service[-_]?account[^/]*\.json\Z|/[^/]+\.tfvars\Z|/terraform\.tfstate(?:\.backup)?\Z", re.I)
 SHAREABLE = ("/mnt/", "/media/", "/run/media/", "/srv/", "/tmp/")       # outside your home, where sbx can share a folder
@@ -67,7 +81,14 @@ PERSIST_ANYWHERE = re.compile(r"/\.git/hooks/(?![^/]*\.sample\Z)[^/]+|/\.git/con
                               r"|/(?:site|dist)-packages/[^/]+\.pth\Z|/(?:site|user)customize\.py\Z")
 PERSIST_SYSTEM = ("/etc/crontab", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly", "/etc/cron.weekly", "/etc/cron.monthly", "/var/spool/cron",
                   "/etc/systemd/system", "/etc/profile.d", "/etc/rc.local", "/etc/init.d", "/etc/xdg/autostart", "/etc/ld.so.preload",
-                  "/etc/profile", "/etc/bash.bashrc", "/etc/environment", "/etc/zsh")
+                  "/etc/profile", "/etc/bash.bashrc", "/etc/environment", "/etc/zsh",
+                  # run as root, or for everyone, at login, boot, a network change, a package install, or when a library or kernel module loads
+                  "/etc/pam.d", "/etc/security", "/etc/ld.so.conf", "/etc/ld.so.conf.d", "/etc/udev/rules.d", "/etc/modprobe.d", "/etc/modules-load.d", "/etc/modules",
+                  "/etc/apt/apt.conf", "/etc/apt/apt.conf.d", "/etc/NetworkManager/dispatcher.d", "/etc/network/if-up.d", "/etc/network/if-pre-up.d",
+                  "/etc/network/if-down.d", "/etc/network/if-post-down.d", "/etc/logrotate.conf", "/etc/logrotate.d", "/etc/anacrontab", "/etc/kernel/postinst.d",
+                  "/etc/initramfs-tools", "/etc/grub.d", "/etc/default/grub", "/etc/skel", "/etc/systemd/user", "/etc/xdg/systemd", "/etc/environment.d",
+                  "/etc/ssh/sshd_config", "/etc/ssh/sshd_config.d", "/etc/ssh/sshrc", "/etc/ssh/ssh_config", "/etc/ssh/ssh_config.d", "/etc/polkit-1", "/etc/doas.conf",
+                  "/etc/fish", "/etc/bash_completion.d")
 USER_DIRS = ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "Public", "Templates")      # too broad to suggest, like sbx's own folder rule
 WHY = {"denied": "access was refused", "read-only": "it tried to write there", "hidden": "the sandbox hides it"}
 CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -335,7 +356,7 @@ def show(v, limit):
 
 
 # ---------------------------------------------------------------- a page to open, keep or send
-SENSITIVE_SYSTEM = ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/ssh/ssh_host_")      # outside your home (a name that starts with these)
+SENSITIVE_SYSTEM = ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/ssh/ssh_host_", "/etc/apt/auth.conf", "/etc/mysql/debian.cnf")      # outside your home (a name that starts with these)
 HTML_PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-@@SHA@@'">
 <title>@@TITLE@@</title><style>@@CSS@@</style></head><body>
@@ -505,7 +526,7 @@ function drawChips() {
   $("meta").textContent = [D.time, D.exit === null ? "" : "exit " + D.exit, i.calls + " file calls from " + i.processes + " threads", D.host ? "all processes (--host)" : ""].filter(Boolean).join(" \u00b7 ");
   if (i.lost) { $("warn").hidden = false; $("warn").textContent = "bpftrace lost " + i.lost + " events, so this report is incomplete."; }
   $("legend").append(el("span", "mut", "Size is the number of paths. Colour is the most serious thing inside: "));
-  LABEL.forEach((l, k) => { const b = el("span", "badge c" + k, l); if (k === 5) b.title = "A place that holds keys, passwords or tokens, that gives control of the machine (a Docker socket, /dev/uinput), or that makes something run later, like a startup file or a git hook (when written to), and the program reached it (a blocked or hidden one shows as blocked, with + sensitive in the list)"; $("legend").append(b); });
+  LABEL.forEach((l, k) => { const b = el("span", "badge c" + k, l); if (k === 5) b.title = "A place that holds keys, passwords, tokens or mail and chat data, that gives control of the machine (a Docker socket, /dev/uinput), or that makes something run later, like a startup file or a git hook (when written to), and the program reached it (a blocked or hidden one shows as blocked, with + sensitive in the list)"; $("legend").append(b); });
   const foot = [];
   if (D.more) foot.push(D.more + " more files are not in the saved report.");
   if (D.noise) foot.push("/proc, /sys, and /dev and /run without errors: " + D.noise + " paths not shown.");

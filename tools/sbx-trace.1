@@ -56,7 +56,7 @@ Rows to print per group (default 40).
 Show the last saved report again: that of NAME, or the newest.
 .TP
 .B \-\-suggest \fR[\fINAME\fR]
-Print \fBread_only=\fR and \fBwhitelist=\fR lines for what the saved report shows was refused or hidden. Each is the path itself, never its folder, and read-only unless the program tried to write. Your home, Downloads and the like, sbx's own folders, anything that holds secrets (\fI~/.ssh\fR, \fI~/.gnupg\fR, keyrings, browser profiles, \fI.env\fR and key files...), a read-write line for a place that makes something run later (\fI~/.bashrc\fR, \fI~/.config/autostart\fR, a \fI.git/hooks\fR file...) and paths already shared are left out. Read each line before you use it.
+Print \fBread_only=\fR and \fBwhitelist=\fR lines for what the saved report shows was refused or hidden. Each is the path itself, never its folder, and read-only unless the program tried to write. Your home, Downloads and the like, sbx's own folders, anything that holds secrets (\fI~/.ssh\fR, \fI~/.gnupg\fR, keyrings, browser profiles, mail and chat data, database and registry logins, \fI.env\fR and key files...), a read-write line for a place that makes something run later (\fI~/.bashrc\fR, \fI~/.config/autostart\fR, a \fI.git/hooks\fR file...) and paths already shared are left out. Read each line before you use it.
 .TP
 .B \-\-diff \fR[\fINAME\fR]
 Compare the last report with the one before it: which blocked paths no longer are (and whether they now work), which are newly blocked, and how many paths only one run touched. Use it to check that a setting helped.

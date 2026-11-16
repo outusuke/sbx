@@ -236,6 +236,14 @@ class Suggest(Base):
         self.assertEqual([(l["setting"], l["value"]) for l in s["lines"]], [("read_only", "~/Projects/foo/config.toml")])
         self.assertEqual({k["path"]: k["why"].split(" ")[0] for k in s["skipped"]}, {f"{H}/Projects/foo/.env": "looks"})
 
+    def test_a_registry_or_database_login_is_never_suggested_but_its_cache_may_be(self):
+        H = self.home
+        b = lambda p: {"path": p, "kind": "hidden", "n": 1}
+        s = T.suggest(self.report([b(f"{H}/.m2/settings.xml"), b(f"{H}/.m2/repository"), b(f"{H}/.pgpass"), b(f"{H}/.config/Slack/Cookies"), b(f"{H}/.config/evolution"),
+                                   b(f"{H}/.cache/pip"), b("/mnt/data/.my.cnf")]))
+        self.assertEqual([l["value"] for l in s["lines"]], ["~/.m2/repository", "~/.cache/pip"])
+        self.assertEqual({k["path"] for k in s["skipped"]}, {f"{H}/.m2/settings.xml", f"{H}/.pgpass", f"{H}/.config/Slack/Cookies", f"{H}/.config/evolution", "/mnt/data/.my.cnf"})
+
     def test_a_report_of_the_wrong_shape_gives_nothing_and_does_not_crash(self):
         for v in ({}, {"blocked": "x"}, {"blocked": [5, {"path": 3}, {"kind": "denied"}]}, []):
             self.assertEqual(T.suggest(v), {"lines": [], "skipped": [], "outside": 0})
@@ -359,6 +367,32 @@ class Page(Base):
         for p in (f"{H}/Projects/foo/.env.example", f"{H}/Projects/foo/.envrc", f"{H}/Projects/foo/.venv/bin/python", f"{H}/Projects/foo/keys.txt", f"{H}/Projects/foo/cert.pem",
                   f"{H}/Projects/foo/secrets.txt", "/etc/ssl/certs/ca-cert.pem", "/usr/share/foo/x.key", "/run/user/1000/wayland-0", "/dev/null", "/dev/input",
                   "/proc/self/environ", "/proc/thread-self/mem", "/proc/cpuinfo"): self.assertFalse(T.holds_secrets(p), p)
+
+    def test_database_registry_mail_and_chat_places_hold_secrets(self):
+        H = self.home
+        for p in (f"{H}/.pgpass", f"{H}/.my.cnf", f"{H}/.mylogin.cnf", f"{H}/.psql_history", f"{H}/.gem/credentials", f"{H}/.m2/settings.xml", f"{H}/.gradle/gradle.properties",
+                  f"{H}/.config/pip/pip.conf", f"{H}/.config/composer/auth.json", f"{H}/.yarnrc.yml", f"{H}/.msmtprc", f"{H}/.mutt/muttrc", f"{H}/.config/evolution/sources/a",
+                  f"{H}/.local/share/geary/x.db", f"{H}/.config/thunderbird/p/key4.db", f"{H}/.config/Slack/Cookies", f"{H}/.local/share/TelegramDesktop/tdata/x",
+                  f"{H}/.var/app/org.signal.Signal/config/x", f"{H}/.weechat/irc.conf", f"{H}/.purple/accounts.xml"):
+            self.assertTrue(T.holds_secrets(p), p)
+        for p in (f"{H}/.m2/repository/a.jar", f"{H}/.gem/specs/x", f"{H}/.config/pip/pip.conf.bak", f"{H}/.config/pip/cache", f"{H}/.gradle/caches/x", f"{H}/.config/Slackx",
+                  f"{H}/.mutt2", f"{H}/.mail2", f"{H}/.pgpassx", f"{H}/.local/share/gearyx", f"{H}/.weechatx"): self.assertFalse(T.holds_secrets(p), p)
+        for p in ("/mnt/data/.pgpass", "/srv/app/.my.cnf", "/tmp/x/.msmtprc", f"{H}/Projects/foo/.dockercfg", "/run/media/me/disk/.authinfo"): self.assertTrue(T.holds_secrets(p), p)
+        for p in ("/mnt/data/pgpass", "/mnt/data/my.cnf", "/etc/mysql/my.cnf", "/mnt/data/.pgpass.example"): self.assertFalse(T.holds_secrets(p), p)
+        for p in ("/etc/apt/auth.conf", "/etc/apt/auth.conf.d/private.conf", "/etc/mysql/debian.cnf"): self.assertTrue(T.holds_secrets(p), p)
+        for p in ("/etc/apt/sources.list", "/etc/apt/apt.conf.d/10x", "/etc/mysql/conf.d/x.cnf"): self.assertFalse(T.holds_secrets(p), p)
+
+    def test_root_hooks_in_etc_count_as_startup_places(self):
+        for p in ("/etc/pam.d/sudo", "/etc/security/limits.conf", "/etc/ld.so.conf.d/x.conf", "/etc/udev/rules.d/99-x.rules", "/etc/modprobe.d/x.conf", "/etc/apt/apt.conf.d/10x",
+                  "/etc/NetworkManager/dispatcher.d/x", "/etc/network/if-up.d/x", "/etc/logrotate.d/x", "/etc/kernel/postinst.d/x", "/etc/initramfs-tools/hooks/x",
+                  "/etc/grub.d/40_custom", "/etc/default/grub", "/etc/skel/.bashrc", "/etc/systemd/user/x.service", "/etc/ssh/sshd_config", "/etc/ssh/sshd_config.d/x.conf",
+                  "/etc/ssh/sshrc", "/etc/ssh/ssh_config.d/x.conf", "/etc/polkit-1/rules.d/x.rules", "/etc/fish/config.fish", "/etc/doas.conf"):
+            self.assertTrue(T.persists(p), p)
+        for p in ("/etc/pam.dx", "/etc/securityx", "/etc/ssh/sshd_configx", "/etc/apt/sources.list", "/etc/default/locale", "/etc/hosts", "/etc/passwd", "/etc/modulesx"):
+            self.assertFalse(T.persists(p), p)
+        v = {"name": "x", "blocked": [{"path": "/etc/pam.d/sudo", "kind": "read-only", "n": 1}], "home": {"total": 0, "rows": []},
+             "system": {"total": 2, "rows": [{"path": "/etc/ld.so.conf.d/x.conf", "r": 3, "err": {}}, {"path": "/etc/udev/rules.d/x.rules", "w": 1, "err": {}}]}}
+        self.assertEqual({r["path"]: r["s"] for r in T.html_data(v)["rows"]}, {"/etc/ld.so.conf.d/x.conf": 0, "/etc/udev/rules.d/x.rules": 1, "/etc/pam.d/sudo": 1})
 
     def test_the_page_gets_its_data_from_the_report_as_it_is_read(self):
         d = T.html_data(self.report()); H = self.home

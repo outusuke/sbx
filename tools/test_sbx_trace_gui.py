@@ -485,6 +485,19 @@ class Window(unittest.TestCase):
                   f"{H}/Projects/foo/secrets.txt", "/etc/ssl/certs/ca-cert.pem", "/usr/share/foo/x.key", "/run/user/1000/wayland-0", "/dev/null", "/dev/input",
                   "/proc/self/environ", "/proc/thread-self/mem", "/proc/cpuinfo"): self.assertFalse(G["sensitive"](p), p)
 
+    def test_database_registry_mail_chat_places_and_root_hooks_are_marked(self):
+        G, H = self.G, self.tmp
+        for p in (f"{H}/.pgpass", f"{H}/.my.cnf", f"{H}/.mylogin.cnf", f"{H}/.psql_history", f"{H}/.gem/credentials", f"{H}/.m2/settings.xml", f"{H}/.gradle/gradle.properties",
+                  f"{H}/.config/pip/pip.conf", f"{H}/.config/composer/auth.json", f"{H}/.yarnrc.yml", f"{H}/.msmtprc", f"{H}/.mutt/muttrc", f"{H}/.config/evolution/sources/a",
+                  f"{H}/.local/share/geary/x.db", f"{H}/.config/thunderbird/p/key4.db", f"{H}/.config/Slack/Cookies", f"{H}/.local/share/TelegramDesktop/tdata/x",
+                  f"{H}/.var/app/org.signal.Signal/config/x", f"{H}/.weechat/irc.conf", f"{H}/.purple/accounts.xml", "/mnt/data/.pgpass", "/etc/apt/auth.conf.d/x.conf", "/etc/mysql/debian.cnf"):
+            self.assertTrue(G["sensitive"](p), p)
+        for p in (f"{H}/.m2/repository/a.jar", f"{H}/.gem/specs/x", f"{H}/.config/pip/pip.conf.bak", f"{H}/.config/pip/cache", f"{H}/.gradle/caches/x", f"{H}/.config/Slackx",
+                  f"{H}/.mutt2", f"{H}/.mail2", f"{H}/.pgpassx", f"{H}/.local/share/gearyx", f"{H}/.weechatx", "/mnt/data/pgpass", "/etc/apt/sources.list", "/etc/mysql/my.cnf"): self.assertFalse(G["sensitive"](p, True), p)
+        for p in ("/etc/pam.d/sudo", "/etc/ld.so.conf.d/x.conf", "/etc/udev/rules.d/x.rules", "/etc/apt/apt.conf.d/10x", "/etc/ssh/sshd_config", "/etc/ssh/sshrc", "/etc/skel/.bashrc"):
+            self.assertFalse(G["sensitive"](p), p); self.assertTrue(G["sensitive"](p, True), p)
+        for p in ("/etc/pam.dx", "/etc/ssh/sshd_configx", "/etc/default/locale", "/etc/hosts", "/etc/passwd"): self.assertFalse(G["sensitive"](p, True), p)
+
     def test_a_group_draws_a_few_rows_and_says_how_many_more_there_are(self):
         G, w = self.G, self.win(); Adw = G["Adw"]; group = mock.MagicMock(); made = []
         def row(it): made.append(it); return mock.MagicMock()
