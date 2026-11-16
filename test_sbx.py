@@ -661,6 +661,20 @@ class Units(unittest.TestCase):
         self.assertEqual((lines[0], lines[2]), (new, f"from {old}"))                 # the record moved with it, and remembers where from
         self.assertEqual(self.S["read_origin"]("game")[2], old)
 
+    def test_two_sbx_recording_one_program_at_once_do_not_trip_over_each_other(self):
+        self._origins(); S = self.S
+        errors = []
+        def hammer(i):
+            try:
+                for n in range(300): S["write_origin"]("race", f"/x/{i}/{n}"); S["write_pending"]("race", "/a", "/b", "c", "r")
+            except Exception as e: errors.append(e)
+        ts = [threading.Thread(target=hammer, args=(i,)) for i in range(4)]
+        for t in ts: t.start()
+        for t in ts: t.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(os.listdir(f"{S['CONF']}/origins")), ["race"])      # no helper file left behind
+        self.assertEqual(S["origin_records"]().keys(), {"race"})
+
     def test_a_copy_is_the_same_program_even_while_the_original_exists(self):
         self._origins()
         old = self.write("apps/firefox", "same bytes")
@@ -1355,6 +1369,15 @@ class Units(unittest.TestCase):
         with contextlib.redirect_stdout(out): S["cmd_clean"](["--yes", "--unused"])
         self.assertIn("Nothing unused", out.getvalue())
 
+    def test_clean_unused_skips_a_program_that_started_after_the_list_was_made(self):
+        S = self.S
+        self._programs()
+        S["unused_programs"] = lambda: ["seen"]; S["running"] = lambda name=None: ["7"] if name == "seen" else []
+        out, said = io.StringIO(), []
+        S["warn"] = said.append
+        with contextlib.redirect_stdout(out): S["cmd_clean"](["--yes", "--unused"])
+        self.assertTrue(os.path.isdir(f"{S['HOMES']}/seen")); self.assertIn("started meanwhile", " ".join(said)); self.assertIn("removed 0", out.getvalue())
+
     def test_reset_deletes_settings_files_and_nothing_else(self):
         S = self.S; conf = S["CONF"]; apps = f"{conf}/apps"
         os.makedirs(apps); os.makedirs(f"{S['HOMES']}/a")
@@ -1467,6 +1490,20 @@ class Units(unittest.TestCase):
         self.assertEqual(open(f"{conf}/default.conf").read(), "net=1\n"); self.assertFalse(os.path.exists(f"{conf}/apps/a.conf"))
         self.assertIsNone(self._call("cmd_import", f, "--force")[0])
         self.assertEqual(open(f"{conf}/default.conf").read(), "net=0\nwhitelist=~/Projects\n"); self.assertTrue(os.path.exists(f"{conf}/apps/a.conf"))
+
+    def test_widening_lists_what_a_settings_file_opens_up(self):
+        w = self.S["widening"]
+        self.assertEqual(w("ssh_agent=1\nnet=0\nprivate=1\nhostname=yes\nwhitelist=~/Docs  # mine\nx11=0\n# camera=1\nmemory=2G\n"), ["ssh_agent=1", "whitelist=~/Docs"])
+        self.assertEqual(w("portal_secret=on\nsetenv=A=b\nallow_syscall=io_uring\nnet=maybe\n"), ["portal_secret=1", "setenv=A=b", "allow_syscall=io_uring"])
+        self.assertEqual(w(""), [])
+
+    def test_import_names_the_settings_that_open_a_program_up(self):
+        S, conf = self._settings()
+        f = f"{self.tmp}/risky.txt"
+        with open(f, "w") as fh: fh.write("# sbx settings export\n# [apps/zz.conf]\nssh_agent=1\nwhitelist=~/Documents\n# [apps/yy.conf]\nnet=0\n")
+        code, out, err = self._call("cmd_import", f)
+        self.assertIsNone(code, err); self.assertIn("imported 2 settings files", out)
+        self.assertIn("apps/zz.conf: ssh_agent=1, whitelist=~/Documents", out); self.assertNotIn("yy.conf:", out)
 
     def test_import_overwrites_files_without_settings_without_asking(self):
         S, conf = self._settings()

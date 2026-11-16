@@ -44,7 +44,9 @@ def wipe_home(name):
         os.chmod(os.path.dirname(p), 0o700)
         if not os.path.islink(p): os.chmod(p, 0o700)         # never chmod through a link the program planted
         fn(p)
-    shutil.rmtree(os.path.realpath(f"{HOMES}/{name}"), onerror=unlock)
+    home = os.path.realpath(f"{HOMES}/{name}")
+    if sys.version_info >= (3, 12): shutil.rmtree(home, onexc=unlock)          # onerror is deprecated there; unlock() only needs the path
+    else: shutil.rmtree(home, onerror=unlock)
     for gone in (f"{CONF}/ids/{name}", f"{CONF}/origins/{name}", pending_path(name)):
         try: os.unlink(gone)
         except OSError: pass
@@ -121,6 +123,7 @@ def clean_unused(yes):
     for n in names:
         problem = home_problem(n)
         if problem: warn(problem + "; skipped"); continue
+        if running(n): warn(f"'{n}' started meanwhile; skipped"); continue          # the list was made before the question was asked
         wipe_home(n); done += 1
     print(f"removed {done} private home{'s' if done != 1 else ''}")
 
@@ -239,6 +242,20 @@ def parse_bundle(text):
     return {k: "\n".join(v).strip("\n") + "\n" for k, v in secs.items()}
 
 
+TIGHTENING = ("net_private", "private", "wayland_strict", "gpu_render_only", "hostname", "privacy")      # switches that turn something off or narrow it when on
+
+
+def widening(text):
+    """What a settings file's TEXT gives a program beyond the defaults: switches turned on that are off by default (apart from the ones
+    that only restrict), shared paths, passed variables and allowed system calls, as ['ssh_agent=1', 'whitelist=~/Documents']."""
+    out = []
+    for line in text.splitlines():
+        k, _, v = (x.strip() for x in re.sub(r"(^|\s)#.*$", "", line).strip().partition("="))
+        if k in SCALARS and not SCALARS[k] and k not in TIGHTENING and parse_bool(v): out.append(f"{k}=1")
+        elif k in LISTS and v: out.append(f"{k}={v}")
+    return out
+
+
 def cmd_import(a):
     """sbx import FILE|- [--force]: put the settings of an export back. Nothing is written when a file would be replaced without --force."""
     force = "--force" in a
@@ -271,6 +288,11 @@ def cmd_import(a):
     except OSError as e: die(f"could not create {tilde(CONF)}/apps: {e.strerror or e}")
     for path, text in todo: write_private(path, text, True)
     print(f"imported {len(todo)} settings file{'s' if len(todo) != 1 else ''}" + (f", {same} already the same" if same else ""))
+    wide = [(p[len(CONF) + 1:], widening(t)) for p, t in todo]
+    if any(w for _, w in wide):
+        print("Settings that give programs more than the defaults do (read them before running anything; the file may come from someone else):")
+        for label, w in wide:
+            if w: print(f"  {label}: {', '.join(w)}")
 
 
 def cmd_link(a):
@@ -650,7 +672,9 @@ def doctor():
         try: ver = subprocess.run([bw, "--version"], capture_output=True, text=True, timeout=10).stdout.strip()
         except (OSError, subprocess.TimeoutExpired): ver = "?"
         row("OK", f"{bw} ({ver})")
-        r = subprocess.run([bw, "--unshare-all", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "/bin/true"], capture_output=True, text=True)
+        true = "/bin/true" if os.path.exists("/bin/true") else shutil.which("true") or "/bin/true"      # NixOS has no /bin/true
+        try: r = subprocess.run([bw, "--unshare-all", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", true], capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired: r = subprocess.CompletedProcess([], 1, "", "timed out after 30 seconds")
         if r.returncode == 0: row("OK", "bubblewrap can create a sandbox")
         else:
             def sysctl(n):

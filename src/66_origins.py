@@ -35,6 +35,19 @@ def read_origin(name):
     return path, ((int(m[1]), int(m[2]), m[3]) if m else None), moved or None
 
 
+def replace_file(path, text):
+    """Write TEXT to PATH all at once. The helper file is made for this write alone (a hidden name, so no listing takes it for a record):
+    two sbx starting the same program together must not share one, or the second rename finds nothing to rename."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=f".{os.path.basename(path)}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f: f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
+
+
 def write_origin(name, path, fp=None, moved=None):
     """Record PATH (with its fingerprint FP, when there is one, and where it moved MOVED from) as what NAME belongs to."""
     p = f"{CONF}/origins/{name}"
@@ -42,8 +55,7 @@ def write_origin(name, path, fp=None, moved=None):
     lines = [path]
     if (fp and fp[2]) or moved: lines.append(f"{fp[0]} {fp[1]} {fp[2]}" if fp and fp[2] else "")
     if moved: lines.append(f"from {moved}")
-    with open(p + ".tmp", "w") as f: f.write("\n".join(lines) + "\n")
-    os.replace(p + ".tmp", p)
+    replace_file(p, "\n".join(lines) + "\n")
 
 
 def downloads_dir():
@@ -190,8 +202,7 @@ def read_pending(name):
 def write_pending(name, old, new, rule, reason):
     p = pending_path(name)
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p + ".tmp", "w") as f: f.write(f"old={old}\nnew={new}\nrule={rule}\nreason={reason}\n")
-    os.replace(p + ".tmp", p)
+    replace_file(p, f"old={old}\nnew={new}\nrule={rule}\nreason={reason}\n")
 
 
 def clear_pending(name):
