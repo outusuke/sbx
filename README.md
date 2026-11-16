@@ -110,9 +110,10 @@ sbx-trace -- sbx firefox       # run it and print the report
 sbx-trace --last               # show the last report again
 sbx-trace --suggest            # read_only= / whitelist= lines for what was refused (read them first)
 sbx-trace --diff               # compare with the run before: did a setting help?
+sbx-trace --html -o report.html   # one page to open or send: a map of the folders, and what needs attention
 ```
 
-`sbx-trace-gui` is a window for the same. Install: `sudo install -m755 tools/sbx-trace tools/sbx-trace-gui /usr/local/bin/`. Reports are kept in `~/.local/state/sbx-trace`.
+`sbx-trace-gui` is a window for the same; its save button writes the report as the web page. Install: `sudo install -m755 tools/sbx-trace tools/sbx-trace-gui /usr/local/bin/`. Reports are kept in `~/.local/state/sbx-trace`.
 
 ## Test
 

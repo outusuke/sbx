@@ -4,11 +4,12 @@
 #     sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]        e.g.   sbx-trace -- sbx firefox
 #     sbx-trace --last [NAME] [--json] [--limit N]                      show the last report again
 #     sbx-trace --diff [NAME] [--json] [--limit N]                      compare the last report with the one before it (did a setting help?)
+#     sbx-trace --html [-o FILE] [NAME]                                 a page to open or send: a map of the folders, what needs attention
 #     sbx-trace --suggest [NAME] [--json] [--limit N]                   settings (read_only=, whitelist=) that would let the program reach what it was refused
 # A tool apart from sbx: it only starts a command and watches it from outside. It needs bpftrace, a kernel with BTF and root
 # (sudo on a terminal, else pkexec). If bpftrace refuses the larger set of system calls, it starts again with the basic set (no writes). Without --host only processes inside a new pid namespace are kept, which leaves out
 # bubblewrap's own setup work and shows what the sandboxed program did. The command is held until the probes are in place.
-import errno, json, os, platform, re, shutil, signal, subprocess, sys, tempfile, threading, time
+import base64, errno, hashlib, html, json, os, platform, re, shutil, signal, subprocess, sys, tempfile, threading, time
 
 VERSION = "0.1"
 STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "sbx-trace")
@@ -36,7 +37,7 @@ KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x"}       # a wri
 FLAGS = {"open": "args->flags", "openat": "args->flags"}                  # openat2 keeps its flags in a struct (RICH_FLAGS); without them it is counted as a read
 RICH_FLAGS = {"openat2": "args->how->flags"}                              # checked on kernel 7.3 with bpftrace 0.26; the basic set does not use it, so it can fall back without
 USAGE = ("usage: sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
-         "   |   sbx-trace --suggest [NAME] [--json] [--limit N]   |   sbx-trace --diff [NAME] [--json] [--limit N]")
+         "   |   sbx-trace --suggest [NAME] [--json] [--limit N]   |   sbx-trace --diff [NAME] [--json] [--limit N]   |   sbx-trace --html [-o FILE] [NAME]")
 VERSION_OF_REPORT = 1           # saved in every report, so a later change to what a report holds can be told from this one
 SENSITIVE = (".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".local/share/keyrings", ".config/gcloud", ".netrc", ".git-credentials")   # never suggested
 USER_DIRS = ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "Public", "Templates")      # too broad to suggest, like sbx's own folder rule
@@ -289,6 +290,234 @@ def show(v, limit):
     print(f"/proc, /sys, and /dev and /run without errors: {v['noise']['total']} paths not shown")
 
 
+# ---------------------------------------------------------------- a page to open, keep or send
+SENSITIVE_SYSTEM = ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/ssh/ssh_host_")      # outside your home (a name that starts with these)
+HTML_PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-@@SHA@@'">
+<title>@@TITLE@@</title><style>@@CSS@@</style></head><body>
+<header><h1 id="name"></h1><p id="meta" class="mut"></p><p id="warn" class="warn" hidden></p></header>
+<section class="bar"><div id="chips" role="group" aria-label="Show"></div><input id="q" type="search" placeholder="Search paths" aria-label="Search paths"></section>
+<nav id="crumbs" aria-label="Folder"></nav>
+<main><div id="map" role="group" aria-label="Map of folders, sized by number of paths"></div><p class="legend" id="legend"></p>
+<h2 id="lh"></h2><div class="tw"><table id="list"><thead><tr><th>State</th><th>Path</th><th>Calls</th><th>Errors</th></tr></thead><tbody></tbody></table></div><p><button id="all" type="button" hidden></button></p></main>
+<footer id="foot" class="mut"></footer>
+<script type="application/json" id="data">@@DATA@@</script>
+<script>@@JS@@</script></body></html>
+"""
+HTML_CSS = r""":root{color-scheme:light dark;--bg:#fafafa;--fg:#1c1c1e;--mut:#5c5c66;--line:#d4d4dc;--c0:#e4e7ec;--c1:#cdebd3;--c2:#cfe0fa;--c3:#f8e3a0;--c4:#f6c6c2;--c5:#f3b4e2}
+@media(prefers-color-scheme:dark){:root{--bg:#1b1c1f;--fg:#ececf0;--mut:#a3a3ae;--line:#3a3b41;--c0:#33363c;--c1:#24472d;--c2:#233d63;--c3:#5a4f1d;--c4:#6a2b28;--c5:#7a2a68}}
+*{box-sizing:border-box}body{margin:0 auto;max-width:1100px;padding:16px;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif}
+h1{margin:0;font-size:1.4rem;overflow-wrap:anywhere}h2{font-size:1.05rem;margin:24px 0 8px}p{margin:6px 0}.mut{color:var(--mut)}.warn{font-weight:600}
+.bar{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 8px;align-items:center}#chips{display:flex;flex-wrap:wrap;gap:6px}
+button,input{font:inherit;color:inherit}.chip,#all,#crumbs button{background:transparent;border:1px solid var(--line);border-radius:999px;padding:4px 12px;cursor:pointer}
+.chip[aria-pressed=true]{background:var(--fg);color:var(--bg);border-color:var(--fg)}#q{flex:1;min-width:180px;padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:transparent}
+#crumbs{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}#crumbs button{border-radius:6px;padding:2px 8px}#crumbs button[aria-current=true]{font-weight:700}
+#map{position:relative;aspect-ratio:100/56;min-height:260px;width:100%;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.cell{position:absolute;border:2px solid var(--bg);padding:4px 6px;text-align:left;overflow:hidden;cursor:default;display:block;border-radius:0}
+.cell.go{cursor:pointer}.cell:focus-visible,.chip:focus-visible,#crumbs button:focus-visible{outline:3px solid var(--fg);outline-offset:-3px}
+.cell b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cell small{display:block;color:var(--mut);overflow:hidden;white-space:nowrap}
+.c0{background:var(--c0)}.c1{background:var(--c1)}.c2{background:var(--c2)}.c3{background:var(--c3)}.c4{background:var(--c4)}.c5{background:var(--c5)}
+.badge{display:inline-block;border-radius:4px;padding:0 6px;font-size:.8rem;border:1px solid var(--line)}.legend{font-size:.85rem}.legend .badge{margin-right:4px}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:500}
+td.p{overflow-wrap:anywhere;font-family:ui-monospace,monospace;font-size:.9rem}.empty{padding:16px}footer{margin-top:24px;font-size:.85rem}
+@media(max-width:600px){body{padding:12px}#map{aspect-ratio:auto;height:70vh}}
+"""
+HTML_JS = r""""use strict";
+const D = JSON.parse(document.getElementById("data").textContent);
+const LABEL = ["plain", "written", "hidden", "read-only", "denied", "sensitive"];        // by rank; sensitive is a secret place the program reached
+const rank = r => r.s && !r.k ? 5 : r.k === "denied" ? 4 : r.k === "read-only" ? 3 : r.k === "hidden" ? 2 : r.w ? 1 : 0;
+const calls = r => r.r + r.w + r.p + r.x;
+const size = n => Math.max(1, n.files);
+const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+const FILTERS = [["attention", "Needs attention", r => rank(r) > 0], ["all", "Everything", () => true], ["blocked", "Blocked", r => !!r.k],
+                 ["sensitive", "Sensitive", r => r.s], ["written", "Written", r => r.w > 0], ["errors", "With errors", r => Object.keys(r.e).length > 0]];
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+const counts = r => [["r", "read"], ["w", "write"], ["p", "probe"], ["x", "run"]].filter(([k]) => r[k]).map(([k, w]) => w + " " + r[k]).join(" \u00b7 ");
+const errs = e => Object.entries(e).sort((a, b) => b[1] - a[1]).map(([k, n]) => k + " \u00d7" + n).join(", ");
+let filterKey = D.rows.some(r => rank(r) > 0) ? "attention" : "all", query = "", root = null, trail = [], shown = 100;
+
+function build(rows) {
+  const top = {name: "All paths", kids: new Map(), own: null, calls: 0, rank: 0, files: 0, path: ""};
+  for (const r of rows) {
+    let n = top;
+    for (const p of r.path.split("/").filter(Boolean)) {
+      let k = n.kids.get(p);
+      if (!k) { k = {name: p, kids: new Map(), own: null, calls: 0, rank: 0, files: 0, path: n === top ? (p === "~" ? "~" : "/" + p) : n.path + "/" + p}; n.kids.set(p, k); }
+      n = k;
+    }
+    n.own = r;
+  }
+  (function sum(n) {
+    let c = n.own ? calls(n.own) : 0, rk = n.own ? rank(n.own) : 0, f = n.own ? 1 : 0;
+    for (const k of n.kids.values()) { sum(k); c += k.calls; rk = Math.max(rk, k.rank); f += k.files; }
+    n.calls = c; n.rank = rk; n.files = f;
+  })(top);
+  (function squash(n) {                                       // usr > share > icons with nothing else in between is one step: usr/share/icons
+    for (const k of n.kids.values()) {
+      while (k.kids.size === 1 && !k.own) { const g = [...k.kids.values()][0]; k.name += "/" + g.name; k.kids = g.kids; k.own = g.own; k.path = g.path; }
+      squash(k);
+    }
+  })(top);
+  return top;
+}
+
+function layout(items, x, y, w, h) {
+  const out = [], tot = items.reduce((s, i) => s + size(i), 0), k = w * h / tot;
+  let list = items.map(i => ({i, a: size(i) * k}));
+  while (list.length) {
+    const side = Math.min(w, h); let row = [], best = Infinity, sum = 0;
+    for (const o of list) {
+      const t = row.concat(o), s = sum + o.a, mx = Math.max(...t.map(z => z.a)), mn = Math.min(...t.map(z => z.a));
+      const worst = Math.max(side * side * mx / (s * s), s * s / (side * side * mn));
+      if (row.length && worst > best) break;
+      row = t; sum = s; best = worst;
+    }
+    list = list.slice(row.length);
+    const thick = sum / side; let off = 0;
+    for (const o of row) {
+      const len = o.a / thick;
+      out.push(w >= h ? {i: o.i, x, y: y + off, w: thick, h: len} : {i: o.i, x: x + off, y, w: len, h: thick});
+      off += len;
+    }
+    if (w >= h) { x += thick; w -= thick; } else { y += thick; h -= thick; }
+  }
+  return out;
+}
+
+function rowsUnder(n, out) { if (n.own) out.push(n.own); for (const k of n.kids.values()) rowsUnder(k, out); return out; }
+
+function drawCrumbs() {
+  const c = $("crumbs"); c.replaceChildren();
+  trail.forEach((n, i) => {
+    const b = el("button", "", n.name); b.type = "button";
+    if (i === trail.length - 1) b.setAttribute("aria-current", "true");
+    b.onclick = () => { trail = trail.slice(0, i + 1); shown = 100; draw(); };
+    c.append(b);
+  });
+}
+
+function drawMap() {
+  const n = trail[trail.length - 1], map = $("map"); map.replaceChildren();
+  let kids = [...n.kids.values()].sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name));
+  if (n.own && kids.length) kids.unshift({name: "(this path itself)", kids: new Map(), own: n.own, calls: calls(n.own), rank: rank(n.own), files: 1, path: n.path, plain: true});
+  if (!kids.length) { map.append(el("p", "empty mut", "Nothing to show with this filter.")); return; }
+  if (kids.length > 120) {
+    const rest = kids.slice(119);
+    kids = kids.slice(0, 119).concat([{name: "\u2026 " + rest.length + " more", kids: new Map(), own: null, calls: rest.reduce((s, k) => s + k.calls, 0),
+                                       rank: Math.max(...rest.map(k => k.rank)), files: rest.reduce((s, k) => s + k.files, 0), path: "", plain: true}]);
+  }
+  for (const p of layout(kids, 0, 0, 100, 56)) {
+    const k = p.i, b = el("button", "cell c" + k.rank + (k.kids.size && !k.plain ? " go" : "")); b.type = "button";
+    b.style.left = p.x + "%"; b.style.top = p.y / 56 * 100 + "%"; b.style.width = p.w + "%"; b.style.height = p.h / 56 * 100 + "%";
+    const tip = [k.path || k.name, plural(k.files, "file") + ", " + plural(k.calls, "call"), LABEL[k.rank]].join("\n");
+    b.title = tip; b.setAttribute("aria-label", tip.replace(/\n/g, ", "));
+    if (p.w > 5 && p.h > 4) {
+      b.append(el("b", "", k.name + (k.kids.size && !k.plain ? "/" : "")));
+      if (p.w > 11 && p.h > 9) b.append(el("small", "", plural(k.files, "file") + " \u00b7 " + plural(k.calls, "call") + (k.rank ? " \u00b7 " + LABEL[k.rank] : "")));
+    }
+    if (k.kids.size && !k.plain) b.onclick = () => { trail.push(k); shown = 100; draw(); };
+    map.append(b);
+  }
+}
+
+function drawList() {
+  const n = trail[trail.length - 1], rows = rowsUnder(n, []).filter(r => rank(r) > 0).sort((a, b) => rank(b) - rank(a) || calls(b) - calls(a) || a.path.localeCompare(b.path));
+  $("lh").textContent = rows.length + " path" + (rows.length === 1 ? "" : "s") + " that need attention" + (n === root ? "" : " in " + n.path);
+  const tb = $("list").tBodies[0]; tb.replaceChildren();
+  for (const r of rows.slice(0, shown)) {
+    const tr = el("tr"), s = el("td"), rk = rank(r);
+    s.append(el("span", "badge c" + rk, LABEL[rk] + (r.s && r.k ? " + sensitive" : "")));
+    tr.append(s, el("td", "p", r.path), el("td", "", counts(r)), el("td", "", errs(r.e)));
+    tb.append(tr);
+  }
+  $("list").hidden = !rows.length;
+  const more = $("all"); more.hidden = rows.length <= shown;
+  more.textContent = "Show all " + rows.length; more.onclick = () => { shown = rows.length; drawList(); };
+}
+
+function draw() { drawCrumbs(); drawMap(); drawList(); }
+
+function update() {
+  const f = FILTERS.find(x => x[0] === filterKey)[2], q = query.trim().toLowerCase();
+  root = build(D.rows.filter(r => f(r) && (!q || r.path.toLowerCase().includes(q))));
+  trail = [root]; shown = 100; draw();
+}
+
+function drawChips() {
+  const c = $("chips"); c.replaceChildren();
+  for (const [key, label, f] of FILTERS) {
+    const b = el("button", "chip", label + " (" + D.rows.filter(f).length + ")"); b.type = "button";
+    b.setAttribute("aria-pressed", String(key === filterKey));
+    b.onclick = () => { filterKey = key; drawChips(); update(); };
+    c.append(b);
+  }
+}
+
+(function init() {
+  const i = D.info;
+  document.title = "sbx trace: " + D.name;
+  $("name").textContent = D.name;
+  $("meta").textContent = [D.time, D.exit === null ? "" : "exit " + D.exit, i.calls + " file calls from " + i.processes + " threads", D.host ? "all processes (--host)" : ""].filter(Boolean).join(" \u00b7 ");
+  if (i.lost) { $("warn").hidden = false; $("warn").textContent = "bpftrace lost " + i.lost + " events, so this report is incomplete."; }
+  $("legend").append(el("span", "mut", "Size is the number of paths. Colour is the most serious thing inside: "));
+  LABEL.forEach((l, k) => { const b = el("span", "badge c" + k, l); if (k === 5) b.title = "A place that holds keys, passwords or tokens, and the program reached it (a blocked or hidden one shows as blocked, with + sensitive in the list)"; $("legend").append(b); });
+  const foot = [];
+  if (D.more) foot.push(D.more + " more files are not in the saved report.");
+  if (D.noise) foot.push("/proc, /sys, and /dev and /run without errors: " + D.noise + " paths not shown.");
+  if (i.unresolved) foot.push(i.unresolved + " relative or very long paths are not listed.");
+  if (i.dropped) foot.push(i.dropped + " paths were not kept (too many).");
+  $("foot").textContent = foot.join(" ");
+  $("q").oninput = e => { query = e.target.value; update(); };
+  drawChips(); update();
+})();
+"""
+
+
+def holds_secrets(path):
+    """Is PATH one of the places that hold secrets (keys, passwords, tokens), or inside one? A folder that only holds one (~/.local/share) is not."""
+    if path.startswith(HOME + "/"):
+        rel = path[len(HOME) + 1:]
+        return any(rel == s or rel.startswith(s + "/") for s in SENSITIVE)
+    return path.startswith(SENSITIVE_SYSTEM)
+
+
+def html_data(v):
+    """What the page shows, from a saved report V of any shape: {name, time, exit, host, info, more, noise, rows: [{path, r, w, p, x, e, k, s}]}.
+    k is how it was blocked (denied, read-only, hidden) or None; s is 1 for a path that holds secrets. Paths are for reading: ~ for your home, no control characters."""
+    v = v if isinstance(v, dict) else {}
+    num = lambda x: x if isinstance(x, int) and not isinstance(x, bool) and x >= 0 else 0
+    kinds = {b["path"]: b["kind"] for b in (v.get("blocked") if isinstance(v.get("blocked"), list) else []) if isinstance(b, dict) and isinstance(b.get("path"), str)
+             and b.get("kind") in ("denied", "read-only", "hidden")}
+    row = lambda p, r, e: {"path": safe(tilde(p)), **{k: num(r.get(k)) for k in "rwpx"}, "e": {safe(str(k)): num(n) for k, n in e.items() if num(n)}, "k": kinds.get(p), "s": int(holds_secrets(p))}
+    rows, seen, total = [], set(), 0
+    for g in ("home", "system"):
+        grp = v.get(g) if isinstance(v.get(g), dict) else {}
+        listed = [r for r in (grp.get("rows") if isinstance(grp.get("rows"), list) else []) if isinstance(r, dict) and isinstance(r.get("path"), str) and r["path"] not in seen]
+        total += max(num(grp.get("total")), len(listed))
+        for r in listed:
+            seen.add(r["path"]); rows.append(row(r["path"], r, r["err"] if isinstance(r.get("err"), dict) else {}))
+    for p in kinds:
+        if p not in seen: seen.add(p); rows.append(row(p, {}, {}))
+    info = v.get("info") if isinstance(v.get("info"), dict) else {}
+    noise = v.get("noise") if isinstance(v.get("noise"), dict) else {}
+    return {"name": safe(str(v.get("name") or "report"))[:80], "time": when(v) if isinstance(v.get("time"), (int, float)) else "",
+            "exit": v["exit"] if isinstance(v.get("exit"), int) and not isinstance(v.get("exit"), bool) else None, "host": bool(info.get("host")),
+            "info": {k: num(info.get(k)) for k in ("calls", "processes", "dropped", "unresolved", "lost")},
+            "more": max(0, total - len(rows)), "noise": num(noise.get("total")), "rows": rows}
+
+
+def html_page(v):
+    """One self-contained page for the report V (no network, no outside files): a map of the folders sized by file calls and coloured by the worst thing
+    in them, filters, a search and a list of what needs attention. What the report holds is data in a JSON block, never page code, and a policy
+    that allows only this page's own script keeps the page from running anything else."""
+    data = html_data(v)
+    blob = json.dumps(data).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+    vals = {"SHA": base64.b64encode(hashlib.sha256(HTML_JS.encode()).digest()).decode(), "TITLE": html.escape("sbx trace: " + data["name"]).encode("ascii", "xmlcharrefreplace").decode(),
+            "CSS": HTML_CSS, "JS": HTML_JS, "DATA": blob}
+    return re.sub(r"@@(\w+)@@", lambda m: vals[m.group(1)], HTML_PAGE)
+
+
 def report_path(name):
     return os.path.join(STATE, f"{name}.json")
 
@@ -438,13 +667,17 @@ def trace(cmd, host=False):
 
 
 def main(argv):
-    flags, limit, last, ask, cmp, i = set(), 40, False, False, False, 0
+    flags, limit, last, ask, cmp, page, out, i = set(), 40, False, False, False, False, None, 0
     while i < len(argv) and argv[i].startswith("-") and argv[i] != "--":
         a = argv[i]
         if a in ("--json", "--host"): flags.add(a)
         elif a == "--last": last = True
         elif a == "--suggest": last = ask = True
         elif a == "--diff": last = cmp = True
+        elif a == "--html": last = page = True
+        elif a in ("-o", "--output"):
+            if i + 1 >= len(argv) or not argv[i + 1]: die(f"{a} needs a file name\n{USAGE}")
+            out = argv[i + 1]; i += 1
         elif a == "--limit":
             if i + 1 >= len(argv) or not (argv[i + 1].isascii() and argv[i + 1].isdigit()): die(f"--limit needs a number\n{USAGE}")
             limit = int(argv[i + 1]); i += 1
@@ -480,6 +713,14 @@ def main(argv):
         s = suggest(v, shared_by(name))
         if "--json" in flags: print(json.dumps({"name": name, **s}))
         else: show_suggest(name, s, limit)
+        return 0
+    if page:
+        text = html_page(v)
+        if out is None: sys.stdout.write(text); return 0
+        try:
+            with open(out, "w", encoding="utf-8") as f: f.write(text)
+        except OSError as e: die(f"could not write {safe(out)}: {e.strerror or e}")
+        print(f"sbx-trace: wrote {safe(out)}", file=sys.stderr)
         return 0
     if "--json" in flags: print(json.dumps(v))
     else: show(v, limit)

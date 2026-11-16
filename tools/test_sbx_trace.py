@@ -3,7 +3,7 @@
 # Tests for sbx-trace. Run as a normal user:   python3 tools/test_sbx_trace.py
 # Nothing here needs bpftrace or root: the parser, the bpftrace program text, the report and the held start are tested, and the
 # helper is a small fake that prints what bpftrace would.
-import contextlib, importlib.machinery, importlib.util, io, json, os, platform, signal, stat, tempfile, unittest
+import base64, contextlib, hashlib, importlib.machinery, importlib.util, io, json, os, platform, re, signal, stat, tempfile, unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -265,6 +265,53 @@ class Compare(Base):
                 mock.patch.object(T.os, "geteuid", return_value=1000):
             T.main(["--", "/bin/sh", "-c", "exit 0"])
         with open(T.report_path("sh")) as f: self.assertEqual(json.load(f)["version"], T.VERSION_OF_REPORT)
+
+
+class Page(Base):
+    def report(self):
+        H = self.home
+        return {"name": "fire</title>fox", "exit": 0, "time": 1.0, "blocked": [{"path": f"{H}/.ssh/config", "kind": "hidden", "n": 1}, {"path": "/etc/shadow", "kind": "denied", "n": 1},
+                                                                        {"path": f"{H}/gone", "kind": "hidden", "n": 2}],
+                "home": {"total": 5, "rows": [{"path": f"{H}/.ssh/config", "err": {"ENOENT": 1}}, {"path": f"{H}/.ssh/known_hosts", "r": 2, "err": {}},
+                                              {"path": f"{H}/x</script><img src=x onerror=alert(1)>\x1b[31m", "w": 1, "err": {}}]},
+                "system": {"total": 1, "rows": [{"path": "/etc/shadow", "r": 1, "err": {"EACCES": 1}}]}, "noise": {"total": 7},
+                "info": {"calls": 9, "processes": 2, "dropped": 0, "unresolved": 1, "lost": 3, "host": False}}
+
+    def test_the_places_that_hold_secrets(self):
+        H = self.home
+        for p in (f"{H}/.ssh", f"{H}/.ssh/id_ed25519", f"{H}/.local/share/keyrings/x", "/etc/shadow", "/etc/shadow-", "/etc/sudoers.d/x", "/etc/ssh/ssh_host_rsa_key"):
+            self.assertTrue(T.holds_secrets(p), p)
+        for p in (f"{H}/.sshx", f"{H}/.local/share", H, "/etc/passwd", "/etc/ssh/ssh_config", f"{H}/x/.ssh"): self.assertFalse(T.holds_secrets(p), p)
+
+    def test_the_page_gets_its_data_from_the_report_as_it_is_read(self):
+        d = T.html_data(self.report()); H = self.home
+        by = {r["path"]: r for r in d["rows"]}
+        self.assertEqual((by["~/.ssh/config"]["k"], by["~/.ssh/config"]["s"], by["~/.ssh/known_hosts"]["k"], by["~/.ssh/known_hosts"]["s"]), ("hidden", 1, None, 1))
+        self.assertEqual((by["/etc/shadow"]["k"], by["/etc/shadow"]["e"], by["~/gone"]["k"]), ("denied", {"EACCES": 1}, "hidden"))      # a blocked path the rows lack is kept
+        self.assertFalse(any(H in r["path"] or "\x1b" in r["path"] for r in d["rows"]))                           # ~ for your home, no control characters
+        self.assertEqual((d["more"], d["noise"], d["info"]["lost"], d["exit"]), (1, 7, 3, 0))                  # 6 files in all, 5 listed
+        for bad in ({}, [], "x", {"home": 5, "system": {"rows": "x"}, "blocked": "x", "info": []}, {"blocked": [5, {"path": 3}], "home": {"rows": [5, {"path": 3}, {"path": "/a", "err": []}]}}):
+            T.html_page(bad)                                                                                  # a report of the wrong shape does not crash it
+
+    def test_the_page_runs_nothing_but_its_own_script_and_what_a_path_says_is_only_data(self):
+        page = T.html_page(self.report())
+        self.assertTrue(page.isascii()); self.assertEqual(page.count("<script"), 2); self.assertNotIn("</script><img", page); self.assertNotIn("<title>sbx trace: fire</title>", page)
+        self.assertFalse(re.search(r"https?://", page))                                                       # nothing is fetched
+        sha = base64.b64encode(hashlib.sha256(T.HTML_JS.encode()).digest()).decode()
+        self.assertIn(f"script-src 'sha256-{sha}'", page); self.assertIn(f"<script>{T.HTML_JS}</script>", page)   # the policy allows exactly this script
+        blob = re.search(r'<script type="application/json" id="data">(.*?)</script>', page, re.S).group(1)
+        self.assertEqual(json.loads(blob), json.loads(json.dumps(T.html_data(self.report()))))                # and the data reads back whole
+        self.assertNotIn("@@", page.replace(blob, "").replace(T.HTML_JS, ""))                                   # no placeholder is left
+
+    def test_html_writes_the_last_report_to_a_file_or_to_the_terminal(self):
+        T.save("foo", self.report()); out = f"{self.tmp}/r.html"
+        with contextlib.redirect_stderr(io.StringIO()): self.assertEqual(T.main(["--html", "-o", out, "foo"]), 0)
+        with open(out, encoding="utf-8") as f: self.assertIn("<!doctype html>", f.read())
+        so = io.StringIO()
+        with contextlib.redirect_stdout(so): T.main(["--html"])                                               # the newest report, to stdout
+        self.assertTrue(so.getvalue().startswith("<!doctype html>"))
+        for argv in (["--html", "-o"], ["--html", "-o", ""], ["--html", "nothing"], ["--html", "-o", f"{self.tmp}/no/such/dir/r.html", "foo"]):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit, msg=argv): T.main(argv)
 
 
 class Fake(Base):

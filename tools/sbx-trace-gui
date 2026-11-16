@@ -3,7 +3,7 @@
 # sbx-trace-gui - GTK4 + libadwaita window for sbx-trace: pick a program (or type a command), trace it, read what it touched.
 #     sbx-trace-gui
 # A tool apart from sbx-gui, and it does not change sbx-trace. It starts `sbx-trace -- sbx PROGRAM` and reads the saved report back with
-# `sbx-trace --last --json`. It runs as your own user: the window has no terminal, so sbx-trace is started without one and asks for root
+# `sbx-trace --last --json`, and saves a report as a web page with `sbx-trace --html`. It runs as your own user: the window has no terminal, so sbx-trace is started without one and asks for root
 # through pkexec. It needs sbx-trace next to this file or in your PATH, and the same libraries as sbx-gui (GTK 4, libadwaita 1.5, PyGObject).
 import json, os, re, shlex, shutil, subprocess, sys, threading, time
 import gi
@@ -274,6 +274,24 @@ def load_diff(name):
     except ValueError as e: return None, safe(str(e))
 
 
+def page_file_name(rep):
+    """The file name offered for the web page of REP."""
+    return f"sbx-trace-{re.sub(r'[^A-Za-z0-9._-]', '-', rep['name']).strip('-.') or 'report'}.html"
+
+
+def export_page(name, path):
+    """(True, "") when sbx-trace wrote the web page of the saved report of NAME (the newest when None) to PATH, else (False, why)."""
+    exe = trace_cmd()
+    if not exe: return False, "sbx-trace was not found."
+    argv = [exe, "--html", "-o", path] + ([name] if name and NAME_RE.match(name) else [])
+    try: r = subprocess.run(argv, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as e: return False, f"Couldn't run sbx-trace: {getattr(e, 'strerror', None) or e}"
+    if r.returncode != 0:
+        lines = [l for l in r.stderr.splitlines() if l.strip()]
+        return False, safe(re.sub(r"^sbx-trace: ", "", lines[-1]) if lines else f"sbx-trace exited with {r.returncode}")
+    return True, ""
+
+
 class Run:
     """sbx-trace started with no terminal and no input (which is what makes it ask for root through pkexec), in a session of its own, with
     the last LOG_KEEP bytes of what it and the program print kept for an error message. A program that prints a lot costs no memory."""
@@ -326,6 +344,9 @@ class Win(Adw.ApplicationWindow):
         bar = Adw.HeaderBar()
         self.search_btn = Gtk.ToggleButton(icon_name="system-search-symbolic", tooltip_text="Search the paths")
         bar.pack_end(self.search_btn)
+        self.export_btn = Gtk.Button(icon_name="document-save-symbolic", tooltip_text="Save the report as a web page", sensitive=False)
+        self.export_btn.connect("clicked", lambda *_: self.export_report())
+        bar.pack_end(self.export_btn)
         view.add_top_bar(bar)
         self.search = Gtk.SearchEntry(placeholder_text="Search paths", hexpand=True)
         self.search_bar = Gtk.SearchBar(child=self.search)
@@ -468,6 +489,7 @@ class Win(Adw.ApplicationWindow):
 
     def fill_report(self):
         rep = self.report
+        self.export_btn.set_sensitive(rep is not None)
         for grp in (self.view, self.compare_group, self.blocked, self.home, self.system, self.noise): grp.set_visible(False)
         if rep is None:
             self.head_row.set_title("No report yet")
@@ -539,6 +561,40 @@ class Win(Adw.ApplicationWindow):
         elif not quiet:
             self.toast(f"No report for {name}" if name and why.startswith("no report") else why)
         return True
+
+    # -- saving the report as a web page --
+    def export_report(self):
+        rep = self.report
+        if rep is None: return self.toast("No report to save yet")
+        d = Gtk.FileDialog(title="Save the report as a web page", initial_name=page_file_name(rep))
+        downloads = f"{HOME}/Downloads"
+        if os.path.isdir(downloads): d.set_initial_folder(Gio.File.new_for_path(downloads))
+        d.save(self, None, lambda dlg, res: self.export_chosen(rep, dlg, res))
+
+    def export_chosen(self, rep, dlg, res):
+        try: f = dlg.save_finish(res)
+        except GLib.Error: return                                                   # cancelled
+        path = f.get_path() if f else None
+        if not path: return self.toast("Pick a folder on this computer")
+        def work():
+            ok, why = export_page(rep["name"], path)
+            GLib.idle_add(lambda: self.exported(path, ok, why) and False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def exported(self, path, ok, why):
+        if self.closing: return True
+        if not ok: self.alert("Couldn't save the page", why)
+        else:
+            t = Adw.Toast(title=f"Saved {safe(os.path.basename(path))}", button_label="Open", use_markup=False)
+            t.connect("button-clicked", lambda *_: self.open_page(path))
+            self.toasts.add_toast(t)
+        return True
+
+    def open_page(self, path):
+        def done(launcher, res):
+            try: launcher.launch_finish(res)
+            except GLib.Error: self.toast("Couldn't open the page")
+        Gtk.FileLauncher(file=Gio.File.new_for_path(path)).launch(self, None, done)
 
     # -- tracing --
     def set_busy(self, busy, title=None, subtitle=None):

@@ -293,6 +293,35 @@ sys.exit(3)"""))
         self.assertLessEqual(len(G["failure_text"]("\n".join(f"line {i}" for i in range(500)))), 700)
 
 
+class Export(Base):
+    def test_the_page_is_written_by_the_real_sbx_trace_for_the_report_shown(self):
+        G = self.G
+        G["trace_cmd"] = lambda: f"{HERE}/sbx-trace"
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": f"{self.tmp}/state", "HOME": self.home}):
+            v = self.real_report(); self.T.save("foo", v)
+            self.T.save("bar", dict(v, name="bar", command=["sbx", "bar"], blocked=[]))                     # the newest is bar, the one shown is foo
+            out = f"{self.tmp}/out.html"
+            self.assertEqual(G["export_page"]("foo", out), (True, ""))
+            with open(out, encoding="utf-8") as f: page = f.read()
+            self.assertTrue(page.startswith("<!doctype html>")); self.assertIn('"name": "foo"', page)
+            ok, why = G["export_page"]("foo", f"{self.tmp}/no/such/dir/r.html")
+            self.assertFalse(ok); self.assertIn("could not write", why); self.assertFalse(why.startswith("sbx-trace:"))
+            ok, why = G["export_page"]("nothing", out); self.assertFalse(ok); self.assertIn("no report", why)
+            self.assertEqual(G["export_page"](None, out), (True, ""))                                      # no usable name: the newest
+
+    def test_it_says_when_sbx_trace_is_missing_or_will_not_run(self):
+        G = self.G; G["trace_cmd"] = lambda: None
+        self.assertEqual(G["export_page"]("foo", "/tmp/x.html"), (False, "sbx-trace was not found."))
+        G["trace_cmd"] = lambda: f"{self.tmp}/missing"
+        ok, why = G["export_page"]("foo", "/tmp/x.html"); self.assertFalse(ok); self.assertIn("Couldn't run sbx-trace", why)
+
+    def test_the_file_is_offered_under_a_plain_name(self):
+        name = lambda n: self.G["page_file_name"]({"name": n})
+        self.assertEqual(name("firefox"), "sbx-trace-firefox.html"); self.assertEqual(name("a b/../c"), "sbx-trace-a-b-..-c.html")
+        self.assertEqual((name("?"), name("")), ("sbx-trace-report.html", "sbx-trace-report.html"))
+        self.assertNotIn("/", name("../../etc/x"))
+
+
 class Window(unittest.TestCase):
     """The window's own code, with GTK stubbed and a mock for self (as test_sbx.py does for sbx-gui)."""
     def setUp(self):
@@ -409,6 +438,35 @@ class Window(unittest.TestCase):
         G["Win"].fill_report(w); w.head_row.set_subtitle.assert_called_with("Nothing matches “zzz”.")
         w.search.get_text.return_value = ""; w.only_errors.get_active.return_value = True
         G["Win"].fill_report(w); w.head_row.set_subtitle.assert_called_with("No path has an error.")
+
+
+    def test_the_save_button_needs_a_report_and_the_dialog_offers_the_name(self):
+        G, w = self.G, self.win(); Gtk = G["Gtk"]
+        w.report = None; G["Win"].export_report(w); w.toast.assert_called_once(); Gtk.FileDialog.assert_not_called()
+        w.report = {"name": "foo"}; G["Win"].export_report(w)
+        self.assertEqual(Gtk.FileDialog.call_args.kwargs["initial_name"], "sbx-trace-foo.html")
+        dlg = Gtk.FileDialog.return_value; self.assertIs(dlg.save.call_args[0][0], w)
+        w.report = None; G["Win"].fill_report(w); w.export_btn.set_sensitive.assert_called_with(False)                       # nothing to save: the button is off
+
+    def test_a_cancelled_dialog_saves_nothing_and_a_chosen_file_is_written_from_a_thread(self):
+        G, w = self.G, self.win(); dlg = mock.MagicMock(); calls = []
+        G["GLib"].Error = type("Error", (Exception,), {})                                                  # GTK is a stub, so make an error that can be caught
+        G["export_page"] = lambda name, path: calls.append((name, path)) or (True, "")
+        dlg.save_finish.side_effect = G["GLib"].Error; G["Win"].export_chosen(w, {"name": "foo"}, dlg, object()); self.assertEqual(calls, [])
+        dlg.save_finish.side_effect = None; dlg.save_finish.return_value.get_path.return_value = None
+        G["Win"].export_chosen(w, {"name": "foo"}, dlg, object()); w.toast.assert_called_once(); self.assertEqual(calls, [])
+        dlg.save_finish.return_value.get_path.return_value = "/tmp/r.html"
+        with mock.patch.object(G["threading"], "Thread", lambda target, daemon: types.SimpleNamespace(start=target)):
+            G["Win"].export_chosen(w, {"name": "foo"}, dlg, object())
+        self.assertEqual(calls, [("foo", "/tmp/r.html")])
+
+    def test_it_says_how_the_save_went(self):
+        G, w = self.G, self.win(); Adw = G["Adw"]
+        G["Win"].exported(w, "/tmp/r.html", False, "could not write"); w.alert.assert_called_with("Couldn't save the page", "could not write")
+        Adw.Toast.reset_mock(); w.alert.reset_mock(); G["Win"].exported(w, "/tmp/a\x1b[31m.html", True, "")
+        self.assertEqual(Adw.Toast.call_args.kwargs["title"], "Saved a?[31m.html"); self.assertIs(Adw.Toast.call_args.kwargs["use_markup"], False)
+        w.toasts.add_toast.assert_called_once(); w.alert.assert_not_called()
+        w.closing = True; w.toasts.add_toast.reset_mock(); G["Win"].exported(w, "/tmp/r.html", True, ""); w.toasts.add_toast.assert_not_called()
 
 
 class Comparison(Base):
