@@ -34,6 +34,7 @@ GROUPS = [
         ("portal_launcher", "Create launchers", "Lets the program ask to add its own entries to your app menu.", False),
         ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access.", False),
         ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access.", False),
+        ("portal_background", "Run in the background", "Lets the program ask to keep running when closed or to start at login. The autostart it registers runs outside the sandbox.", False),
         ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access.", False)]),
     ("Hardening", [
         ("private", "Temporary home", "Everything the program saves in its private home is erased when it closes. Shared folders are not affected.", False),
@@ -45,7 +46,7 @@ GROUPS = [
 ]
 WL_RESTRICTED = False      # can this desktop restrict Wayland programs (wp_security_context_v1)? Learned from `sbx schema`; wayland_strict is on by default only where it can
 GROUP_INFO = {"What can this program use?": "Changes apply the next time the program starts. Everything else on your computer stays hidden from it."}      # a line under a group's title
-ADVANCED = ("portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret")      # shown in one collapsed row, "More desktop services"
+ADVANCED = ("portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret", "portal_background")      # shown in one collapsed row, "More desktop services"
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces",
@@ -53,7 +54,7 @@ SHORT = {"net": "network", "net_private": "this computer private", "wayland": "W
          "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
          "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",
          "tray": "tray icon", "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
-         "folder": "own folder", "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets"}
+         "folder": "own folder", "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets", "portal_background": "background"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
 SOURCE_RANK = {"System": 0, "Downloaded": 2}   # same order as `sbx list --all`: of the programs only run from the terminal, System first, Downloaded last

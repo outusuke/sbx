@@ -339,7 +339,7 @@ class Win(Adw.ApplicationWindow):
                 r = self.switch_row(scope, key, page_rows)
                 if key in ADVANCED:                                               # seldom needed: one collapsed row, "More desktop services"
                     if more is None:
-                        more = Adw.ExpanderRow(title="More desktop services", subtitle="Location, shortcuts, wallpaper, launchers, remote control, secrets", use_markup=False)
+                        more = Adw.ExpanderRow(title="More desktop services", subtitle="Location, shortcuts, wallpaper, launchers, remote control, secrets, background", use_markup=False)
                         g.add(more)
                     more.add_row(r)
                 else: g.add(r)

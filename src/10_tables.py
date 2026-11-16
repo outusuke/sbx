@@ -41,7 +41,8 @@ ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    
 PORTAL_EXTRA = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenCast", "portal_location": "Location",
                 "portal_shortcuts": "GlobalShortcuts", "portal_remote_desktop": "RemoteDesktop",
                 "portal_input_capture": "InputCapture", "portal_wallpaper": "Wallpaper",
-                "portal_launcher": "DynamicLauncher", "portal_secret": "Secret"}
+                "portal_launcher": "DynamicLauncher", "portal_secret": "Secret",
+                "portal_background": "Background"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
 # Tray icon (tray=1). The proxy can only name a bus name exactly or with a "*" at the end after a dot, so the names an app
 # may own are listed: org.kde.StatusNotifierItem-PID-ID. The PID is the one inside the sandbox (it has its own PID
 # namespace), so it is small. An app whose main process has a higher PID gets no tray icon; the range can be raised here.
@@ -80,7 +81,7 @@ THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local
 # Desktop portals a program may call when portals=1 (through xdg-dbus-proxy, which runs outside the sandbox).
 # Everything else (Documents, ...) stays blocked, and so do the PORTAL_EXTRA ones until their own switch (portal_*=1) is on.
 PORTAL_NAME = "org.freedesktop.portal.Desktop"
-PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Background", "Account",
+PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Account",
                 "Email", "Trash", "NetworkMonitor", "ProxyResolver", "GameMode", "MemoryMonitor",
                 "PowerProfileMonitor", "Realtime")
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # a program name run from here may move between them

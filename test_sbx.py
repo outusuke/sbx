@@ -253,6 +253,46 @@ class Units(unittest.TestCase):
         self.assertEqual(o, {"portal_remote_desktop": True, "portal_screenshot": True})
         self.assertFalse(any(S["SCALARS"][k] for k in S["PORTAL_EXTRA"]))
 
+    def test_background_portal_is_opt_in(self):
+        S = self.S
+        self.assertNotIn("Background", S["PORTAL_BASIC"])
+        self.assertEqual(S["PORTAL_EXTRA"]["portal_background"], "Background")
+        self.assertIs(S["SCALARS"]["portal_background"], False)
+        self.assertEqual(S["FLAGS"]["--portal-background"], ("portal_background", True))
+        self.assertNotIn("portal.Background.*", " ".join(S["portal_rules"]({})))
+        self.assertNotIn("portal.Background.*", " ".join(S["portal_rules"]({"portal_secret": True})))
+        self.assertIn("portal.Background.*", " ".join(S["portal_rules"]({"portal_background": True})))
+
+    def test_account_portal_is_dropped_with_privacy(self):
+        S = self.S
+        self.assertIn("portal.Account.*", " ".join(S["portal_rules"]({"privacy": False})))
+        self.assertIn("portal.Account.*", " ".join(S["portal_rules"](None)))
+        with_privacy = " ".join(S["portal_rules"]({"privacy": True}))
+        self.assertNotIn("portal.Account.*", with_privacy)
+        self.assertIn("portal.Settings.*", with_privacy)             # the other basic portals stay
+
+    def test_start_proxy_survives_popen_failing_and_leaks_no_fds(self):
+        S = self.S
+        fake = f"{self.tmp}/xdg-dbus-proxy"
+        def boom(*a, **k): raise OSError(8, "Exec format error")
+        S["shutil"] = types.SimpleNamespace(which=lambda n: fake)
+        S["subprocess"] = types.SimpleNamespace(Popen=boom, DEVNULL=-3)
+        before = sorted(os.listdir("/proc/self/fd"))
+        self.assertIsNone(S["start_proxy"](f"{self.tmp}/run/proxy.sock", {}))
+        self.assertEqual(sorted(os.listdir("/proc/self/fd")), before)
+        self.assertTrue(any("could not start xdg-dbus-proxy" in w for w in self.warned), self.warned)
+
+    def test_wayland_message_shorter_than_its_header_is_an_error(self):
+        S = self.S
+        a, b = socket.socketpair()
+        self.addCleanup(a.close); self.addCleanup(b.close)
+        a.settimeout(1)
+        wl = S["Wl"].__new__(S["Wl"])
+        wl.sock, wl.last, wl.buf = a, 1, b""
+        b.sendall(struct.pack("=II", 1, (4 << 16) | 0))                # claims to be 4 bytes long, less than its own header
+        with self.assertRaises(S["WlError"]):
+            wl.roundtrip(2)
+
     # -- settings
     def test_parse_conf_reads_everything_and_reports_what_it_skips(self):
         p = self.write("c.conf", "# comment\nnet=0  # off\n gpu = no \nsound=maybe\nx11=\nbogus=1\nmemory=2G\ntasks=lots\n"

@@ -46,7 +46,9 @@ class Wl:
         while True:
             head = self.read(8)
             obj, word = struct.unpack("=II", head)
-            data = self.read((word >> 16) - 8)
+            size = word >> 16
+            if size < 8: raise WlError("the compositor sent a malformed message")
+            data = self.read(size - 8)
             op = word & 0xFFFF
             if obj == 1 and op == 0:              # wl_display.error(object, code, message)
                 (n,) = struct.unpack_from("=I", data, 8)

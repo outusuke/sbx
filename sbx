@@ -53,7 +53,8 @@ ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    
 PORTAL_EXTRA = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenCast", "portal_location": "Location",
                 "portal_shortcuts": "GlobalShortcuts", "portal_remote_desktop": "RemoteDesktop",
                 "portal_input_capture": "InputCapture", "portal_wallpaper": "Wallpaper",
-                "portal_launcher": "DynamicLauncher", "portal_secret": "Secret"}
+                "portal_launcher": "DynamicLauncher", "portal_secret": "Secret",
+                "portal_background": "Background"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
 # Tray icon (tray=1). The proxy can only name a bus name exactly or with a "*" at the end after a dot, so the names an app
 # may own are listed: org.kde.StatusNotifierItem-PID-ID. The PID is the one inside the sandbox (it has its own PID
 # namespace), so it is small. An app whose main process has a higher PID gets no tray icon; the range can be raised here.
@@ -92,7 +93,7 @@ THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local
 # Desktop portals a program may call when portals=1 (through xdg-dbus-proxy, which runs outside the sandbox).
 # Everything else (Documents, ...) stays blocked, and so do the PORTAL_EXTRA ones until their own switch (portal_*=1) is on.
 PORTAL_NAME = "org.freedesktop.portal.Desktop"
-PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Background", "Account",
+PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Account",
                 "Email", "Trash", "NetworkMonitor", "ProxyResolver", "GameMode", "MemoryMonitor",
                 "PowerProfileMonitor", "Realtime")
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # a program name run from here may move between them
@@ -623,7 +624,9 @@ class Wl:
         while True:
             head = self.read(8)
             obj, word = struct.unpack("=II", head)
-            data = self.read((word >> 16) - 8)
+            size = word >> 16
+            if size < 8: raise WlError("the compositor sent a malformed message")
+            data = self.read(size - 8)
             op = word & 0xFFFF
             if obj == 1 and op == 0:              # wl_display.error(object, code, message)
                 (n,) = struct.unpack_from("=I", data, 8)
@@ -718,7 +721,8 @@ def portal_rules(cfg=None):
     rules = ["--talk=org.freedesktop.Notifications", f"--see={PORTAL_NAME}"]
     extra = [i for k, i in PORTAL_EXTRA.items() if cfg and cfg.get(k)]
     if cfg and cfg.get("camera"): extra.append("Camera")          # the Camera portal follows the camera switch
-    rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in PORTAL_BASIC + tuple(extra)]
+    basic = [i for i in PORTAL_BASIC if not (i == "Account" and cfg and cfg.get("privacy"))]     # Account hands out the real name
+    rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in basic + extra]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
               f"--call={PORTAL_NAME}=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*",   # screencast etc. sessions
               f"--call={PORTAL_NAME}=org.freedesktop.DBus.Properties.*@/org/freedesktop/portal/desktop",
@@ -747,8 +751,13 @@ def start_proxy(sock, cfg=None):
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={runtime_dir()}/bus"
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
     r, w = os.pipe()
-    proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + bus_rules(cfg), pass_fds=[w],
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + bus_rules(cfg), pass_fds=[w],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        os.close(r); os.close(w)
+        warn(f"could not start xdg-dbus-proxy ({e}); running without portals or tray")
+        return None
     os.close(w)
     ok = False
     try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
@@ -1771,12 +1780,12 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --gpu-render-only      of /dev/dri share only the render nodes (renderD*), not the display card nodes\n"
          "  --no-sound    hide PipeWire/PulseAudio     --portals      notifications and basic portals (xdg-dbus-proxy)\n"
          "  --hostname    hostname 'sbx' inside        --no-userns    the program can't create user namespaces\n"
-         "  --privacy     /etc/passwd without your real name or the other accounts\n"
+         "  --privacy     /etc/passwd without your real name or the other accounts; the Account portal is blocked too\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
          "  --portal-screenshot --portal-screencast --portal-location --portal-shortcuts --portal-remote-desktop\n"
-         "  --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret    one more desktop portal each (needs --portals)\n"
+         "  --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret --portal-background    one more desktop portal each (needs --portals)\n"
          "  --compat      pass graphics/toolkit variables (WGPU_*, MESA_*, SDL_*, QT_QPA_*...) that are set; nothing else\n"
          "  --wayland-strict       no Wayland at all if the compositor can't restrict it\n"
          "  --whitelist=PATH       share a file or folder (read-write); can be repeated\n"

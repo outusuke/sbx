@@ -6,7 +6,7 @@
 #     sbx ./sbx-report [--portals=LIST] [--tray] [PATH ...]
 # Inside the sandbox the report can't see your settings, so tell it what you turned on, or those rows say EXPOSED:
 #     --portals=LIST   the extra portals that are on, comma separated: screenshot screencast location shortcuts
-#                      remote_desktop input_capture wallpaper launcher secret camera
+#                      remote_desktop input_capture wallpaper launcher secret background camera
 #     --tray           tray=1 is on
 # Extra PATHs are checked as "File argument": is it visible, and writable?
 # Legend: ALLOWED = reachable   blocked/hidden = not reachable   EXPOSED = reachable and probably not meant to be
@@ -267,7 +267,7 @@ if bus and shutil.which("gdbus"):
         # backend doesn't implement that portal; the bus itself is reachable (Settings just answered).
         for iface, label in (("OpenURI", "open links"), ("FileChooser", "file chooser"),
                              ("Notification", "notifications"), ("Print", "printing"),
-                             ("Inhibit", "keep awake"), ("Background", "background"),
+                             ("Inhibit", "keep awake"),
                              ("Account", "account info"), ("Email", "email"), ("Trash", "trash"),
                              ("NetworkMonitor", "network status"), ("ProxyResolver", "proxy settings"),
                              ("GameMode", "game mode"), ("MemoryMonitor", "low-memory alerts"),
@@ -285,7 +285,8 @@ if bus and shutil.which("gdbus"):
                 ("Location", "CreateSession", "location", "location"), ("GlobalShortcuts", "CreateSession", "global shortcuts", "shortcuts"),
                 ("RemoteDesktop", "CreateSession", "remote desktop", "remote_desktop"), ("InputCapture", "CreateSession", "input capture", "input_capture"),
                 ("Wallpaper", "SetWallpaperURI", "wallpaper", "wallpaper"), ("DynamicLauncher", "PrepareInstall", "dynamic launcher", "launcher"),
-                ("Secret", "RetrieveSecret", "secrets", "secret")):
+                ("Secret", "RetrieveSecret", "secrets", "secret"),
+                ("Background", "RequestBackground", "background apps", "background")):
             on = key in on_portals
             rc, o = portal(f"org.freedesktop.portal.{iface}.{method}")
             if denied(o):

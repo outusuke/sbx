@@ -6,7 +6,8 @@ def portal_rules(cfg=None):
     rules = ["--talk=org.freedesktop.Notifications", f"--see={PORTAL_NAME}"]
     extra = [i for k, i in PORTAL_EXTRA.items() if cfg and cfg.get(k)]
     if cfg and cfg.get("camera"): extra.append("Camera")          # the Camera portal follows the camera switch
-    rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in PORTAL_BASIC + tuple(extra)]
+    basic = [i for i in PORTAL_BASIC if not (i == "Account" and cfg and cfg.get("privacy"))]     # Account hands out the real name
+    rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in basic + extra]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
               f"--call={PORTAL_NAME}=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*",   # screencast etc. sessions
               f"--call={PORTAL_NAME}=org.freedesktop.DBus.Properties.*@/org/freedesktop/portal/desktop",
@@ -35,8 +36,13 @@ def start_proxy(sock, cfg=None):
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={runtime_dir()}/bus"
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
     r, w = os.pipe()
-    proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + bus_rules(cfg), pass_fds=[w],
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + bus_rules(cfg), pass_fds=[w],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        os.close(r); os.close(w)
+        warn(f"could not start xdg-dbus-proxy ({e}); running without portals or tray")
+        return None
     os.close(w)
     ok = False
     try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))

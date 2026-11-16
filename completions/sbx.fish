@@ -58,7 +58,7 @@ complete -c sbx -n $c -l allow-sensitive -d "Allow sharing ~/.ssh, ~/.gnupg and 
 complete -c sbx -n $c -l compat -d "Pass graphics and toolkit variables"
 complete -c sbx -n $c -l ignore-config -d "Ignore the settings files for this run"
 complete -c sbx -n $c -l rebind -d "This file is the same program, just moved"
-for p in screenshot screencast location shortcuts remote-desktop input-capture wallpaper launcher secret
+for p in screenshot screencast location shortcuts remote-desktop input-capture wallpaper launcher secret background
     complete -c sbx -n $c -l portal-$p -d "One more desktop portal (needs --portals)"
 end
 complete -c sbx -n $c -l whitelist -r -F -d "Share a file or folder (read-write)"
