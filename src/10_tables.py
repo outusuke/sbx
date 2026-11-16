@@ -55,9 +55,24 @@ SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True,
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%"}
 # Folders in your home that hold secrets. Sharing one (or a folder around one) needs allow_sensitive=1 / --allow-sensitive.
-SENSITIVE = [".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".netrc", ".git-credentials", ".password-store",
-             ".config/gcloud", ".config/gh", ".config/rclone", ".local/share/keyrings", ".mozilla", ".thunderbird",
-             ".config/google-chrome", ".config/chromium", ".config/BraveSoftware"]
+SENSITIVE = [".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".netrc", ".git-credentials", ".password-store", ".config/gcloud",
+             ".config/gh", ".config/rclone", ".local/share/keyrings", ".mozilla", ".thunderbird", ".config/google-chrome",
+             ".config/chromium", ".config/BraveSoftware", ".config/op", ".config/Bitwarden", ".var/app/org.mozilla.firefox",
+             "snap/firefox/common/.mozilla", ".npmrc", ".pypirc", ".cargo/credentials", ".cargo/credentials.toml",
+             ".terraform.d/credentials.tfrc.json", ".bash_history", ".zsh_history", ".config/Signal", ".config/discord", ".bitcoin",
+             ".electrum", ".ethereum", ".pgpass", ".pg_service.conf", ".my.cnf", ".mylogin.cnf", ".psql_history", ".mysql_history",
+             ".dockercfg", ".config/containers/auth.json", ".yarnrc", ".yarnrc.yml", ".gem/credentials", ".config/composer/auth.json",
+             ".composer/auth.json", ".m2/settings.xml", ".m2/settings-security.xml", ".gradle/gradle.properties", ".config/pip/pip.conf",
+             ".pip/pip.conf", ".config/NuGet/NuGet.Config", ".nuget/NuGet/NuGet.Config", ".config/helm/repositories.yaml", ".mail",
+             ".mutt", ".muttrc", ".config/mutt", ".config/neomutt", ".config/aerc", ".msmtprc", ".mbsyncrc", ".offlineimaprc",
+             ".fetchmailrc", ".authinfo", ".authinfo.gpg", ".config/thunderbird", "snap/thunderbird/common/.thunderbird",
+             ".config/evolution", ".local/share/evolution", ".config/geary", ".local/share/geary", ".local/share/kmail2",
+             ".local/share/akonadi", ".config/kmail2rc", ".var/app/org.mozilla.Thunderbird", ".var/app/org.gnome.Evolution",
+             ".var/app/org.gnome.Geary", ".config/Slack", ".config/Element", ".config/Session", ".config/Mattermost",
+             ".config/Rocket.Chat", ".config/Zulip", ".config/teams-for-linux", ".config/discordcanary", ".config/discordptb",
+             ".config/vesktop", ".local/share/TelegramDesktop", ".local/share/signal-cli", ".purple", ".weechat", ".config/weechat",
+             ".irssi", ".var/app/org.signal.Signal", ".var/app/com.discordapp.Discord", ".var/app/org.telegram.desktop",
+             ".var/app/com.slack.Slack", ".var/app/im.riot.Element"]
 # User fonts, icons, themes and toolkit settings, shown read-only to programs that can draw a window (theme=1).
 THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes",
          ".config/gtk-3.0/settings.ini", ".config/gtk-3.0/gtk.css", ".config/gtk-4.0/settings.ini",

@@ -1696,8 +1696,16 @@ class Units(unittest.TestCase):
     def test_folder_named_like(self):
         f = self.S["folder_named_like"]
         for n, d, ok in (("G-Diffuser", "/x/G-Diffuser-v1.2.3-linux-x64", True), ("G-Diffuser", "/x/gdiffuser", True),
-                         ("G-Diffuser", "/x/Stuff", False), ("", "/x/Stuff", False), ("game", "/x/linux-x64-game", False)):
+                         ("G-Diffuser", "/x/Stuff", False), ("", "/x/Stuff", False), ("game", "/x/linux-x64-game", False),
+                         ("p", "/x/Projects", False), ("game", "/x/Games", False), ("ab", "/x/ab-1", False), ("game", "/x/Game2", True)):
             self.assertEqual(f(n, d), ok, (n, d))
+
+    def test_sensitive_list_covers_what_sbx_trace_flags(self):
+        import ast
+        with open(f"{HERE}/tools/sbx-trace") as fh: tree = ast.parse(fh.read())
+        node = [n.value for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id == "SENSITIVE"][0]
+        missing = [e.value for e in node.elts if e.value not in self.S["SENSITIVE"]]
+        self.assertEqual(missing, [], "sbx-trace flags these as secret, sbx would still share them")
 
     def test_the_here_flag_still_wins_over_folder(self):
         h = self.home

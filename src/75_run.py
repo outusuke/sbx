@@ -2,6 +2,8 @@
 #| Layer rule: this fragment may use names from lower-numbered fragments (and its own) only; build.py enforces it.
 
 # ---------------------------------------------------------------- running it
+STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when sbx is told to stop
+
 def sweep_stale():
     """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp)."""
     d = f"{runtime_dir()}/sbx"
@@ -104,9 +106,13 @@ def run(prog, args, opts):
     start, stopped, child = time.time(), [False], [None]
     piped = not sys.stderr.isatty()               # started from the app menu or a file manager: no terminal, so the log keeps stderr
     try:
-        def stop(*_):
-            stopped[0] = True
-            if child[0]: child[0].terminate()
+        def stop(*_):                                  # first signal: ask politely, kill after STOP_GRACE s; a second one kills at once
+            again, stopped[0] = stopped[0], True
+            if not child[0]: return
+            if again: child[0].kill()
+            else:
+                child[0].terminate()
+                t = threading.Timer(STOP_GRACE, lambda: child[0].kill()); t.daemon = True; t.start()
         for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, stop)      # before the child exists, so no signal is missed
         p = child[0] = subprocess.Popen(st["prefix"] + st["wrap"] + cmd, pass_fds=st["fds"], stderr=subprocess.PIPE if piped else None)
         if stopped[0]: p.terminate()                  # a signal that came while it was starting

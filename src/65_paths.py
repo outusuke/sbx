@@ -109,10 +109,13 @@ def own_folder(real):
 
 def folder_named_like(name, folder):
     """True if the folder's name starts with the program's name, ignoring case and punctuation: G-Diffuser-v1.2.3-linux-x64 is
-    G-Diffuser's. A convenience for the folder=auto default, not a security check; own_folder() decides what may be shared at all."""
-    norm = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
-    n = norm(name)
-    return bool(n) and norm(os.path.basename(folder)).startswith(n)
+    G-Diffuser's. The name must be at least 3 letters or digits and the next character in the folder name must not be a letter
+    (game is not Games, p is not Projects). A convenience for the folder=auto default, not a security check; own_folder() decides
+    what may be shared at all."""
+    n = re.sub(r"[^a-z0-9]", "", name.lower())
+    if len(n) < 3: return False
+    pat = r"[^a-z0-9]*".join(map(re.escape, n)) + r"(?![a-z])"
+    return re.match(r"[^a-z0-9]*" + pat, os.path.basename(folder).lower()) is not None
 
 
 def opener_folder(real):
