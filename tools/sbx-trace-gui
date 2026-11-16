@@ -97,6 +97,7 @@ def summary_text(rep):
     parts = [f"{i['calls']} file calls from {i['processes']} threads"]
     if i["dropped"]: parts.append(f"{i['dropped']} paths not kept (too many)")
     if i["unresolved"]: parts.append(f"{i['unresolved']} relative or very long paths not listed")
+    if i.get("lost"): parts.append(f"{i['lost']} events lost, so the report is incomplete")
     return ", ".join(parts)
 
 
@@ -137,7 +138,7 @@ def clean_report(v):
             "time": v["time"] if isinstance(v.get("time"), (int, float)) and not isinstance(v.get("time"), bool) else None,
             "blocked": blocked, "home": group("home"), "system": group("system"),
             "noise": noise["total"] if isinstance(noise, dict) and num(noise.get("total")) else 0,
-            "info": {k: info[k] if num(info.get(k)) else 0 for k in ("calls", "processes", "dropped", "unresolved")}}
+            "info": {k: info[k] if num(info.get(k)) else 0 for k in ("calls", "processes", "dropped", "unresolved", "lost")}}
 
 
 def matches(path, terms, extra=""):
@@ -438,7 +439,7 @@ class Win(Adw.ApplicationWindow):
             item = lambda r: self.path_row(r["path"], row_subtitle(r))
             self.fill_group(grp, title, rep[key]["total"], len(rows), layout(rows, grouped),
                             lambda e: self.entry_row(e, item, folder_subtitle, narrowed and len(rows) <= RENDER_MAX), narrowed)
-        self.noise.set_description(f"/proc, /sys, /dev and /run: {rep['noise']} paths not shown")
+        self.noise.set_description(f"/proc, /sys, and /dev and /run without errors: {rep['noise']} paths not shown")
         self.noise.set_visible(True)
         if narrowed and not (self.blocked.get_visible() or self.home.get_visible() or self.system.get_visible()):
             self.head_row.set_subtitle(f"Nothing matches “{safe(' '.join(terms))}”." if terms else "No path has an error.")

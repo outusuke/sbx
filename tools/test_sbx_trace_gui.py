@@ -138,7 +138,7 @@ class Reading(Base):
         self.assertEqual(rep["blocked"], [{"path": "/a", "kind": "denied", "n": 1}, {"path": "/b", "kind": "hidden", "n": 2}])
         self.assertEqual(rep["home"]["rows"], [{"path": "/h/a", "p": 2, "err": {}}, {"path": "/h/b", "err": {"ENOENT": 4}}])
         self.assertEqual(rep["home"]["total"], 2)                                        # never less than the rows it has
-        self.assertEqual((rep["system"]["total"], rep["noise"], rep["info"]), (0, 0, {"calls": 0, "processes": 2, "dropped": 0, "unresolved": 0}))
+        self.assertEqual((rep["system"]["total"], rep["noise"], rep["info"]), (0, 0, {"calls": 0, "processes": 2, "dropped": 0, "unresolved": 0, "lost": 0}))
 
     def test_a_run_counts_when_it_saved_its_report_whatever_the_program_exit_code(self):
         G = self.G; rep = {"command": ["sbx", "a"], "time": 100.0}
@@ -158,6 +158,7 @@ class Text(Base):
         self.assertEqual(G["tilde"](f"{H}/.ssh/config"), "~/.ssh/config"); self.assertEqual(G["tilde"]("/etc/passwd"), "/etc/passwd")
         i = {"calls": 10, "processes": 2, "dropped": 3, "unresolved": 0}
         self.assertEqual(G["summary_text"]({"info": i}), "10 file calls from 2 threads, 3 paths not kept (too many)")
+        self.assertIn("7 events lost", G["summary_text"]({"info": {**i, "lost": 7}}))
         rep = {"name": "fire\x1b[31mfox", "exit": 1, "time": 0.0}
         self.assertNotIn("\x1b", G["title_text"](rep)); self.assertIn("fire?[31mfox · exit 1 · ", G["title_text"](rep))
         self.assertEqual(G["title_text"]({"name": "x", "exit": None, "time": None}), "x")
@@ -387,7 +388,7 @@ class Window(unittest.TestCase):
                                  "noise": {"total": 12, "rows": [{"path": "/proc/1"}]}})
         w.report = rep; w.search.get_text.return_value = ""; w.grouped.get_active.return_value = True; w.only_errors.get_active.return_value = False
         G["Win"].fill_report(w)
-        w.noise.set_description.assert_called_with("/proc, /sys, /dev and /run: 12 paths not shown")
+        w.noise.set_description.assert_called_with("/proc, /sys, and /dev and /run without errors: 12 paths not shown")
         self.assertFalse(hasattr(rep["noise"], "rows"))                                     # no rows of it are kept
         w.search.get_text.return_value = "zzz"; w.blocked.get_visible.return_value = w.home.get_visible.return_value = w.system.get_visible.return_value = False
         G["Win"].fill_report(w); w.head_row.set_subtitle.assert_called_with("Nothing matches “zzz”.")

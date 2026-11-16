@@ -16,7 +16,8 @@ START_WAIT = 90                 # seconds to wait for the root helper (a passwor
 LINE_MAX = 16_384
 PATHS_MAX = 20_000              # distinct paths kept; further new ones are only counted
 VIEW_MAX = 3000                 # rows per group in a saved report
-NOISE = ("/proc", "/sys", "/dev", "/run")
+NOISE = ("/proc", "/sys")       # never shown: their paths are about the kernel, not the program
+QUIET = ("/dev", "/run")        # shown only when an attempt failed: a missing /dev/dri or /run/user/UID/wayland-0 is a common reason a program breaks
 PROBES = {                      # the system calls that take a path; the older ones don't exist on arm64, and stat/lstat have no tracepoint on newer kernels (glibc uses newfstatat)
     "x86_64": ("open", "openat", "openat2", "newfstatat", "statx", "access", "faccessat", "faccessat2", "execve"),
     "aarch64": ("openat", "openat2", "newfstatat", "statx", "faccessat", "faccessat2", "execve")}
@@ -62,7 +63,7 @@ class Trace:
     def __init__(self, token=0):
         self.token = str(token)
         self.paths, self.pids = {}, set()
-        self.lines = self.dropped = self.unresolved = 0
+        self.lines = self.dropped = self.unresolved = self.lost = 0      # lost: events bpftrace says it dropped, so the report is incomplete
         self.ready = threading.Event()
 
     def feed(self, line):
@@ -112,17 +113,18 @@ def view(tr, host=False):
     groups, blocked, checked = {"home": [], "system": [], "noise": []}, [], 0
     for path, c in tr.paths.items():
         errs = c.get("err", {})
-        noise = path in NOISE or path.startswith(tuple(x + "/" for x in NOISE))
+        under = lambda dirs: path in dirs or path.startswith(tuple(x + "/" for x in dirs))
+        noise = under(NOISE) or (under(QUIET) and not errs)
         groups["noise" if noise else "home" if path.startswith(HOME + "/") else "system"].append({"path": path, **{k: c[k] for k in "rwpx" if k in c}, "err": errs})
         kind = "denied" if errs.get("EACCES") or errs.get("EPERM") else "read-only" if errs.get("EROFS") else None
-        if kind is None and errs.get("ENOENT") and not host and not noise and checked < 2000:
+        if kind is None and errs.get("ENOENT") and not host and not under(NOISE) and checked < 2000:
             checked += 1
             if os.path.lexists(path): kind = "hidden"                 # the host has something there and the program found nothing: the sandbox hid it
         if kind: blocked.append({"path": path, "kind": kind, "n": sum(errs.get(e, 0) for e in ("EACCES", "EPERM", "EROFS", "ENOENT")) or 1})
     weight = lambda r: -sum(r.get(k, 0) for k in "rwpx")
     out = {g: {"total": len(rows), "rows": sorted(rows, key=lambda r: (weight(r), r["path"]))[:VIEW_MAX]} for g, rows in groups.items()}
     out["blocked"] = sorted(blocked, key=lambda r: (r["kind"] != "denied", -r["n"], r["path"]))[:VIEW_MAX]
-    out["info"] = {"calls": tr.lines, "processes": len(tr.pids), "dropped": tr.dropped, "unresolved": tr.unresolved, "host": host}
+    out["info"] = {"calls": tr.lines, "processes": len(tr.pids), "dropped": tr.dropped, "unresolved": tr.unresolved, "lost": tr.lost, "host": host}
     return out
 
 
@@ -134,6 +136,7 @@ def show(v, limit):
     i = v["info"]
     print(f"{v.get('name', '?')}: {i['calls']} file calls from {i['processes']} threads" + (f", {i['dropped']} paths not kept (too many)" if i["dropped"] else "") +
           (f", {i['unresolved']} relative or very long paths not listed" if i["unresolved"] else ""))
+    if i.get("lost"): print(f"warning: bpftrace lost {i['lost']} events, so this report is incomplete")
     print(f"blocked ({len(v['blocked'])}): refused, or hidden by the sandbox")
     for b in v["blocked"][:limit]: print(f"  {b['kind']:<9} {safe(tilde(b['path']))}   {b['n']}x")
     if not v["blocked"]: print("  nothing")
@@ -146,7 +149,7 @@ def show(v, limit):
             errs = ", ".join(f"{e} x{n}" for e, n in r["err"].items())
             print(f"  {safe(tilde(r['path']))}   {counts}" + (f"   [{errs}]" if errs else ""))
         if grp["total"] > limit: print(f"  ... {grp['total'] - limit} more (--limit N, or --json)")
-    print(f"/proc, /sys, /dev and /run: {v['noise']['total']} paths not shown")
+    print(f"/proc, /sys, and /dev and /run without errors: {v['noise']['total']} paths not shown")
 
 
 def report_path(name):
@@ -189,6 +192,20 @@ def support():
 
 
 HOLD = "import os,sys;f=int(sys.argv[1]);os.read(f,1);os.close(f);os.execvp(sys.argv[2],sys.argv[2:])"      # wait for the helper, then become the command
+
+
+def lost_events(f, cap=50_000):
+    """How many events bpftrace says it lost, from what it wrote to F (its stderr). At most CAP lines are read."""
+    n = 0
+    try:
+        f.seek(0)
+        for i, line in enumerate(f):
+            if i >= cap: break
+            m = re.search(rb"Lost (\d+) events", line)
+            if m: n += int(m.group(1))
+    except (OSError, ValueError):
+        pass
+    return n
 
 
 def tail_of(f):
@@ -241,6 +258,7 @@ def trace(cmd, host=False):
     if proc.poll() is None:
         try: proc.terminate()                                       # (a root process may refuse; it ends on its own)
         except OSError: pass
+    tr.lost = lost_events(errf)
     errf.close(); proc.stdout.close()
     return (128 - rc if rc < 0 else rc), tr
 
@@ -251,7 +269,9 @@ def main(argv):
         a = argv[i]
         if a in ("--json", "--host"): flags.add(a)
         elif a == "--last": last = True
-        elif a == "--limit" and i + 1 < len(argv) and argv[i + 1].isdigit(): limit = int(argv[i + 1]); i += 1
+        elif a == "--limit":
+            if i + 1 >= len(argv) or not (argv[i + 1].isascii() and argv[i + 1].isdigit()): die(f"--limit needs a number\n{USAGE}")
+            limit = int(argv[i + 1]); i += 1
         elif a in ("-h", "--help"): print(USAGE); return 0
         elif a == "--version": print(f"sbx-trace {VERSION}"); return 0
         else: die(f"unknown option {a}\n{USAGE}")
@@ -260,6 +280,7 @@ def main(argv):
     if last:
         names = sorted((n for n in os.listdir(STATE) if n.endswith(".json")), key=lambda n: -os.stat(os.path.join(STATE, n)).st_mtime) if os.path.isdir(STATE) else []
         name = re.sub(r"[^A-Za-z0-9._-]", "_", rest[0]) if rest else (names[0][:-5] if names else None)
+        if name is None: die("no report yet: sbx-trace -- COMMAND")
         try:
             with open(report_path(name)) as f: v = json.load(f)
         except (OSError, ValueError, TypeError): die("no report yet: sbx-trace -- COMMAND")

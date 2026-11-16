@@ -3,7 +3,7 @@
 # Tests for sbx-trace. Run as a normal user:   python3 tools/test_sbx_trace.py
 # Nothing here needs bpftrace or root: the parser, the bpftrace program text, the report and the held start are tested, and the
 # helper is a small fake that prints what bpftrace would.
-import contextlib, importlib.machinery, importlib.util, io, json, os, signal, stat, sys, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, signal, stat, tempfile, unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -109,6 +109,16 @@ class Report(Base):
         self.assertTrue(v["home"]["total"] >= 3 and v["system"]["total"] >= 3)
         self.assertNotIn(f"{H}/.ssh/config", {b["path"] for b in T.view(t, host=True)["blocked"]})   # without a sandbox a missing file is just missing
 
+    def test_failed_dev_and_run_paths_are_shown_and_the_rest_of_them_stay_quiet(self):
+        t = self.tr(["4242\to\t1\t3\t0\t/dev/null", "4242\to\t1\t-2\t0\t/dev/dri/card0", "4242\to\t1\t-2\t0\t/run/user/1000/wayland-0",
+                     "4242\to\t1\t3\t0\t/run/utmp", "4242\to\t1\t-2\t0\t/proc/self/nothing", "4242\to\t1\t-13\t0\t/sys/x"])
+        with mock.patch.object(T.os.path, "lexists", side_effect=lambda p: p.startswith(("/dev/", "/run/", "/proc/"))):
+            v = T.view(t)
+        kinds = {b["path"]: b["kind"] for b in v["blocked"]}
+        self.assertEqual(kinds, {"/dev/dri/card0": "hidden", "/run/user/1000/wayland-0": "hidden", "/sys/x": "denied"})   # /proc and /sys are never "hidden"
+        self.assertEqual({r["path"] for r in v["system"]["rows"]}, {"/dev/dri/card0", "/run/user/1000/wayland-0"})
+        self.assertEqual(v["noise"]["total"], 4)                                        # /dev/null, /run/utmp, /proc/self/nothing, /sys/x
+
     def test_the_text_has_no_control_characters_and_is_saved_privately(self):
         t = self.tr(["4242\to\t1\t-13\t0\t/tmp/evil\x1b[31mname"]); v = T.view(t); v["name"] = "foo"
         out = io.StringIO()
@@ -158,6 +168,22 @@ print(token + "\\to\\t1\\t-2\\t0\\t/etc/missing", flush=True)
         exe = self.fake("print('Error: cannot attach', file=sys.stderr)\nsys.exit(1)\n")
         with self.assertRaises(SystemExit) as c: self.run_trace(exe, ["/bin/sh", "-c", f"touch {ran}"])
         self.assertNotEqual(c.exception.code, 0); self.assertFalse(os.path.exists(ran))
+
+    def test_lost_events_are_counted_and_warned_about(self):
+        exe = self.fake("print(token + '\\tREADY', flush=True)\nprint('Lost 5 events', file=sys.stderr, flush=True)\n"
+                        "while True:\n    try: os.kill(pid, 0)\n    except ProcessLookupError: break\n    time.sleep(0.05)\nprint('WARNING: Lost 7 events', file=sys.stderr, flush=True)\n")
+        rc, tr = self.run_trace(exe, ["/bin/sh", "-c", "exit 0"])
+        self.assertIn(tr.lost, (5, 12))                                                # the second message can come after we stopped reading
+        v = T.view(tr); v["name"] = "x"; out = io.StringIO()
+        with contextlib.redirect_stdout(out): T.show(v, 40)
+        self.assertIn(f"bpftrace lost {tr.lost} events", out.getvalue())
+
+    def test_the_limit_needs_a_number_and_last_with_no_reports_says_so(self):
+        for argv in (["--limit"], ["--limit", "abc"], ["--limit", "²"]):
+            with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit): T.main(argv)
+            self.assertIn("--limit needs a number", err.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit): T.main(["--last"])
+        self.assertIn("no report yet", err.getvalue())
 
     def test_it_says_why_it_cannot(self):
         with mock.patch.object(T.shutil, "which", return_value=None): h, why = T.support(); self.assertIsNone(h); self.assertIn("bpftrace is missing", why)
