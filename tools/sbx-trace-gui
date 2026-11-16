@@ -37,10 +37,15 @@ PERSIST = (".config/autostart", ".config/systemd/user", ".local/share/systemd/us
            ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout",
            ".config/fish/config.fish", ".config/fish/conf.d", ".xprofile", ".xinitrc", ".xsessionrc",
            ".local/bin", "bin", ".cargo/bin", ".local/share/applications", ".gitconfig", ".config/git", ".vimrc", ".config/nvim", ".emacs.d")
+# Startup files that matter wherever they sit, also inside a folder you share: a git hook or config, direnv, a VS Code task, a pre-commit
+# hook, and the Python files that run on every start (.pth, sitecustomize, usercustomize). \Z is the end of the name, newline or not.
+PERSIST_ANYWHERE = re.compile(r"/\.git/hooks/(?![^/]*\.sample\Z)[^/]+|/\.git/config\Z|/\.envrc\Z|/\.vscode/tasks\.json\Z|/\.husky/[^/]+|/\.pre-commit-config\.yaml\Z"
+                              r"|/(?:site|dist)-packages/[^/]+\.pth\Z|/(?:site|user)customize\.py\Z")
 PERSIST_SYSTEM = ("/etc/crontab", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly", "/etc/cron.weekly", "/etc/cron.monthly", "/var/spool/cron",
-                  "/etc/systemd/system", "/etc/profile.d", "/etc/rc.local", "/etc/init.d", "/etc/xdg/autostart", "/etc/ld.so.preload")
+                  "/etc/systemd/system", "/etc/profile.d", "/etc/rc.local", "/etc/init.d", "/etc/xdg/autostart", "/etc/ld.so.preload",
+                  "/etc/profile", "/etc/bash.bashrc", "/etc/environment", "/etc/zsh")
 SENSITIVE_SYSTEM = ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/ssh/ssh_host_")                                                  # outside it (a name that starts with these)
-SENSITIVE_TIP = "Looks sensitive: keys, passwords or tokens, or a place that starts programs at login or boot"
+SENSITIVE_TIP = "Looks sensitive: keys, passwords or tokens, or a place that makes something run later, like a startup file or a git hook"
 COUNTS = (("r", "read"), ("w", "write"), ("p", "probe"), ("x", "run"))
 
 
@@ -61,7 +66,8 @@ def copyable(path):
 
 
 def persists(path):
-    """Is PATH a place that starts programs later (login, boot, a shell, a git hook or an editor), or inside one?"""
+    """Is PATH a place that makes something run later (login, boot, a shell, a git hook, an editor, Python), or inside one?"""
+    if PERSIST_ANYWHERE.search(path): return True
     if path.startswith(HOME + "/"):
         rel = path[len(HOME) + 1:]
         return any(rel == s or rel.startswith(s + "/") for s in PERSIST)

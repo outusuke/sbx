@@ -463,6 +463,17 @@ class Window(unittest.TestCase):
             Adw.ActionRow.reset_mock(); G["Win"].path_row(w, f"{H}/.bashrc", "x", **kw)
             self.assertEqual(Adw.ActionRow.return_value.add_prefix.called, want, kw)
 
+    def test_startup_files_are_marked_wherever_they_sit_when_written_to(self):
+        G, H = self.G, self.tmp
+        for p in ("/etc/profile", "/etc/bash.bashrc", "/etc/environment", "/etc/zsh/zshrc", f"{H}/.local/lib/python3.12/site-packages/evil.pth",
+                  f"{H}/venv/lib/python3.12/site-packages/sitecustomize.py", "/usr/lib/python3/dist-packages/x.pth", f"{H}/Projects/foo/.git/hooks/pre-commit",
+                  f"{H}/Projects/foo/.git/config", f"{H}/Projects/foo/.envrc", f"{H}/Projects/foo/.vscode/tasks.json", f"{H}/Projects/foo/.husky/pre-commit",
+                  f"{H}/Projects/foo/.pre-commit-config.yaml"):
+            self.assertFalse(G["sensitive"](p), p); self.assertTrue(G["sensitive"](p, True), p)
+        for p in ("/etc/profilex", "/etc/bash.bashrcx", f"{H}/Projects/foo/.git/hooks/pre-commit.sample", f"{H}/Projects/foo/.git/HEAD", f"{H}/Projects/foo/.git/objects/ab/cd",
+                  f"{H}/Projects/foo/envrc", f"{H}/Projects/foo/.vscode/settings.json", f"{H}/Projects/x.pth", f"{H}/.local/lib/python3.12/site-packages/numpy/__init__.py",
+                  f"{H}/Projects/foo/.git/config\n"): self.assertFalse(G["sensitive"](p, True), p)
+
     def test_a_group_draws_a_few_rows_and_says_how_many_more_there_are(self):
         G, w = self.G, self.win(); Adw = G["Adw"]; group = mock.MagicMock(); made = []
         def row(it): made.append(it); return mock.MagicMock()

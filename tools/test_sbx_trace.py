@@ -218,6 +218,12 @@ class Suggest(Base):
         self.assertEqual([(l["setting"], l["value"]) for l in s["lines"]], [("read_only", "~/.gitconfig")])
         self.assertEqual({k["path"]: k["why"].split(" ")[0] for k in s["skipped"]}, {f"{H}/.bashrc": "writing", f"{H}/.config/autostart/a.desktop": "writing"})
 
+    def test_a_git_hook_in_a_shared_folder_is_never_suggested_read_write(self):
+        H = self.home
+        s = T.suggest(self.report([{"path": f"{H}/Projects/foo/.git/hooks/pre-commit", "kind": "read-only", "n": 1}, {"path": f"{H}/Projects/foo/.envrc", "kind": "hidden", "n": 1}]))
+        self.assertEqual([(l["setting"], l["value"]) for l in s["lines"]], [("read_only", "~/Projects/foo/.envrc")])
+        self.assertEqual([k["path"] for k in s["skipped"]], [f"{H}/Projects/foo/.git/hooks/pre-commit"])
+
     def test_a_report_of_the_wrong_shape_gives_nothing_and_does_not_crash(self):
         for v in ({}, {"blocked": "x"}, {"blocked": [5, {"path": 3}, {"kind": "denied"}]}, []):
             self.assertEqual(T.suggest(v), {"lines": [], "skipped": [], "outside": 0})
@@ -316,6 +322,20 @@ class Page(Base):
         by = {r["path"]: r for r in T.html_data(v)["rows"]}
         self.assertEqual({p: r["s"] for p, r in by.items()},
                          {"~/.bashrc": 0, "~/.config/autostart/a.desktop": 1, "~/.docker/config.json": 1, "/etc/cron.d/x": 1, "~/.gitconfig": 0})
+
+    def test_startup_files_are_known_wherever_they_sit_also_in_a_folder_you_share(self):
+        H = self.home
+        for p in ("/etc/profile", "/etc/bash.bashrc", "/etc/environment", "/etc/zsh/zshrc", f"{H}/.local/lib/python3.12/site-packages/evil.pth",
+                  f"{H}/venv/lib/python3.12/site-packages/sitecustomize.py", "/usr/lib/python3/dist-packages/x.pth", f"{H}/Projects/foo/.git/hooks/pre-commit",
+                  f"{H}/Projects/foo/.git/config", f"{H}/Projects/foo/.envrc", f"{H}/Projects/foo/.vscode/tasks.json", f"{H}/Projects/foo/.husky/pre-commit",
+                  f"{H}/Projects/foo/.pre-commit-config.yaml"):
+            self.assertTrue(T.persists(p), p)
+        for p in ("/etc/profilex", "/etc/bash.bashrcx", f"{H}/Projects/foo/.git/hooks/pre-commit.sample", f"{H}/Projects/foo/.git/HEAD", f"{H}/Projects/foo/.git/objects/ab/cd",
+                  f"{H}/Projects/foo/envrc", f"{H}/Projects/foo/.vscode/settings.json", f"{H}/Projects/x.pth", f"{H}/.local/lib/python3.12/site-packages/numpy/__init__.py",
+                  f"{H}/Projects/foo/.git/config\n"): self.assertFalse(T.persists(p), p)
+        v = {"name": "x", "blocked": [], "home": {"total": 2, "rows": [{"path": f"{H}/Projects/foo/.git/hooks/pre-commit", "w": 1, "err": {}},
+                                                                     {"path": f"{H}/Projects/foo/.git/HEAD", "w": 1, "err": {}}]}, "system": {"total": 0, "rows": []}}
+        self.assertEqual({r["path"]: r["s"] for r in T.html_data(v)["rows"]}, {"~/Projects/foo/.git/hooks/pre-commit": 1, "~/Projects/foo/.git/HEAD": 0})
 
     def test_the_page_gets_its_data_from_the_report_as_it_is_read(self):
         d = T.html_data(self.report()); H = self.home
