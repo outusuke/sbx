@@ -20,6 +20,9 @@ RENDER_MAX = 100                # rows drawn per group (and per folder); the sea
 FOLDER_DEPTH = 2                # a file is listed under its first two folders: ~/.config/mozilla, /usr/lib
 LOG_KEEP = 8192                 # bytes of sbx-trace's output kept for an error message, however much the program prints
 KINDS = {"denied": "error", "read-only": "warning", "hidden": "accent"}      # blocked kinds and the colour of their label
+SENSITIVE = (".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".local/share/keyrings", ".config/gcloud", ".netrc", ".git-credentials")   # in your home: keys, passwords, tokens
+SENSITIVE_SYSTEM = ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/ssh/ssh_host_")                                                  # outside it (a name that starts with these)
+SENSITIVE_TIP = "Looks sensitive: keys, passwords or tokens"
 COUNTS = (("r", "read"), ("w", "write"), ("p", "probe"), ("x", "run"))
 
 
@@ -37,6 +40,14 @@ def copyable(path):
     """(the text to copy for PATH, whether control characters were replaced). A name with an escape sequence in it is not put on the
     clipboard as it is: pasted into a terminal it could do something."""
     return (safe(path), True) if CTRL.search(path) else (path, False)
+
+
+def sensitive(path):
+    """Does PATH look like it holds secrets: it is one of the places in SENSITIVE (or inside one)? A folder that only holds one, like ~/.local/share, is not."""
+    if path.startswith(HOME + "/"):
+        rel = path[len(HOME) + 1:]
+        return any(rel == s or rel.startswith(s + "/") for s in SENSITIVE)
+    return path.startswith(SENSITIVE_SYSTEM)
 
 
 def counts_text(row):
@@ -439,8 +450,13 @@ class Win(Adw.ApplicationWindow):
         return True
 
     # -- the report --
+    def warn_icon(self):
+        return Gtk.Image(icon_name="dialog-warning-symbolic", valign=Gtk.Align.CENTER, css_classes=["warning"], tooltip_text=SENSITIVE_TIP)
+
     def path_row(self, path, subtitle, kind=None):
-        row = Adw.ActionRow(title=safe(tilde(path)), subtitle=subtitle, use_markup=False)
+        hot = sensitive(path)                                                        # said in words too, not only by the icon's colour
+        row = Adw.ActionRow(title=safe(tilde(path)), subtitle=f"sensitive · {subtitle}" if hot and subtitle else "sensitive" if hot else subtitle, use_markup=False)
+        if hot: row.add_prefix(self.warn_icon())
         if kind: row.add_suffix(Gtk.Label(label=kind, valign=Gtk.Align.CENTER, css_classes=[KINDS[kind], "caption"]))
         copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Copy the path")
         copy.connect("clicked", lambda *_, p=path: self.copy_path(p))
@@ -451,7 +467,9 @@ class Win(Adw.ApplicationWindow):
         """One line of a group: a file, or a folder that opens to show its files (a folder with one file is just that file)."""
         folder, items = entry
         if folder is None or len(items) == 1: return make_item(items[0])
-        row = Adw.ExpanderRow(title=safe(folder_title(folder)), subtitle=summarize(items), use_markup=False)
+        hot = any(sensitive(it["path"]) for it in items)
+        row = Adw.ExpanderRow(title=safe(folder_title(folder)), subtitle=summarize(items) + (" · holds sensitive paths" if hot else ""), use_markup=False)
+        if hot: row.add_prefix(self.warn_icon())
         copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Copy the folder")
         copy.connect("clicked", lambda *_: self.copy_path(folder))
         row.add_suffix(copy)

@@ -319,6 +319,21 @@ class Window(unittest.TestCase):
         Gtk.Button.return_value.connect.call_args[0][1](); w.copy_path.assert_called_once_with(evil)     # what is copied is decided by copy_path, from the real name
         self.assertIn("error", Gtk.Label.call_args.kwargs["css_classes"])                  # denied is shown as an error
 
+    def test_a_sensitive_path_is_marked_in_words_and_with_an_icon_and_a_plain_one_is_not(self):
+        G, H = self.G, self.tmp; Adw = G["Adw"]
+        for p in (f"{H}/.ssh", f"{H}/.ssh/id_ed25519", f"{H}/.local/share/keyrings/login.keyring", "/etc/shadow", "/etc/shadow-", "/etc/sudoers.d/x", "/etc/ssh/ssh_host_rsa_key"):
+            self.assertTrue(G["sensitive"](p), p)
+        for p in (f"{H}/.sshx", f"{H}/.local/share", f"{H}/.local/share/applications/a", H, "/etc/passwd", "/etc/ssh/ssh_config", "/home/other/.ssh/x", f"{H}/x/.ssh"):
+            self.assertFalse(G["sensitive"](p), p)
+        w = mock.MagicMock()
+        for path, sub, want in ((f"{H}/.ssh/config", "read 1", "sensitive · read 1"), (f"{H}/.ssh/config", "", "sensitive"), ("/tmp/a", "read 1", "read 1")):
+            Adw.ActionRow.reset_mock(); G["Win"].path_row(w, path, sub)
+            self.assertEqual(Adw.ActionRow.call_args.kwargs["subtitle"], want)
+            self.assertEqual(Adw.ActionRow.return_value.add_prefix.called, want.startswith("sensitive"))
+        made = lambda it: ("row", it["path"]); Adw.ExpanderRow.reset_mock()
+        G["Win"].entry_row(w, (f"{H}/.ssh", [{"path": f"{H}/.ssh/a", "r": 1, "err": {}}, {"path": f"{H}/.ssh/b", "r": 1, "err": {}}]), made, G["folder_subtitle"], False)
+        self.assertTrue(Adw.ExpanderRow.call_args.kwargs["subtitle"].endswith("holds sensitive paths")); Adw.ExpanderRow.return_value.add_prefix.assert_called()
+
     def test_a_group_draws_a_few_rows_and_says_how_many_more_there_are(self):
         G, w = self.G, self.win(); Adw = G["Adw"]; group = mock.MagicMock(); made = []
         def row(it): made.append(it); return mock.MagicMock()
