@@ -14,7 +14,10 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 HOME = os.path.realpath(os.path.expanduser("~"))
 HOMES = HOME + "/.sbx-homes"
 LIVE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local/state"), "sbx-trace", "live")   # where a running sbx-trace writes what it has seen so far
-LIVE_EVERY_MS = 1000            # how often the window looks at it
+LIVE_EVERY_MS = 1000            # how often the window looks at it (a file that has not changed is not read)
+LIVE_RENDER_MAX = 30            # rows drawn per group and folder while the trace runs: fewer widgets to rebuild
+LIVE_REDRAW_MIN = 3.0           # seconds between two redraws of the rows while the trace runs, and at least LIVE_REDRAW_COST times what the last one took
+LIVE_REDRAW_COST = 10
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 CTRL_KEEP_NL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
@@ -265,17 +268,27 @@ def load_report(name=None):
     except ValueError as e: return None, f"The saved report can't be read: {safe(str(e))}"
 
 
-def load_live(started):
-    """The newest snapshot of a running trace written since STARTED (a report with no exit code), or None. Read as a file, and checked
-    like any report: its file names come from the program."""
+def live_file(started):
+    """(path, modification time) of the newest snapshot of a running trace written since STARTED, or (None, 0). Only looks at the files."""
     try:
-        files = [os.path.join(LIVE_DIR, f) for f in os.listdir(LIVE_DIR) if f.endswith(".json")]
-        files = [f for f in files if os.stat(f).st_mtime >= started - 2]
-        if not files: return None
-        with open(max(files, key=lambda f: os.stat(f).st_mtime), encoding="utf-8", errors="replace") as fh:
-            return clean_report(json.load(fh))
+        files = [(os.stat(p).st_mtime_ns, p) for p in (os.path.join(LIVE_DIR, f) for f in os.listdir(LIVE_DIR) if f.endswith(".json"))]
+    except OSError:
+        return None, 0
+    files = [(m, p) for m, p in files if m >= (started - 2) * 1e9]
+    return (max(files)[1], max(files)[0]) if files else (None, 0)
+
+
+def read_live(path):
+    """The snapshot at PATH (a report with no exit code), or None. Checked like any report: its file names come from the program."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh: return clean_report(json.load(fh))
     except (OSError, ValueError, TypeError):
         return None
+
+
+def load_live(started):
+    path, _ = live_file(started)
+    return read_live(path) if path else None
 
 
 def live_text(rep):
@@ -360,7 +373,8 @@ class Win(Adw.ApplicationWindow):
         self.run, self.report, self.compare, self.closing = None, None, None, False
         self.rows = {}                           # group -> the rows in it now
         self.open_folders = set()                # folders the person opened: they stay open when the live view redraws
-        self.live_sig = None
+        self.live_sig, self.live_mtime, self.live_next = None, 0, 0.0
+        self.render_max = RENDER_MAX             # rows drawn per group and folder: fewer while a trace runs
         self.toasts = Adw.ToastOverlay()
         view = Adw.ToolbarView()
         bar = Adw.HeaderBar()
@@ -488,8 +502,8 @@ class Win(Adw.ApplicationWindow):
         copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Copy the folder")
         copy.connect("clicked", lambda *_: self.copy_path(folder))
         row.add_suffix(copy)
-        for it in items[:RENDER_MAX]: row.add_row(make_item(it))
-        if len(items) > RENDER_MAX: row.add_row(Adw.ActionRow(title=f"… {len(items) - RENDER_MAX} more", subtitle="Search to narrow it down.", use_markup=False))
+        for it in items[:self.render_max]: row.add_row(make_item(it))
+        if len(items) > self.render_max: row.add_row(Adw.ActionRow(title=f"… {len(items) - self.render_max} more", subtitle="Search to narrow it down.", use_markup=False))
         row.set_expanded(bool(expand) or folder in self.open_folders)
         row.connect("notify::expanded", lambda r, _p, f=folder: (self.open_folders.add(f) if r.get_expanded() else self.open_folders.discard(f)))
         return row
@@ -498,7 +512,7 @@ class Win(Adw.ApplicationWindow):
         """Put the first RENDER_MAX of ENTRIES in GROUP, and a last row that says how many more there are. MATCHED files of TOTAL are in
         ENTRIES. Hidden when nothing is left to show."""
         for r in self.rows.get(group, []): group.remove(r)
-        shown = entries[:RENDER_MAX]
+        shown = entries[:self.render_max]
         rows = self.rows[group] = [make_row(e) for e in shown]
         unsaved = 0 if narrowed else max(0, total - matched)                       # sbx-trace keeps only the first rows of a very long list
         if len(entries) > len(shown):
@@ -527,12 +541,12 @@ class Win(Adw.ApplicationWindow):
         blocked = [b for b in rep["blocked"] if matches(b["path"], terms, b["kind"])]
         item = lambda b: self.path_row(b["path"], f"{b['n']}×", b["kind"])
         self.fill_group(self.blocked, "Blocked", len(rep["blocked"]), len(blocked), layout(blocked, grouped),
-                        lambda e: self.entry_row(e, item, blocked_subtitle, bool(terms) and len(blocked) <= RENDER_MAX), bool(terms))
+                        lambda e: self.entry_row(e, item, blocked_subtitle, bool(terms) and len(blocked) <= self.render_max), bool(terms))
         for grp, key, title in ((self.home, "home", "Your home"), (self.system, "system", "The system")):
             rows = [r for r in rep[key]["rows"] if matches(r["path"], terms) and (r["err"] or not only_errors)]
             item = lambda r: self.path_row(r["path"], row_subtitle(r))
             self.fill_group(grp, title, rep[key]["total"], len(rows), layout(rows, grouped),
-                            lambda e: self.entry_row(e, item, folder_subtitle, narrowed and len(rows) <= RENDER_MAX), narrowed)
+                            lambda e: self.entry_row(e, item, folder_subtitle, narrowed and len(rows) <= self.render_max), narrowed)
         self.noise.set_description(f"/proc, /sys, and /dev and /run without errors: {rep['noise']} paths not shown")
         self.noise.set_visible(True)
         self.fill_compare()
@@ -639,7 +653,8 @@ class Win(Adw.ApplicationWindow):
         try: run = self.run = Run(argv)
         except OSError as e: return self.alert("Couldn't start sbx-trace", str(getattr(e, "strerror", None) or e))
         self.set_busy(True, f"Tracing {safe(shlex.join(words))}", "Waiting for your password. The program starts after that, and the files it touches appear here while it runs.")
-        self.live_sig = None
+        self.live_sig, self.live_mtime, self.live_next = None, 0, 0.0
+        self.render_max = LIVE_RENDER_MAX
         GLib.timeout_add(LIVE_EVERY_MS, self.poll_live, run, started)
 
         def work():
@@ -652,20 +667,26 @@ class Win(Adw.ApplicationWindow):
         """Every second while the trace runs: read the snapshot sbx-trace wrote, from a thread, and redraw when it changed."""
         if self.closing or self.run is not run: return False                        # the trace ended: finished() shows the saved report
         def work():
-            rep = load_live(started)
-            GLib.idle_add(lambda: self.got_live(run, rep) and False)
+            path, mtime = live_file(started)
+            rep = read_live(path) if path and mtime != self.live_mtime else None     # a snapshot already shown is not read again
+            GLib.idle_add(lambda: self.got_live(run, rep, mtime) and False)
         threading.Thread(target=work, daemon=True).start()
         return True
 
-    def got_live(self, run, rep):
+    def got_live(self, run, rep, mtime=0):
         if self.closing or self.run is not run or rep is None: return True
+        self.live_mtime = mtime
         sig = (rep["info"]["calls"], len(rep["blocked"]), rep["home"]["total"], rep["system"]["total"])
-        self.status.set_subtitle(live_text(rep))
-        if sig != self.live_sig:                                                    # nothing new: don't rebuild the rows
+        self.status.set_subtitle(live_text(rep))                                    # cheap: always up to date
+        now = time.monotonic()
+        if sig != self.live_sig and now >= self.live_next:                          # the rows are costly: only when something changed, and not too often
             self.live_sig = sig
             self.report, self.compare = rep, None
             self.fill_report()
             self.export_btn.set_sensitive(False)                                    # the page is made from the saved report, which this run has not written yet
+            self.live_next = time.monotonic() + max(LIVE_REDRAW_MIN, LIVE_REDRAW_COST * (time.monotonic() - now))
+        elif sig != self.live_sig:
+            self.live_mtime = 0                                                     # not drawn yet: read it again on the next look
         return True
 
     def stop_trace(self):
@@ -677,6 +698,7 @@ class Win(Adw.ApplicationWindow):
     def finished(self, run, cmd, started, rc, out, rep, why):
         if self.closing: return True
         if self.run is run: self.run = None
+        self.render_max = RENDER_MAX
         self.set_busy(False)
         if is_fresh(rep, cmd, started):
             self.report, self.compare = rep, None                                   # what was worked out for the old report doesn't belong to this one

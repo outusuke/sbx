@@ -448,6 +448,18 @@ class Live(Base):
             done.set(); th.join(2)
         self.assertFalse(os.path.exists(T.live_path("foo")))
 
+    def test_the_loop_skips_a_snapshot_when_nothing_new_was_seen_and_backs_off_when_one_is_slow(self):
+        import threading
+        done, t, n = threading.Event(), self.tr(), []
+        waits = []
+        class D:
+            def wait(self, delay):
+                waits.append(delay); return len(waits) > 4
+            def set(self): pass
+        with mock.patch.object(T, "write_live", side_effect=lambda *a: n.append(1)), mock.patch.object(T, "LIVE_EVERY", 0.01), mock.patch.object(T.os, "unlink"):
+            T.live_loop(t, False, {"name": "foo", "command": ["foo"]}, D())
+        self.assertEqual(len(n), 1)                                                 # the trace did not move after the first snapshot
+
     def test_a_snapshot_never_raises(self):
         with mock.patch.object(T, "STATE", "/proc/nope"):
             T.write_live(self.tr(), False, {"name": "foo", "command": ["foo"]})

@@ -549,8 +549,14 @@ def write_live(tr, host, meta):
 
 
 def live_loop(tr, host, meta, done):
-    """Until DONE is set, write a snapshot every LIVE_EVERY seconds; then remove it (the saved report replaces it)."""
-    while not done.wait(LIVE_EVERY): write_live(tr, host, meta)
+    """Until DONE is set, write a snapshot about every LIVE_EVERY seconds, but only when there is something new and never more often than
+    its own cost allows (10 times what the last one took), so it can't slow the program or the reading of bpftrace's lines; then remove it."""
+    seen, delay = -1, LIVE_EVERY
+    while not done.wait(delay):
+        if tr.lines == seen: continue
+        seen, t0 = tr.lines, time.monotonic()
+        write_live(tr, host, meta)
+        delay = max(LIVE_EVERY, 10 * (time.monotonic() - t0))
     try: os.unlink(live_path(meta["name"]))
     except OSError: pass
 

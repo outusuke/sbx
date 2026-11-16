@@ -308,6 +308,30 @@ class Live(Base):
         self.assertIn("/etc/shadow", [b["path"] for b in rep["blocked"]])
         self.assertIn("blocked so far", G["live_text"](rep))
 
+    def test_the_window_does_not_redraw_the_rows_too_often_or_when_nothing_changed(self):
+        G = self.G
+        w = mock.MagicMock(); run = object(); w.run = run; w.closing = False; w.live_sig, w.live_mtime, w.live_next = None, 0, 0.0
+        rep = G["clean_report"](self.real_report())
+        with mock.patch.dict(G, {"time": mock.MagicMock(monotonic=mock.MagicMock(return_value=100.0))}):
+            G["Win"].got_live(w, run, rep, 5)
+            self.assertEqual(w.fill_report.call_count, 1); self.assertEqual(w.live_mtime, 5)
+            self.assertGreaterEqual(w.live_next, 100.0 + G["LIVE_REDRAW_MIN"])
+            G["Win"].got_live(w, run, rep, 5)                                       # the same snapshot: nothing to draw
+            self.assertEqual(w.fill_report.call_count, 1)
+            rep2 = dict(rep, info=dict(rep["info"], calls=rep["info"]["calls"] + 50))
+            G["Win"].got_live(w, run, rep2, 6)                                      # new, but too soon after the last redraw
+            self.assertEqual(w.fill_report.call_count, 1); self.assertEqual(w.live_mtime, 0)      # ...so it is read again later
+        w.live_next = 0.0
+        G["Win"].got_live(w, run, rep2, 6)
+        self.assertEqual(w.fill_report.call_count, 2)
+
+    def test_a_snapshot_that_has_not_changed_is_found_by_its_time_and_not_read(self):
+        G = self.G
+        self.snapshot()
+        path, m = G["live_file"](time.time() - 10)
+        self.assertTrue(path.endswith("foo.json")); self.assertGreater(m, 0)
+        self.assertEqual(G["live_file"](time.time() - 10), (path, m))
+
     def test_an_old_snapshot_left_by_a_trace_that_was_killed_is_not_shown(self):
         self.snapshot()
         self.assertIsNone(self.G["load_live"](time.time() + 3600))
@@ -357,7 +381,7 @@ class Window(unittest.TestCase):
         self.G = load_gui(self.tmp)
 
     def win(self):
-        w = mock.MagicMock(); w.rows = {}; w.closing = False; w.run = None
+        w = mock.MagicMock(); w.rows = {}; w.closing = False; w.run = None; w.render_max = self.G["RENDER_MAX"]
         return w
 
     def test_the_page_builds(self):                                                        # no GTK, but a typo or a missing name would show here
@@ -381,7 +405,7 @@ class Window(unittest.TestCase):
             self.assertTrue(G["sensitive"](p), p)
         for p in (f"{H}/.sshx", f"{H}/.local/share", f"{H}/.local/share/applications/a", H, "/etc/passwd", "/etc/ssh/ssh_config", "/home/other/.ssh/x", f"{H}/x/.ssh"):
             self.assertFalse(G["sensitive"](p), p)
-        w = mock.MagicMock()
+        w = mock.MagicMock(); w.render_max = G["RENDER_MAX"]
         for path, sub, want in ((f"{H}/.ssh/config", "read 1", "sensitive · read 1"), (f"{H}/.ssh/config", "", "sensitive"), ("/tmp/a", "read 1", "read 1")):
             Adw.ActionRow.reset_mock(); G["Win"].path_row(w, path, sub)
             self.assertEqual(Adw.ActionRow.call_args.kwargs["subtitle"], want)
@@ -563,7 +587,7 @@ class Folders(Base):
         self.assertEqual(G["blocked_subtitle"]([{"kind": "hidden"}, {"kind": "denied"}, {"kind": "hidden"}]), "denied 1 · hidden 2")
 
     def test_a_folder_row_opens_to_its_files_and_copies_the_folder(self):
-        G, H = self.G, self.home; w = mock.MagicMock(); Adw, Gtk = G["Adw"], G["Gtk"]
+        G, H = self.G, self.home; w = mock.MagicMock(); w.render_max = G["RENDER_MAX"]; Adw, Gtk = G["Adw"], G["Gtk"]
         made = lambda it: ("row", it["path"])
         self.assertEqual(G["Win"].entry_row(w, (None, [{"path": "/a"}]), made, G["folder_subtitle"], False), ("row", "/a"))      # not grouped
         self.assertEqual(G["Win"].entry_row(w, (f"{H}/d", [{"path": f"{H}/d/f"}]), made, G["folder_subtitle"], False), ("row", f"{H}/d/f"))   # one file: just the file
