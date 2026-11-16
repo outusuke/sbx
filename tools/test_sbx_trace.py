@@ -104,6 +104,9 @@ class Program(unittest.TestCase):
             sc = T.script(m)
             self.assertIn("sched_process_fork", sc); self.assertIn("->level >= 1", sc); self.assertIn("exit();", sc)
             self.assertNotIn("->level", T.script(m, False))
+            self.assertNotIn("bwrap", T.script(m, False))                          # on the host there is no sandbox to tell apart
+            for l in sc.splitlines():
+                if "sys_enter_" in l: self.assertEqual('comm != "bwrap"' in l, not re.search(r"sys_enter_execve(at)? ", l))   # bwrap's setup is left out, the exec of the program is kept
             for c in T.calls(m): self.assertIn(f"sys_enter_{c} ", sc); self.assertIn(f"sys_exit_{c} ", sc)
             self.assertEqual(sc.count("printf"), len(T.calls(m)) + 1)                # READY and one line per call
             self.assertTrue(all('printf("%llu\\t' in l for l in sc.splitlines() if "printf" in l))   # the token comes first on every line, in 64 bits: %u is 32 bits in bpftrace 0.26

@@ -7,8 +7,8 @@
 #     sbx-trace --html [-o FILE] [NAME]                                 a page to open or send: a map of the folders, what needs attention
 #     sbx-trace --suggest [NAME] [--json] [--limit N]                   settings (read_only=, whitelist=) that would let the program reach what it was refused
 # A tool apart from sbx: it only starts a command and watches it from outside. It needs bpftrace, a kernel with BTF and root
-# (sudo on a terminal, else pkexec). If bpftrace refuses the larger set of system calls, it starts again with the basic set (no writes). Without --host only processes inside a new pid namespace are kept, which leaves out
-# bubblewrap's own setup work and shows what the sandboxed program did. The command is held until the probes are in place.
+# (sudo on a terminal, else pkexec). If bpftrace refuses the larger set of system calls, it starts again with the basic set (no writes). Without --host only processes inside a new pid namespace are kept, which, with the
+# tasks still named bwrap left out, drops bubblewrap's own setup work and shows what the sandboxed program did. The command is held until the probes are in place.
 import base64, errno, hashlib, html, json, os, platform, re, shutil, signal, subprocess, sys, tempfile, threading, time
 
 VERSION = "0.1"
@@ -84,16 +84,17 @@ def kernel_calls(machine, path="/proc/kallsyms"):
 def script(machine, sandbox_only=True, names=None, rich=True):
     """$1 is the host thread id of the process we started, $2 a random number that starts every line the program prints (so a file name
     with a newline in it can't forge a line). It follows that process and everything it starts, keeps only tasks inside a new pid
-    namespace when SANDBOX_ONLY, and ends when the first process does. NAMES are the system calls to watch (calls(MACHINE) when None); RICH
+    namespace when SANDBOX_ONLY (and leaves out what bwrap itself does there, but keeps the exec that starts the program), and ends when the first process does. NAMES are the system calls to watch (calls(MACHINE) when None); RICH
     also reads what a call keeps in a struct (the flags of openat2).
     Lines: TOKEN <tab> o|p|x|w|n <tab> thread <tab> result <tab> open flags <tab> path. The token is printed with %llu: bpftrace 0.26 prints %u as 32 bits, which cut the token short."""
     inside = " && ((struct task_struct *)curtask)->thread_pid->level >= 1" if sandbox_only else ""
+    not_bwrap = ' && comm != "bwrap"' if sandbox_only else ""         # bwrap's own setup runs inside the new pid namespace too: its mounts, bind sources and the folders it makes
     gone = "delete(@t[tid]); delete(@c[tid]); delete(@p[tid]); delete(@f[tid]);"
     out = ['BEGIN { @t[(uint64)$1] = 1; printf("%llu\\tREADY\\n", $2); }',
            'tracepoint:sched:sched_process_fork /@t[(uint64)args->parent_pid]/ { @t[(uint64)args->child_pid] = 1; }',
            f'tracepoint:sched:sched_process_exit /@t[tid]/ {{ {gone} if (tid == (uint64)$1) {{ exit(); }} }}']
     for c in names if names is not None else calls(machine):
-        out.append(f'tracepoint:syscalls:sys_enter_{c} /@t[tid]{inside}/ {{ @c[tid] = 1; @p[tid] = str(args->{FIELD.get(c, "filename")}); @f[tid] = {({**FLAGS, **RICH_FLAGS} if rich else FLAGS).get(c, "-1")}; }}')
+        out.append(f'tracepoint:syscalls:sys_enter_{c} /@t[tid]{inside}{"" if kind_of(c) == "x" else not_bwrap}/ {{ @c[tid] = 1; @p[tid] = str(args->{FIELD.get(c, "filename")}); @f[tid] = {({**FLAGS, **RICH_FLAGS} if rich else FLAGS).get(c, "-1")}; }}')
         out.append(f'tracepoint:syscalls:sys_exit_{c} /@c[tid]/ {{ printf("%llu\\t{kind_of(c)}\\t%d\\t%d\\t%d\\t%s\\n", $2, tid, args->ret, @f[tid], @p[tid]); delete(@c[tid]); }}')
     out.append("END { clear(@t); clear(@c); clear(@p); clear(@f); }")
     return "\n".join(out)
