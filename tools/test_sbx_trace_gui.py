@@ -474,6 +474,17 @@ class Window(unittest.TestCase):
                   f"{H}/Projects/foo/envrc", f"{H}/Projects/foo/.vscode/settings.json", f"{H}/Projects/x.pth", f"{H}/.local/lib/python3.12/site-packages/numpy/__init__.py",
                   f"{H}/Projects/foo/.git/config\n"): self.assertFalse(G["sensitive"](p, True), p)
 
+    def test_files_named_like_secrets_and_ways_to_control_the_machine_are_marked_even_when_only_read(self):
+        G, H = self.G, self.tmp
+        for p in (f"{H}/Projects/foo/.env", f"{H}/Projects/foo/.env.local", f"{H}/Projects/foo/deploy.key", f"{H}/Projects/foo/id_ed25519", f"{H}/Projects/foo/privkey.pem",
+                  f"{H}/Projects/foo/server-key.pem", f"{H}/Projects/foo/credentials.json", f"{H}/Projects/foo/terraform.tfstate", f"{H}/Projects/foo/prod.tfvars",
+                  f"{H}/Projects/foo/.npmrc", "/mnt/data/.env", "/run/media/me/disk/a.kdbx", "/run/docker.sock", "/var/run/docker.sock", "/run/user/1000/bus",
+                  "/run/user/1000/gnupg/S.gpg-agent", "/dev/uinput", "/dev/input/event3", "/proc/777/environ", "/proc/777/mem"):
+            self.assertTrue(G["sensitive"](p), p)
+        for p in (f"{H}/Projects/foo/.env.example", f"{H}/Projects/foo/.envrc", f"{H}/Projects/foo/.venv/bin/python", f"{H}/Projects/foo/keys.txt", f"{H}/Projects/foo/cert.pem",
+                  f"{H}/Projects/foo/secrets.txt", "/etc/ssl/certs/ca-cert.pem", "/usr/share/foo/x.key", "/run/user/1000/wayland-0", "/dev/null", "/dev/input",
+                  "/proc/self/environ", "/proc/thread-self/mem", "/proc/cpuinfo"): self.assertFalse(G["sensitive"](p), p)
+
     def test_a_group_draws_a_few_rows_and_says_how_many_more_there_are(self):
         G, w = self.G, self.win(); Adw = G["Adw"]; group = mock.MagicMock(); made = []
         def row(it): made.append(it); return mock.MagicMock()

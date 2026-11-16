@@ -37,6 +37,17 @@ PERSIST = (".config/autostart", ".config/systemd/user", ".local/share/systemd/us
            ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout",
            ".config/fish/config.fish", ".config/fish/conf.d", ".xprofile", ".xinitrc", ".xsessionrc",
            ".local/bin", "bin", ".cargo/bin", ".local/share/applications", ".gitconfig", ".config/git", ".vimrc", ".config/nvim", ".emacs.d")
+# Reaching one of these gives a program control of the machine or a look at another process: a container or D-Bus socket, a key agent, a raw input
+# or memory device, another process's environment or memory. They are shown even when the access worked (/dev and /run are otherwise quiet).
+REACHED = re.compile(r"^/(?:var/)?run/(?:docker|podman/podman)\.sock\Z|^/run/containerd/containerd\.sock\Z|^/(?:var/)?run/dbus/system_bus_socket\Z"
+                     r"|^/run/user/\d+/(?:bus|docker\.sock|podman/podman\.sock|gnupg/S\.[^/]+|keyring/[^/]+|gcr/[^/]+|openssh_agent|ssh-agent\.socket)\Z"
+                     r"|^/tmp/ssh-[^/]+/agent\.\d+\Z|^/dev/(?:uinput|mem|kmem|kmsg|port)\Z|^/dev/input/[^/]+"
+                     r"|^/proc/(?!self/|thread-self/)\d+/(?:environ|mem)\Z")
+# Files named like ones that hold secrets, wherever they sit in a place you can share (your home, a drive, /tmp): .env, private keys, token files.
+SECRET_NAMES = re.compile(r"/\.env(?:\.(?!(?:example|sample|template|dist|defaults)\Z)[^/]+)?\Z|/\.(?:npmrc|pypirc|htpasswd|netrc|git-credentials)\Z"
+                          r"|/id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?:\.pem)?\Z|/[^/]+\.(?:key|p12|pfx|kdbx?|jks|keystore)\Z|/(?:priv(?:ate)?key|[^/]*[-_.]key)\.pem\Z"
+                          r"|/(?:credentials|secrets?)\.(?:json|ya?ml|toml)\Z|/service[-_]?account[^/]*\.json\Z|/[^/]+\.tfvars\Z|/terraform\.tfstate(?:\.backup)?\Z", re.I)
+SHAREABLE = ("/mnt/", "/media/", "/run/media/", "/srv/", "/tmp/")       # outside your home, where sbx can share a folder
 # Startup files that matter wherever they sit, also inside a folder you share: a git hook or config, direnv, a VS Code task, a pre-commit
 # hook, and the Python files that run on every start (.pth, sitecustomize, usercustomize). \Z is the end of the name, newline or not.
 PERSIST_ANYWHERE = re.compile(r"/\.git/hooks/(?![^/]*\.sample\Z)[^/]+|/\.git/config\Z|/\.envrc\Z|/\.vscode/tasks\.json\Z|/\.husky/[^/]+|/\.pre-commit-config\.yaml\Z"
@@ -45,7 +56,7 @@ PERSIST_SYSTEM = ("/etc/crontab", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.h
                   "/etc/systemd/system", "/etc/profile.d", "/etc/rc.local", "/etc/init.d", "/etc/xdg/autostart", "/etc/ld.so.preload",
                   "/etc/profile", "/etc/bash.bashrc", "/etc/environment", "/etc/zsh")
 SENSITIVE_SYSTEM = ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/ssh/ssh_host_")                                                  # outside it (a name that starts with these)
-SENSITIVE_TIP = "Looks sensitive: keys, passwords or tokens, or a place that makes something run later, like a startup file or a git hook"
+SENSITIVE_TIP = "Looks sensitive: keys, passwords or tokens, a way to control the machine, or a place that makes something run later, like a startup file or a git hook"
 COUNTS = (("r", "read"), ("w", "write"), ("p", "probe"), ("x", "run"))
 
 
@@ -65,6 +76,11 @@ def copyable(path):
     return (safe(path), True) if CTRL.search(path) else (path, False)
 
 
+def secret_name(path):
+    """Is PATH a file named like one that holds secrets (.env, a private key, a token file) in your home, on a drive or in /tmp?"""
+    return path.startswith((HOME + "/",) + SHAREABLE) and bool(SECRET_NAMES.search(path))
+
+
 def persists(path):
     """Is PATH a place that makes something run later (login, boot, a shell, a git hook, an editor, Python), or inside one?"""
     if PERSIST_ANYWHERE.search(path): return True
@@ -77,6 +93,7 @@ def persists(path):
 def sensitive(path, wrote=False):
     """Does PATH look like it holds secrets: it is one of the places in SENSITIVE (or inside one)? A folder that only holds one, like ~/.local/share, is not.
     A place that starts programs later (PERSIST) counts only when WROTE: the program wrote there or was refused a write."""
+    if secret_name(path) or REACHED.search(path): return True
     if path.startswith(HOME + "/"):
         rel = path[len(HOME) + 1:]
         if any(rel == s or rel.startswith(s + "/") for s in SENSITIVE): return True

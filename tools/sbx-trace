@@ -50,6 +50,17 @@ PERSIST = (".config/autostart", ".config/systemd/user", ".local/share/systemd/us
            ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout",
            ".config/fish/config.fish", ".config/fish/conf.d", ".xprofile", ".xinitrc", ".xsessionrc",
            ".local/bin", "bin", ".cargo/bin", ".local/share/applications", ".gitconfig", ".config/git", ".vimrc", ".config/nvim", ".emacs.d")
+# Reaching one of these gives a program control of the machine or a look at another process: a container or D-Bus socket, a key agent, a raw input
+# or memory device, another process's environment or memory. They are shown even when the access worked (/dev and /run are otherwise quiet).
+REACHED = re.compile(r"^/(?:var/)?run/(?:docker|podman/podman)\.sock\Z|^/run/containerd/containerd\.sock\Z|^/(?:var/)?run/dbus/system_bus_socket\Z"
+                     r"|^/run/user/\d+/(?:bus|docker\.sock|podman/podman\.sock|gnupg/S\.[^/]+|keyring/[^/]+|gcr/[^/]+|openssh_agent|ssh-agent\.socket)\Z"
+                     r"|^/tmp/ssh-[^/]+/agent\.\d+\Z|^/dev/(?:uinput|mem|kmem|kmsg|port)\Z|^/dev/input/[^/]+"
+                     r"|^/proc/(?!self/|thread-self/)\d+/(?:environ|mem)\Z")
+# Files named like ones that hold secrets, wherever they sit in a place you can share (your home, a drive, /tmp): .env, private keys, token files.
+SECRET_NAMES = re.compile(r"/\.env(?:\.(?!(?:example|sample|template|dist|defaults)\Z)[^/]+)?\Z|/\.(?:npmrc|pypirc|htpasswd|netrc|git-credentials)\Z"
+                          r"|/id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?:\.pem)?\Z|/[^/]+\.(?:key|p12|pfx|kdbx?|jks|keystore)\Z|/(?:priv(?:ate)?key|[^/]*[-_.]key)\.pem\Z"
+                          r"|/(?:credentials|secrets?)\.(?:json|ya?ml|toml)\Z|/service[-_]?account[^/]*\.json\Z|/[^/]+\.tfvars\Z|/terraform\.tfstate(?:\.backup)?\Z", re.I)
+SHAREABLE = ("/mnt/", "/media/", "/run/media/", "/srv/", "/tmp/")       # outside your home, where sbx can share a folder
 # Startup files that matter wherever they sit, also inside a folder you share: a git hook or config, direnv, a VS Code task, a pre-commit
 # hook, and the Python files that run on every start (.pth, sitecustomize, usercustomize). \Z is the end of the name, newline or not.
 PERSIST_ANYWHERE = re.compile(r"/\.git/hooks/(?![^/]*\.sample\Z)[^/]+|/\.git/config\Z|/\.envrc\Z|/\.vscode/tasks\.json\Z|/\.husky/[^/]+|/\.pre-commit-config\.yaml\Z"
@@ -179,7 +190,7 @@ def view(tr, host=False):
     for path, c in tr.paths.items():
         errs = c.get("err", {})
         under = lambda dirs: path in dirs or path.startswith(tuple(x + "/" for x in dirs))
-        noise = under(NOISE) or (under(QUIET) and not errs)
+        noise = (under(NOISE) or (under(QUIET) and not errs)) and not (REACHED.search(path) or path.startswith("/run/media/"))   # but never what REACHED names, or a drive
         groups["noise" if noise else "home" if path.startswith(HOME + "/") else "system"].append({"path": path, **{k: c[k] for k in "rwpx" if k in c}, "err": errs})
         kind = "denied" if errs.get("EACCES") or errs.get("EPERM") else "read-only" if errs.get("EROFS") else None
         if kind is None and errs.get("ENOENT") and not host and not under(NOISE) and checked < 2000:
@@ -200,9 +211,14 @@ def tilde(p):
 # ---------------------------------------------------------------- suggestions
 def sensitive(path):
     """Is PATH in your home a place that holds secrets, or a folder that holds one (~/.local/share holds the keyrings)?"""
-    if not path.startswith(HOME + "/"): return False
+    if not path.startswith(HOME + "/"): return secret_name(path)
     rel = path[len(HOME) + 1:]
-    return any(rel == s or rel.startswith(s + "/") or s.startswith(rel + "/") for s in SENSITIVE)
+    return secret_name(path) or any(rel == s or rel.startswith(s + "/") or s.startswith(rel + "/") for s in SENSITIVE)
+
+
+def secret_name(path):
+    """Is PATH a file named like one that holds secrets (.env, a private key, a token file) in your home, on a drive or in /tmp?"""
+    return path.startswith((HOME + "/",) + SHAREABLE) and bool(SECRET_NAMES.search(path))
 
 
 def persists(path):
@@ -489,7 +505,7 @@ function drawChips() {
   $("meta").textContent = [D.time, D.exit === null ? "" : "exit " + D.exit, i.calls + " file calls from " + i.processes + " threads", D.host ? "all processes (--host)" : ""].filter(Boolean).join(" \u00b7 ");
   if (i.lost) { $("warn").hidden = false; $("warn").textContent = "bpftrace lost " + i.lost + " events, so this report is incomplete."; }
   $("legend").append(el("span", "mut", "Size is the number of paths. Colour is the most serious thing inside: "));
-  LABEL.forEach((l, k) => { const b = el("span", "badge c" + k, l); if (k === 5) b.title = "A place that holds keys, passwords or tokens, or that makes something run later, like a startup file or a git hook (when written to), and the program reached it (a blocked or hidden one shows as blocked, with + sensitive in the list)"; $("legend").append(b); });
+  LABEL.forEach((l, k) => { const b = el("span", "badge c" + k, l); if (k === 5) b.title = "A place that holds keys, passwords or tokens, that gives control of the machine (a Docker socket, /dev/uinput), or that makes something run later, like a startup file or a git hook (when written to), and the program reached it (a blocked or hidden one shows as blocked, with + sensitive in the list)"; $("legend").append(b); });
   const foot = [];
   if (D.more) foot.push(D.more + " more files are not in the saved report.");
   if (D.noise) foot.push("/proc, /sys, and /dev and /run without errors: " + D.noise + " paths not shown.");
@@ -503,7 +519,9 @@ function drawChips() {
 
 
 def holds_secrets(path):
-    """Is PATH one of the places that hold secrets (keys, passwords, tokens), or inside one? A folder that only holds one (~/.local/share) is not."""
+    """Is PATH one of the places that hold secrets (keys, passwords, tokens), a file named like one, or a way to control the machine (REACHED), or inside
+    one? A folder that only holds one (~/.local/share) is not."""
+    if secret_name(path) or REACHED.search(path): return True
     if path.startswith(HOME + "/"):
         rel = path[len(HOME) + 1:]
         return any(rel == s or rel.startswith(s + "/") for s in SENSITIVE)

@@ -166,6 +166,12 @@ class Report(Base):
         self.assertEqual({r["path"] for r in v["system"]["rows"]}, {"/dev/dri/card0", "/run/user/1000/wayland-0"})
         self.assertEqual(v["noise"]["total"], 4)                                        # /dev/null, /run/utmp, /proc/self/nothing, /sys/x
 
+    def test_a_socket_a_device_or_a_drive_that_gives_control_is_shown_even_when_the_access_worked(self):
+        shown = ["/run/docker.sock", "/run/user/1000/bus", "/dev/uinput", "/dev/input/event3", "/proc/777/environ", "/run/media/me/disk/a"]
+        quiet = ["/proc/self/environ", "/dev/null", "/run/user/1000/wayland-0"]
+        v = T.view(self.tr([f"4242\to\t1\t3\t0\t{p}" for p in shown + quiet]))
+        self.assertEqual({r["path"] for r in v["system"]["rows"]}, set(shown)); self.assertEqual(v["noise"]["total"], 3)
+
     def test_the_text_has_no_control_characters_and_is_saved_privately(self):
         t = self.tr(["4242\to\t1\t-13\t0\t/tmp/evil\x1b[31mname"]); v = T.view(t); v["name"] = "foo"
         out = io.StringIO()
@@ -223,6 +229,12 @@ class Suggest(Base):
         s = T.suggest(self.report([{"path": f"{H}/Projects/foo/.git/hooks/pre-commit", "kind": "read-only", "n": 1}, {"path": f"{H}/Projects/foo/.envrc", "kind": "hidden", "n": 1}]))
         self.assertEqual([(l["setting"], l["value"]) for l in s["lines"]], [("read_only", "~/Projects/foo/.envrc")])
         self.assertEqual([k["path"] for k in s["skipped"]], [f"{H}/Projects/foo/.git/hooks/pre-commit"])
+
+    def test_a_file_named_like_a_secret_is_never_suggested(self):
+        H = self.home
+        s = T.suggest(self.report([{"path": f"{H}/Projects/foo/.env", "kind": "hidden", "n": 1}, {"path": f"{H}/Projects/foo/config.toml", "kind": "hidden", "n": 1}]))
+        self.assertEqual([(l["setting"], l["value"]) for l in s["lines"]], [("read_only", "~/Projects/foo/config.toml")])
+        self.assertEqual({k["path"]: k["why"].split(" ")[0] for k in s["skipped"]}, {f"{H}/Projects/foo/.env": "looks"})
 
     def test_a_report_of_the_wrong_shape_gives_nothing_and_does_not_crash(self):
         for v in ({}, {"blocked": "x"}, {"blocked": [5, {"path": 3}, {"kind": "denied"}]}, []):
@@ -336,6 +348,17 @@ class Page(Base):
         v = {"name": "x", "blocked": [], "home": {"total": 2, "rows": [{"path": f"{H}/Projects/foo/.git/hooks/pre-commit", "w": 1, "err": {}},
                                                                      {"path": f"{H}/Projects/foo/.git/HEAD", "w": 1, "err": {}}]}, "system": {"total": 0, "rows": []}}
         self.assertEqual({r["path"]: r["s"] for r in T.html_data(v)["rows"]}, {"~/Projects/foo/.git/hooks/pre-commit": 1, "~/Projects/foo/.git/HEAD": 0})
+
+    def test_files_named_like_secrets_and_ways_to_control_the_machine_hold_secrets_even_when_only_read(self):
+        H = self.home
+        for p in (f"{H}/Projects/foo/.env", f"{H}/Projects/foo/.env.local", f"{H}/Projects/foo/deploy.key", f"{H}/Projects/foo/id_ed25519", f"{H}/Projects/foo/privkey.pem",
+                  f"{H}/Projects/foo/server-key.pem", f"{H}/Projects/foo/credentials.json", f"{H}/Projects/foo/terraform.tfstate", f"{H}/Projects/foo/prod.tfvars",
+                  f"{H}/Projects/foo/.npmrc", "/mnt/data/.env", "/run/media/me/disk/a.kdbx", "/run/docker.sock", "/var/run/docker.sock", "/run/user/1000/bus",
+                  "/run/user/1000/gnupg/S.gpg-agent", "/dev/uinput", "/dev/input/event3", "/proc/777/environ", "/proc/777/mem"):
+            self.assertTrue(T.holds_secrets(p), p)
+        for p in (f"{H}/Projects/foo/.env.example", f"{H}/Projects/foo/.envrc", f"{H}/Projects/foo/.venv/bin/python", f"{H}/Projects/foo/keys.txt", f"{H}/Projects/foo/cert.pem",
+                  f"{H}/Projects/foo/secrets.txt", "/etc/ssl/certs/ca-cert.pem", "/usr/share/foo/x.key", "/run/user/1000/wayland-0", "/dev/null", "/dev/input",
+                  "/proc/self/environ", "/proc/thread-self/mem", "/proc/cpuinfo"): self.assertFalse(T.holds_secrets(p), p)
 
     def test_the_page_gets_its_data_from_the_report_as_it_is_read(self):
         d = T.html_data(self.report()); H = self.home

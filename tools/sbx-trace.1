@@ -37,7 +37,7 @@ Run it as your own user, not as root. The exit code is the command's own.
 .PP
 The report lists, for each path, how many times it was read (r), written or changed (w), looked at without opening (p: stat, access, readlink) or run (x), and the errors. At the top, \fIblocked\fR lists the paths the program was refused (denied, read-only) or, in a sandbox, could not find although the host has them (hidden). A hidden path is often just what the sandbox is for.
 .PP
-Paths are grouped into your home and the system. \fI/proc\fR and \fI/sys\fR are never shown; \fI/dev\fR and \fI/run\fR only when an attempt failed. A path that is relative to a directory descriptor, or very long, can't be told from outside and is only counted.
+Paths are grouped into your home and the system. \fI/proc\fR and \fI/sys\fR are never shown; \fI/dev\fR and \fI/run\fR only when an attempt failed, except a container or key-agent socket, a raw input or memory device, another process's environment or memory, and a drive under \fI/run/media\fR, which are always shown. A path that is relative to a directory descriptor, or very long, can't be told from outside and is only counted.
 .SH OPTIONS
 .TP
 .B \-\-json
@@ -56,7 +56,7 @@ Rows to print per group (default 40).
 Show the last saved report again: that of NAME, or the newest.
 .TP
 .B \-\-suggest \fR[\fINAME\fR]
-Print \fBread_only=\fR and \fBwhitelist=\fR lines for what the saved report shows was refused or hidden. Each is the path itself, never its folder, and read-only unless the program tried to write. Your home, Downloads and the like, sbx's own folders, anything that holds secrets (\fI~/.ssh\fR, \fI~/.gnupg\fR, keyrings, browser profiles...), a read-write line for a place that makes something run later (\fI~/.bashrc\fR, \fI~/.config/autostart\fR, a \fI.git/hooks\fR file...) and paths already shared are left out. Read each line before you use it.
+Print \fBread_only=\fR and \fBwhitelist=\fR lines for what the saved report shows was refused or hidden. Each is the path itself, never its folder, and read-only unless the program tried to write. Your home, Downloads and the like, sbx's own folders, anything that holds secrets (\fI~/.ssh\fR, \fI~/.gnupg\fR, keyrings, browser profiles, \fI.env\fR and key files...), a read-write line for a place that makes something run later (\fI~/.bashrc\fR, \fI~/.config/autostart\fR, a \fI.git/hooks\fR file...) and paths already shared are left out. Read each line before you use it.
 .TP
 .B \-\-diff \fR[\fINAME\fR]
 Compare the last report with the one before it: which blocked paths no longer are (and whether they now work), which are newly blocked, and how many paths only one run touched. Use it to check that a setting helped.
