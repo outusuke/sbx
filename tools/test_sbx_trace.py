@@ -73,6 +73,35 @@ class Parser(Base):
         t = self.tr(["4242\to\t1\t3\t577\t/tmp/a", "4242\to\t1\t3\t0\t/tmp/b"])                # O_WRONLY|O_CREAT|O_TRUNC, and no flags
         self.assertEqual((t.paths["/tmp/a"], t.paths["/tmp/b"]), ({"w": 1}, {"r": 1}))
 
+    def test_a_chmod_that_sets_an_execute_bit_is_a_write_that_says_so(self):
+        t = self.tr(["4242\tm\t1\t0\t493\t/tmp/a.sh", "4242\tm\t1\t0\t420\t/tmp/b.txt", "4242\tm\t1\t-1\t73\t/tmp/c", "4242\tm\t1\t-30\t-1\t/usr/d", "4242\tm\t1\t0\t2048\t/tmp/e"])
+        p = t.paths                                                                     # 0o755, 0o644, 0o111 refused, no mode, 0o4000 (setuid only)
+        self.assertEqual(p["/tmp/a.sh"], {"w": 1, "m": 1}); self.assertEqual(p["/tmp/b.txt"], {"w": 1})
+        self.assertEqual(p["/tmp/c"], {"w": 1, "m": 1, "err": {"EPERM": 1}})            # refused, but it was tried
+        self.assertEqual(p["/usr/d"], {"w": 1, "err": {"EROFS": 1}}); self.assertEqual(p["/tmp/e"], {"w": 1})
+        self.assertEqual(T.view(t)["system"]["rows"][0].get("m"), 1)                     # the count is kept in the report
+
+    def test_a_symlink_to_a_place_that_holds_secrets_or_starts_programs_is_marked_on_the_link(self):
+        H = self.home
+        t = self.tr([f"4242\tl\t1\t0\t-1\t{H}/.ssh", f"4242\ts\t1\t0\t-1\t{H}/Projects/x",
+                     f"4242\tl\t1\t0\t-1\t/etc/cron.d", f"4242\ts\t1\t0\t-1\t/tmp/y",
+                     f"4242\tl\t1\t0\t-1\t../.ssh", f"4242\ts\t1\t0\t-1\t{H}/Projects/z",          # relative: read from the folder of the link
+                     f"4242\tl\t1\t0\t-1\t/usr/share/doc", f"4242\ts\t1\t0\t-1\t/tmp/ok",
+                     f"4242\tl\t1\t0\t-1\t{H}", f"4242\ts\t1\t-17\t-1\t/tmp/home",
+                     f"4242\ts\t1\t0\t-1\t/tmp/no-target"])
+        p = t.paths
+        self.assertEqual(p[f"{H}/Projects/x"], {"w": 1, "l": 1}); self.assertEqual(p["/tmp/y"], {"w": 1, "l": 1}); self.assertEqual(p[f"{H}/Projects/z"], {"w": 1, "l": 1})
+        self.assertEqual(p["/tmp/ok"], {"w": 1}); self.assertEqual(p["/tmp/home"], {"w": 1, "l": 1})                  # all of your home; the name was there already: not an error
+        self.assertEqual(p["/tmp/no-target"], {"w": 1}); self.assertEqual(t.links, {}); self.assertEqual(t.lines, 6)   # a target line is not a call of its own
+
+    def test_a_target_is_kept_for_the_thread_that_made_the_link_and_only_once(self):
+        t = self.tr(["4242\tl\t1\t0\t-1\t/etc/cron.d", "4242\tl\t2\t0\t-1\t/usr/lib", "4242\ts\t2\t0\t-1\t/tmp/b", "4242\ts\t1\t0\t-1\t/tmp/a", "4242\ts\t1\t0\t-1\t/tmp/c"])
+        self.assertEqual((t.paths["/tmp/a"], t.paths["/tmp/b"], t.paths["/tmp/c"]), ({"w": 1, "l": 1}, {"w": 1}, {"w": 1}))
+        for i in range(2000): t.feed(f"4242\tl\t{i}\t0\t-1\t/x")
+        self.assertLessEqual(len(t.links), 1000)                                         # a program can't grow this without end
+        t.feed("4242\tl\t5\t0\t-1\t")                                                  # an empty line is not a target
+        self.assertEqual(self.tr(["4242\tl\tx\t0\t-1\t/etc"]).links, {})
+
     def test_a_long_path_is_counted_not_kept_cut_off(self):
         self.assertEqual(self.tr(["4242\to\t1\t3\t0\t/" + "a" * 300]).unresolved, 1)
 
@@ -108,7 +137,7 @@ class Program(unittest.TestCase):
             for l in sc.splitlines():
                 if "sys_enter_" in l: self.assertEqual('comm != "bwrap"' in l, not re.search(r"sys_enter_execve(at)? ", l))   # bwrap's setup is left out, the exec of the program is kept
             for c in T.calls(m): self.assertIn(f"sys_enter_{c} ", sc); self.assertIn(f"sys_exit_{c} ", sc)
-            self.assertEqual(sc.count("printf"), len(T.calls(m)) + 1)                # READY and one line per call
+            self.assertEqual(sc.count("printf"), len(T.calls(m)) + 1 + sum(c in T.TARGET for c in T.calls(m)))                # READY, one line per call, and one more for the target of a symlink
             self.assertTrue(all('printf("%llu\\t' in l for l in sc.splitlines() if "printf" in l))   # the token comes first on every line, in 64 bits: %u is 32 bits in bpftrace 0.26
         self.assertIn("args->flags", T.script("x86_64").split("sys_enter_openat ")[1].split("\n")[0])
         self.assertNotIn("sys_enter_open ", T.script("aarch64"))                     # the old calls don't exist on arm64
@@ -127,6 +156,20 @@ class Program(unittest.TestCase):
         arm = T.script("aarch64")
         for c in T.LEGACY: self.assertNotIn(f"sys_enter_{c} ", arm, c)                  # arm64 has only the newer calls
         self.assertIn("sys_enter_unlinkat ", arm)
+
+    def test_the_mode_of_a_chmod_and_the_target_of_a_symlink_are_read(self):
+        sc = T.script("x86_64"); line = lambda kind, c: next(l for l in sc.splitlines() if f"sys_{kind}_{c} " in l)
+        for c in ("chmod", "fchmodat", "fchmodat2"):
+            self.assertIn("@f[tid] = args->mode;", line("enter", c), c); self.assertIn("\\tm\\t", line("exit", c), c)
+        for c in ("symlink", "symlinkat"):
+            self.assertIn("@l[tid] = str(args->oldname);", line("enter", c), c); self.assertIn("str(args->newname)", line("enter", c), c)
+            out = line("exit", c); self.assertLess(out.index("\\tl\\t"), out.index("\\ts\\t"), c)                 # the target first, then the link
+        self.assertNotIn("@l", sc.split("sys_enter_openat ")[1].split("\n")[0])
+        self.assertNotIn("@l[", T.script("x86_64", names=list(T.PROBES["x86_64"])))                                 # the basic set has no such map: bpftrace refuses a map that is never set
+        self.assertNotIn("clear(@l)", T.script("x86_64", names=list(T.PROBES["x86_64"])))
+        self.assertIn("clear(@l);", sc); self.assertIn("delete(@l[tid]);", sc.split("sched_process_exit")[1].split("\n")[0])
+        arm = T.script("aarch64"); self.assertIn("sys_enter_symlinkat ", arm); self.assertNotIn("sys_enter_symlink ", arm)
+        self.assertEqual(T.kind_of("symlink"), "s"); self.assertEqual(T.kind_of("link"), "n"); self.assertEqual(T.kind_of("fchmodat2"), "m"); self.assertEqual(T.kind_of("chown"), "w")
 
     def test_a_call_the_kernel_lacks_is_left_out_but_the_basic_ones_are_always_kept(self):
         have = {"unlink", "mkdirat"}
@@ -393,6 +436,19 @@ class Page(Base):
         v = {"name": "x", "blocked": [{"path": "/etc/pam.d/sudo", "kind": "read-only", "n": 1}], "home": {"total": 0, "rows": []},
              "system": {"total": 2, "rows": [{"path": "/etc/ld.so.conf.d/x.conf", "r": 3, "err": {}}, {"path": "/etc/udev/rules.d/x.rules", "w": 1, "err": {}}]}}
         self.assertEqual({r["path"]: r["s"] for r in T.html_data(v)["rows"]}, {"/etc/ld.so.conf.d/x.conf": 0, "/etc/udev/rules.d/x.rules": 1, "/etc/pam.d/sudo": 1})
+
+    def test_a_file_made_executable_and_a_link_to_a_secret_place_are_marked_on_the_page(self):
+        H = self.home
+        v = {"name": "x", "blocked": [], "system": {"total": 0, "rows": []},
+             "home": {"total": 4, "rows": [{"path": f"{H}/Projects/run.sh", "w": 1, "m": 1, "err": {}}, {"path": f"{H}/Projects/x", "w": 1, "l": 1, "err": {}},
+                                           {"path": f"{H}/Projects/plain", "w": 1, "err": {}}, {"path": f"{H}/Projects/odd", "w": 1, "m": "1", "l": True, "err": {}}]}}
+        self.assertEqual({r["path"]: r["s"] for r in T.html_data(v)["rows"]}, {"~/Projects/run.sh": 1, "~/Projects/x": 1, "~/Projects/plain": 0, "~/Projects/odd": 0})
+        for t in (f"{H}/.ssh", "/etc/cron.d/x", H, "/", f"{H}/.config/autostart/a", "/run/docker.sock"): self.assertTrue(T.risky_target(t, f"{H}/p/l"), t)
+        for t in ("/usr/bin/python3", f"{H}/Projects/other", "/etc/passwd", "../other", "x"): self.assertFalse(T.risky_target(t, f"{H}/p/l"), t)
+        self.assertTrue(T.risky_target("//etc/cron.d", "/tmp/l")); self.assertTrue(T.risky_target("../.ssh/../.ssh", f"{H}/p/l"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): T.show({**v, "info": {"calls": 1, "processes": 1, "dropped": 0, "unresolved": 0, "lost": 0}, "noise": {"total": 0}}, 10)
+        self.assertIn("run.sh   w1 m1", out.getvalue()); self.assertIn("x   w1 l1", out.getvalue()); self.assertIn("m chmod that sets an execute bit", out.getvalue())
 
     def test_the_page_gets_its_data_from_the_report_as_it_is_read(self):
         d = T.html_data(self.report()); H = self.home

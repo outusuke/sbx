@@ -458,6 +458,9 @@ class Window(unittest.TestCase):
         for p in (f"{H}/.bashrcx", f"{H}/.config", f"{H}/x/.bashrc", "/etc/passwd"): self.assertFalse(G["sensitive"](p, True), p)
         self.assertFalse(G["risky"]({"path": f"{H}/.bashrc", "r": 1, "err": {}})); self.assertTrue(G["risky"]({"path": f"{H}/.bashrc", "w": 1, "err": {}}))
         self.assertTrue(G["risky"]({"path": f"{H}/.bashrc", "kind": "read-only", "n": 1})); self.assertFalse(G["risky"]({"path": f"{H}/.bashrc", "kind": "hidden", "n": 1}))
+        self.assertTrue(G["risky"]({"path": f"{H}/Projects/run.sh", "w": 1, "m": 1, "err": {}})); self.assertTrue(G["risky"]({"path": f"{H}/Projects/x", "w": 1, "l": 1, "err": {}}))
+        self.assertFalse(G["risky"]({"path": f"{H}/Projects/run.sh", "w": 1, "err": {}}))
+        self.assertEqual(G["counts_text"]({"path": "/x", "w": 2, "m": 1, "l": 1, "err": {}}), "write 2 · made executable 1 · link to a sensitive place 1")
         w = mock.MagicMock(); w.render_max = G["RENDER_MAX"]
         for kw, want in (({}, False), ({"wrote": True}, True), ({"kind": "read-only"}, True), ({"kind": "hidden"}, False)):
             Adw.ActionRow.reset_mock(); G["Win"].path_row(w, f"{H}/.bashrc", "x", **kw)

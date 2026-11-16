@@ -33,8 +33,9 @@ NEWNAME = {c for c, f in WRITES.items() if f == "newname"}                # the 
 READS = {"readlink": "path", "readlinkat": "pathname"}                    # a look at a link: a probe
 LEGACY = {"unlink", "rmdir", "mkdir", "creat", "mknod", "chmod", "chown", "lchown", "rename", "symlink", "link", "readlink"}
 FIELD = {**WRITES, **READS}                                                # every other call keeps its path in "filename"
-KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x"}       # a write is w (n for the new name of a rename or link), every other call is a probe: p
-FLAGS = {"open": "args->flags", "openat": "args->flags"}                  # openat2 keeps its flags in a struct (RICH_FLAGS); without them it is counted as a read
+KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x", "chmod": "m", "fchmodat": "m", "fchmodat2": "m", "symlink": "s", "symlinkat": "s"}   # a write is w (n for the new name of a rename or link, m for a chmod, s for a symlink), every other call is a probe: p
+FLAGS = {"open": "args->flags", "openat": "args->flags", "chmod": "args->mode", "fchmodat": "args->mode", "fchmodat2": "args->mode"}   # the field printed in the flags place: for a chmod it is the new mode. openat2 keeps its flags in a struct (RICH_FLAGS); without them it is counted as a read
+TARGET = {"symlink": "oldname", "symlinkat": "oldname"}                   # what a symlink points to: printed as a line of its own (l) just before the line of the link, so that each string is the last field of its line
 RICH_FLAGS = {"openat2": "args->how->flags"}                              # checked on kernel 7.3 with bpftrace 0.26; the basic set does not use it, so it can fall back without
 USAGE = ("usage: sbx-trace [--json] [--host] [--yes] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
          "   |   sbx-trace --suggest [NAME] [--json] [--limit N]   |   sbx-trace --diff [NAME] [--json] [--limit N]   |   sbx-trace --html [-o FILE] [NAME]")
@@ -135,17 +136,21 @@ def script(machine, sandbox_only=True, names=None, rich=True):
     with a newline in it can't forge a line). It follows that process and everything it starts, keeps only tasks inside a new pid
     namespace when SANDBOX_ONLY (and leaves out what bwrap itself does there, but keeps the exec that starts the program), and ends when the first process does. NAMES are the system calls to watch (calls(MACHINE) when None); RICH
     also reads what a call keeps in a struct (the flags of openat2).
-    Lines: TOKEN <tab> o|p|x|w|n <tab> thread <tab> result <tab> open flags <tab> path. The token is printed with %llu: bpftrace 0.26 prints %u as 32 bits, which cut the token short."""
+    Lines: TOKEN <tab> o|p|x|w|n|m|s|l <tab> thread <tab> result <tab> open flags (the mode for m) <tab> path (the target for l: the line before the s line of the same symlink). The token is printed with %llu: bpftrace 0.26 prints %u as 32 bits, which cut the token short."""
     inside = " && ((struct task_struct *)curtask)->thread_pid->level >= 1" if sandbox_only else ""
     not_bwrap = ' && comm != "bwrap"' if sandbox_only else ""         # bwrap's own setup runs inside the new pid namespace too: its mounts, bind sources and the folders it makes
-    gone = "delete(@t[tid]); delete(@c[tid]); delete(@p[tid]); delete(@f[tid]);"
+    names = list(names if names is not None else calls(machine))
+    links = any(c in TARGET for c in names)                          # a map that is never set is an error in bpftrace, so @l is there only when a symlink call is watched
+    gone = "delete(@t[tid]); delete(@c[tid]); delete(@p[tid]); delete(@f[tid]);" + (" delete(@l[tid]);" if links else "")
     out = ['BEGIN { @t[(uint64)$1] = 1; printf("%llu\\tREADY\\n", $2); }',
            'tracepoint:sched:sched_process_fork /@t[(uint64)args->parent_pid]/ { @t[(uint64)args->child_pid] = 1; }',
            f'tracepoint:sched:sched_process_exit /@t[tid]/ {{ {gone} if (tid == (uint64)$1) {{ exit(); }} }}']
-    for c in names if names is not None else calls(machine):
-        out.append(f'tracepoint:syscalls:sys_enter_{c} /@t[tid]{inside}{"" if kind_of(c) == "x" else not_bwrap}/ {{ @c[tid] = 1; @p[tid] = str(args->{FIELD.get(c, "filename")}); @f[tid] = {({**FLAGS, **RICH_FLAGS} if rich else FLAGS).get(c, "-1")}; }}')
-        out.append(f'tracepoint:syscalls:sys_exit_{c} /@c[tid]/ {{ printf("%llu\\t{kind_of(c)}\\t%d\\t%d\\t%d\\t%s\\n", $2, tid, args->ret, @f[tid], @p[tid]); delete(@c[tid]); }}')
-    out.append("END { clear(@t); clear(@c); clear(@p); clear(@f); }")
+    for c in names:
+        keep = f' @l[tid] = str(args->{TARGET[c]});' if c in TARGET else ""
+        said = 'printf("%llu\\tl\\t%d\\t%d\\t-1\\t%s\\n", $2, tid, args->ret, @l[tid]); ' if c in TARGET else ""
+        out.append(f'tracepoint:syscalls:sys_enter_{c} /@t[tid]{inside}{"" if kind_of(c) == "x" else not_bwrap}/ {{ @c[tid] = 1; @p[tid] = str(args->{FIELD.get(c, "filename")}); @f[tid] = {({**FLAGS, **RICH_FLAGS} if rich else FLAGS).get(c, "-1")};{keep} }}')
+        out.append(f'tracepoint:syscalls:sys_exit_{c} /@c[tid]/ {{ {said}printf("%llu\\t{kind_of(c)}\\t%d\\t%d\\t%d\\t%s\\n", $2, tid, args->ret, @f[tid], @p[tid]); delete(@c[tid]);{" delete(@l[tid]);" if c in TARGET else ""} }}')
+    out.append("END { clear(@t); clear(@c); clear(@p); clear(@f);" + (" clear(@l);" if links else "") + " }")
     return "\n".join(out)
 
 
@@ -158,6 +163,7 @@ class Trace:
     def __init__(self, token=0):
         self.token = str(token)
         self.paths, self.pids = {}, set()
+        self.links = {}                                                   # thread -> the target of a symlink whose own line (s) has not come yet
         self.lines = self.dropped = self.unresolved = self.lost = 0      # lost: events bpftrace says it dropped, so the report is incomplete
         self.ready, self.helper = threading.Event(), threading.Event()      # helper: the root helper started (so a failure after it is bpftrace's own)
 
@@ -167,25 +173,31 @@ class Trace:
         if len(f) < 2 or f[0] != self.token: return                  # bpftrace's own messages, or the rest of a name that had a newline in it
         if f[1] == "READY": self.ready.set(); return
         if f[1] == "HELPER": self.helper.set(); return
-        if len(f) != 6 or f[1] not in ("o", "p", "x", "w", "n") or not f[5]: return
+        if len(f) != 6 or f[1] not in ("o", "p", "x", "w", "n", "m", "s", "l") or not f[5]: return
         try: tid, ret, flags = int(f[2]), int(f[3]), int(f[4])
         except ValueError: return
+        if f[1] == "l":                                              # where a symlink points: kept until the line of the link comes, from the same thread
+            if len(self.links) < 1000 or tid in self.links: self.links[tid] = f[5]
+            return
+        target = self.links.pop(tid, None) if f[1] == "s" else None
         if len(self.pids) < 100_000: self.pids.add(tid)
         self.lines += 1
         path = f[5]
         if not path.startswith("/") or len(os.fsencode(path)) >= STRLEN - 1: self.unresolved += 1; return
         path = os.path.normpath(path)
         if path.startswith("//"): path = "/" + path.lstrip("/")
-        key = {"p": "p", "x": "x", "w": "w", "n": "w"}.get(f[1]) or ("w" if flags >= 0 and (flags & 3 or flags & 0o3100) else "r")      # O_WRONLY|O_RDWR, O_CREAT|O_TRUNC|O_APPEND
-        benign = f[1] in ("w", "n") and -ret in ((errno.EEXIST, errno.ENOENT) if f[1] == "n" else (errno.EEXIST,))    # mkdir of what is there; the old name of a rename is what was missing
-        self.record(path, key, ret < 0 and not benign, errno.errorcode.get(-ret, "E?") if ret < 0 else None)
+        key = {"p": "p", "x": "x", "w": "w", "n": "w", "m": "w", "s": "w"}.get(f[1]) or ("w" if flags >= 0 and (flags & 3 or flags & 0o3100) else "r")      # O_WRONLY|O_RDWR, O_CREAT|O_TRUNC|O_APPEND
+        benign = f[1] in ("w", "n", "m", "s") and -ret in ((errno.EEXIST, errno.ENOENT) if f[1] in ("n", "s") else (errno.EEXIST,))    # mkdir of what is there; the old name of a rename is what was missing
+        more = "m" if f[1] == "m" and flags >= 0 and flags & 0o111 else "l" if target is not None and risky_target(target, path) else None        # m: a chmod that sets an execute bit, l: a link to a place that holds secrets or starts programs
+        self.record(path, key, ret < 0 and not benign, errno.errorcode.get(-ret, "E?") if ret < 0 else None, more)
 
-    def record(self, path, key, failed, err):
+    def record(self, path, key, failed, err, more=None):
         c = self.paths.get(path)
         if c is None:
             if len(self.paths) >= PATHS_MAX: self.dropped += 1; return
             c = self.paths[path] = {}
         c[key] = c.get(key, 0) + 1
+        if more: c[more] = c.get(more, 0) + 1
         if failed:
             e = c.setdefault("err", {}); k = err or "E?"; e[k] = e.get(k, 0) + 1
 
@@ -212,7 +224,7 @@ def view(tr, host=False):
         errs = c.get("err", {})
         under = lambda dirs: path in dirs or path.startswith(tuple(x + "/" for x in dirs))
         noise = (under(NOISE) or (under(QUIET) and not errs)) and not (REACHED.search(path) or path.startswith("/run/media/"))   # but never what REACHED names, or a drive
-        groups["noise" if noise else "home" if path.startswith(HOME + "/") else "system"].append({"path": path, **{k: c[k] for k in "rwpx" if k in c}, "err": errs})
+        groups["noise" if noise else "home" if path.startswith(HOME + "/") else "system"].append({"path": path, **{k: c[k] for k in "rwpxml" if k in c}, "err": errs})
         kind = "denied" if errs.get("EACCES") or errs.get("EPERM") else "read-only" if errs.get("EROFS") else None
         if kind is None and errs.get("ENOENT") and not host and not under(NOISE) and checked < 2000:
             checked += 1
@@ -343,12 +355,12 @@ def show(v, limit):
     print(f"blocked ({len(v['blocked'])}): refused, or hidden by the sandbox")
     for b in v["blocked"][:limit]: print(f"  {b['kind']:<9} {safe(tilde(b['path']))}   {b['n']}x")
     if not v["blocked"]: print("  nothing")
-    print("r read, w write, p probe (stat/access), x run")
+    print("r read, w write, p probe (stat/access), x run, m chmod that sets an execute bit, l link to a place that holds secrets or starts programs")
     for g, title in (("home", "your home"), ("system", "the system")):
         grp = v[g]
         print(f"{title} ({grp['total']}):")
         for r in grp["rows"][:limit]:
-            counts = " ".join(f"{k}{r[k]}" for k in "rwpx" if k in r)
+            counts = " ".join(f"{k}{r[k]}" for k in "rwpxml" if k in r)
             errs = ", ".join(f"{e} x{n}" for e, n in r["err"].items())
             print(f"  {safe(tilde(r['path']))}   {counts}" + (f"   [{errs}]" if errs else ""))
         if grp["total"] > limit: print(f"  ... {grp['total'] - limit} more (--limit N, or --json)")
@@ -549,14 +561,22 @@ def holds_secrets(path):
     return path.startswith(SENSITIVE_SYSTEM)
 
 
+def risky_target(target, link):
+    """Is TARGET, what a symlink at LINK points to, a place that holds secrets (or is all of your home), or one that makes something run later?
+    A target that is not absolute is read from the folder of the link; the names are read as they are written, a link in between is not followed."""
+    t = os.path.normpath(target if target.startswith("/") else os.path.join(os.path.dirname(link), target))
+    if t.startswith("//"): t = "/" + t.lstrip("/")
+    return t in (HOME, "/") or holds_secrets(t) or persists(t)
+
+
 def html_data(v):
     """What the page shows, from a saved report V of any shape: {name, time, exit, host, info, more, noise, rows: [{path, r, w, p, x, e, k, s}]}.
-    k is how it was blocked (denied, read-only, hidden) or None; s is 1 for a path that holds secrets, or a startup place that was written to. Paths are for reading: ~ for your home, no control characters."""
+    k is how it was blocked (denied, read-only, hidden) or None; s is 1 for a path that holds secrets, a startup place that was written to, a file made executable (chmod) or a link to a place that holds secrets or starts programs. Paths are for reading: ~ for your home, no control characters."""
     v = v if isinstance(v, dict) else {}
     num = lambda x: x if isinstance(x, int) and not isinstance(x, bool) and x >= 0 else 0
     kinds = {b["path"]: b["kind"] for b in (v.get("blocked") if isinstance(v.get("blocked"), list) else []) if isinstance(b, dict) and isinstance(b.get("path"), str)
              and b.get("kind") in ("denied", "read-only", "hidden")}
-    row = lambda p, r, e: {"path": safe(tilde(p)), **{k: num(r.get(k)) for k in "rwpx"}, "e": {safe(str(k)): num(n) for k, n in e.items() if num(n)}, "k": kinds.get(p), "s": int(holds_secrets(p) or (persists(p) and (num(r.get("w")) > 0 or kinds.get(p) == "read-only")))}
+    row = lambda p, r, e: {"path": safe(tilde(p)), **{k: num(r.get(k)) for k in "rwpx"}, "e": {safe(str(k)): num(n) for k, n in e.items() if num(n)}, "k": kinds.get(p), "s": int(holds_secrets(p) or num(r.get("m")) > 0 or num(r.get("l")) > 0 or (persists(p) and (num(r.get("w")) > 0 or kinds.get(p) == "read-only")))}
     rows, seen, total = [], set(), 0
     for g in ("home", "system"):
         grp = v.get(g) if isinstance(v.get(g), dict) else {}

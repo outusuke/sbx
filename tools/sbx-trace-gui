@@ -78,7 +78,7 @@ PERSIST_SYSTEM = ("/etc/crontab", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.h
                   "/etc/fish", "/etc/bash_completion.d")
 SENSITIVE_SYSTEM = ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/ssh/ssh_host_", "/etc/apt/auth.conf", "/etc/mysql/debian.cnf")                                                  # outside it (a name that starts with these)
 SENSITIVE_TIP = "Looks sensitive: keys, passwords or tokens, mail or chat data, a way to control the machine, or a place that makes something run later, like a startup file or a git hook"
-COUNTS = (("r", "read"), ("w", "write"), ("p", "probe"), ("x", "run"))
+COUNTS = (("r", "read"), ("w", "write"), ("p", "probe"), ("x", "run"), ("m", "made executable"), ("l", "link to a sensitive place"))
 
 
 # ---------------------------------------------------------------- text
@@ -123,8 +123,8 @@ def sensitive(path, wrote=False):
 
 
 def risky(it):
-    """sensitive() for an entry of a group: a row of a report (its "w" counts writes) or a blocked path (a "read-only" one was a write)."""
-    return sensitive(it["path"], bool(it.get("w")) or it.get("kind") == "read-only")
+    """sensitive() for an entry of a group: a row of a report (its "w" counts writes) or a blocked path (a "read-only" one was a write). A file made executable ("m") or a link to a sensitive place ("l") is too."""
+    return bool(it.get("m") or it.get("l")) or sensitive(it["path"], bool(it.get("w")) or it.get("kind") == "read-only")
 
 
 def counts_text(row):

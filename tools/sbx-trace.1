@@ -73,6 +73,8 @@ The last report of NAME, which is the program (for \fBsbx\fR \fIPROGRAM\fR, the 
 .SH NOTES
 Besides the calls that open and look at a path, writes (unlink, rename, mkdir, chmod, truncate...) are watched. If bpftrace refuses that larger set, which can happen on a kernel with other system calls, the trace starts again with the basic set, which sees no writes and does not read the flags of openat2 (so a write made through it counts as a read), and says so; the command has not run yet at that point.
 .PP
+A chmod that sets an execute bit is marked \fIm\fR in the report and as sensitive on the page: a script made executable is a way for something to run later. It is not known whether the file was executable before. A symlink whose target holds secrets (\fI~/.ssh\fR), makes something run later (\fI/etc/cron.d\fR) or is all of your home is marked \fIl\fR, on the link. A relative target is read from the folder of the link, and a target of 200 characters or more is not judged.
+.PP
 If bpftrace reports lost events the report says it is incomplete. Unix sockets and network connections are not traced.
 .SH SEE ALSO
 .BR sbx (1),
