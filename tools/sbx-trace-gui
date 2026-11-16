@@ -26,9 +26,21 @@ RENDER_MAX = 100                # rows drawn per group (and per folder); the sea
 FOLDER_DEPTH = 2                # a file is listed under its first two folders: ~/.config/mozilla, /usr/lib
 LOG_KEEP = 8192                 # bytes of sbx-trace's output kept for an error message, however much the program prints
 KINDS = {"denied": "error", "read-only": "warning", "hidden": "accent"}      # blocked kinds and the colour of their label
-SENSITIVE = (".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".local/share/keyrings", ".config/gcloud", ".netrc", ".git-credentials")   # in your home: keys, passwords, tokens
+SENSITIVE = (".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".local/share/keyrings", ".config/gcloud", ".netrc", ".git-credentials",
+             ".azure", ".docker", ".config/gh", ".config/rclone", ".config/op", ".config/Bitwarden", ".mozilla", ".thunderbird",
+             ".config/google-chrome", ".config/chromium", ".config/BraveSoftware", ".var/app/org.mozilla.firefox", "snap/firefox/common/.mozilla",
+             ".npmrc", ".pypirc", ".cargo/credentials", ".cargo/credentials.toml", ".terraform.d/credentials.tfrc.json",
+             ".bash_history", ".zsh_history", ".config/Signal", ".config/discord", ".bitcoin", ".electrum", ".ethereum")   # in your home: keys, passwords, tokens
+# Places that start a program later: at login or boot, in a shell, a git hook or an editor. Reading them is harmless, a write is not, so they
+# only count when the program wrote there or was refused a write, and no whitelist= (read-write) line is suggested for them.
+PERSIST = (".config/autostart", ".config/systemd/user", ".local/share/systemd/user", ".config/environment.d", ".pam_environment",
+           ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout",
+           ".config/fish/config.fish", ".config/fish/conf.d", ".xprofile", ".xinitrc", ".xsessionrc",
+           ".local/bin", "bin", ".cargo/bin", ".local/share/applications", ".gitconfig", ".config/git", ".vimrc", ".config/nvim", ".emacs.d")
+PERSIST_SYSTEM = ("/etc/crontab", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly", "/etc/cron.weekly", "/etc/cron.monthly", "/var/spool/cron",
+                  "/etc/systemd/system", "/etc/profile.d", "/etc/rc.local", "/etc/init.d", "/etc/xdg/autostart", "/etc/ld.so.preload")
 SENSITIVE_SYSTEM = ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/ssh/ssh_host_")                                                  # outside it (a name that starts with these)
-SENSITIVE_TIP = "Looks sensitive: keys, passwords or tokens"
+SENSITIVE_TIP = "Looks sensitive: keys, passwords or tokens, or a place that starts programs at login or boot"
 COUNTS = (("r", "read"), ("w", "write"), ("p", "probe"), ("x", "run"))
 
 
@@ -48,12 +60,27 @@ def copyable(path):
     return (safe(path), True) if CTRL.search(path) else (path, False)
 
 
-def sensitive(path):
-    """Does PATH look like it holds secrets: it is one of the places in SENSITIVE (or inside one)? A folder that only holds one, like ~/.local/share, is not."""
+def persists(path):
+    """Is PATH a place that starts programs later (login, boot, a shell, a git hook or an editor), or inside one?"""
     if path.startswith(HOME + "/"):
         rel = path[len(HOME) + 1:]
-        return any(rel == s or rel.startswith(s + "/") for s in SENSITIVE)
-    return path.startswith(SENSITIVE_SYSTEM)
+        return any(rel == s or rel.startswith(s + "/") for s in PERSIST)
+    return any(path == s or path.startswith(s + "/") for s in PERSIST_SYSTEM)
+
+
+def sensitive(path, wrote=False):
+    """Does PATH look like it holds secrets: it is one of the places in SENSITIVE (or inside one)? A folder that only holds one, like ~/.local/share, is not.
+    A place that starts programs later (PERSIST) counts only when WROTE: the program wrote there or was refused a write."""
+    if path.startswith(HOME + "/"):
+        rel = path[len(HOME) + 1:]
+        if any(rel == s or rel.startswith(s + "/") for s in SENSITIVE): return True
+    elif path.startswith(SENSITIVE_SYSTEM): return True
+    return bool(wrote) and persists(path)
+
+
+def risky(it):
+    """sensitive() for an entry of a group: a row of a report (its "w" counts writes) or a blocked path (a "read-only" one was a write)."""
+    return sensitive(it["path"], bool(it.get("w")) or it.get("kind") == "read-only")
 
 
 def counts_text(row):
@@ -83,9 +110,9 @@ def describer(item_sub, summarize):
     def describe(entry):
         folder, items = entry
         if folder is None or len(items) == 1:
-            it = items[0]; sub = item_sub(it); hot = sensitive(it["path"])
+            it = items[0]; sub = item_sub(it); hot = risky(it)
             return it["path"], (f"sensitive · {sub}" if hot and sub else "sensitive" if hot else sub), 1
-        hot = any(sensitive(it["path"]) for it in items)
+        hot = any(risky(it) for it in items)
         return folder, summarize(items) + (" · holds sensitive paths" if hot else ""), len(items)
     return describe
 
@@ -516,8 +543,8 @@ class Win(Adw.ApplicationWindow):
     def warn_icon(self):
         return Gtk.Image(icon_name="dialog-warning-symbolic", valign=Gtk.Align.CENTER, css_classes=["warning"], tooltip_text=SENSITIVE_TIP)
 
-    def path_row(self, path, subtitle, kind=None):
-        hot = sensitive(path)                                                        # said in words too, not only by the icon's colour
+    def path_row(self, path, subtitle, kind=None, wrote=False):
+        hot = sensitive(path, wrote or kind == "read-only")                                                        # said in words too, not only by the icon's colour
         row = Adw.ActionRow(title=safe(tilde(path)), subtitle=f"sensitive · {subtitle}" if hot and subtitle else "sensitive" if hot else subtitle, use_markup=False)
         if hot: row.add_prefix(self.warn_icon())
         if kind: row.add_suffix(Gtk.Label(label=kind, valign=Gtk.Align.CENTER, css_classes=[KINDS[kind], "caption"]))
@@ -530,7 +557,7 @@ class Win(Adw.ApplicationWindow):
         """One line of a group: a file, or a folder that opens to show its files (a folder with one file is just that file)."""
         folder, items = entry
         if folder is None or len(items) == 1: return make_item(items[0])
-        hot = any(sensitive(it["path"]) for it in items)
+        hot = any(risky(it) for it in items)
         row = Adw.ExpanderRow(title=safe(folder_title(folder)), subtitle=summarize(items) + (" · holds sensitive paths" if hot else ""), use_markup=False)
         if hot: row.add_prefix(self.warn_icon())
         copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Copy the folder")
@@ -624,7 +651,7 @@ class Win(Adw.ApplicationWindow):
                         describer(lambda b: f"{b['n']}×", blocked_subtitle))
         for grp, key, title in ((self.home, "home", "Your home"), (self.system, "system", "The system")):
             rows = [r for r in rep[key]["rows"] if matches(r["path"], terms) and (r["err"] or not only_errors)]
-            item = lambda r: self.path_row(r["path"], row_subtitle(r))
+            item = lambda r: self.path_row(r["path"], row_subtitle(r), wrote=bool(r.get("w")))
             self.fill_group(grp, title, rep[key]["total"], len(rows), layout(rows, grouped),
                             lambda e: self.entry_row(e, item, folder_subtitle, narrowed and len(rows) <= self.render_max), narrowed,
                             describer(row_subtitle, folder_subtitle))

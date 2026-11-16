@@ -210,6 +210,14 @@ class Suggest(Base):
         v = self.report([{"path": f"{H}/p", "kind": "hidden", "n": 1}, {"path": f"{H}/p/a", "kind": "hidden", "n": 1}, {"path": f"{H}/p/b", "kind": "read-only", "n": 1}])
         self.assertEqual([(l["setting"], l["value"]) for l in T.suggest(v)["lines"]], [("read_only", "~/p"), ("whitelist", "~/p/b")])
 
+    def test_a_startup_place_may_be_suggested_read_only_but_never_read_write(self):
+        H = self.home
+        b = lambda path, kind: {"path": path, "kind": kind, "n": 1}
+        s = T.suggest(self.report([b(f"{H}/.gitconfig", "hidden"), b(f"{H}/.bashrc", "read-only"), b(f"{H}/.config/autostart/a.desktop", "denied")],
+                                  [{"path": f"{H}/.config/autostart/a.desktop", "w": 1, "err": {}}]))
+        self.assertEqual([(l["setting"], l["value"]) for l in s["lines"]], [("read_only", "~/.gitconfig")])
+        self.assertEqual({k["path"]: k["why"].split(" ")[0] for k in s["skipped"]}, {f"{H}/.bashrc": "writing", f"{H}/.config/autostart/a.desktop": "writing"})
+
     def test_a_report_of_the_wrong_shape_gives_nothing_and_does_not_crash(self):
         for v in ({}, {"blocked": "x"}, {"blocked": [5, {"path": 3}, {"kind": "denied"}]}, []):
             self.assertEqual(T.suggest(v), {"lines": [], "skipped": [], "outside": 0})
@@ -285,6 +293,29 @@ class Page(Base):
         for p in (f"{H}/.ssh", f"{H}/.ssh/id_ed25519", f"{H}/.local/share/keyrings/x", "/etc/shadow", "/etc/shadow-", "/etc/sudoers.d/x", "/etc/ssh/ssh_host_rsa_key"):
             self.assertTrue(T.holds_secrets(p), p)
         for p in (f"{H}/.sshx", f"{H}/.local/share", H, "/etc/passwd", "/etc/ssh/ssh_config", f"{H}/x/.ssh"): self.assertFalse(T.holds_secrets(p), p)
+
+    def test_browser_cloud_and_token_places_hold_secrets_too(self):
+        H = self.home
+        for p in (f"{H}/.azure/x", f"{H}/.docker/config.json", f"{H}/.config/gh/hosts.yml", f"{H}/.mozilla/firefox/p/logins.json", f"{H}/.config/google-chrome/Default/Cookies",
+                  f"{H}/.npmrc", f"{H}/.cargo/credentials.toml", f"{H}/.bash_history", f"{H}/.config/rclone/rclone.conf"):
+            self.assertTrue(T.holds_secrets(p), p)
+        for p in (f"{H}/.azurex", f"{H}/.docker2", f"{H}/.config/gh2", f"{H}/.cargo/registry", f"{H}/.mozillax"): self.assertFalse(T.holds_secrets(p), p)
+
+    def test_places_that_start_programs_later_are_known_inside_and_outside_the_home(self):
+        H = self.home
+        for p in (f"{H}/.bashrc", f"{H}/.config/autostart/a.desktop", f"{H}/.config/systemd/user/x.service", f"{H}/.local/bin/tool", f"{H}/bin", f"{H}/.config/git/config",
+                  "/etc/crontab", "/etc/cron.d/x", "/etc/profile.d/x.sh", "/etc/systemd/system/x.service", "/etc/xdg/autostart/a.desktop"):
+            self.assertTrue(T.persists(p), p)
+        for p in (f"{H}/.bashrcx", f"{H}/.config", f"{H}/.local/share", f"{H}/x/.bashrc", f"{H}/binx", "/etc/passwd", "/etc/crontabx", "/etc/systemd/system.conf"): self.assertFalse(T.persists(p), p)
+
+    def test_a_startup_place_is_marked_on_the_page_only_when_written_to_or_refused_a_write(self):
+        H = self.home
+        v = {"name": "x", "blocked": [{"path": "/etc/cron.d/x", "kind": "read-only", "n": 1}, {"path": f"{H}/.gitconfig", "kind": "hidden", "n": 1}],
+             "home": {"total": 3, "rows": [{"path": f"{H}/.bashrc", "r": 2, "err": {}}, {"path": f"{H}/.config/autostart/a.desktop", "w": 1, "err": {}},
+                                           {"path": f"{H}/.docker/config.json", "r": 1, "err": {}}]}, "system": {"total": 0, "rows": []}}
+        by = {r["path"]: r for r in T.html_data(v)["rows"]}
+        self.assertEqual({p: r["s"] for p, r in by.items()},
+                         {"~/.bashrc": 0, "~/.config/autostart/a.desktop": 1, "~/.docker/config.json": 1, "/etc/cron.d/x": 1, "~/.gitconfig": 0})
 
     def test_the_page_gets_its_data_from_the_report_as_it_is_read(self):
         d = T.html_data(self.report()); H = self.home

@@ -39,7 +39,19 @@ RICH_FLAGS = {"openat2": "args->how->flags"}                              # chec
 USAGE = ("usage: sbx-trace [--json] [--host] [--yes] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
          "   |   sbx-trace --suggest [NAME] [--json] [--limit N]   |   sbx-trace --diff [NAME] [--json] [--limit N]   |   sbx-trace --html [-o FILE] [NAME]")
 VERSION_OF_REPORT = 1           # saved in every report, so a later change to what a report holds can be told from this one
-SENSITIVE = (".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".local/share/keyrings", ".config/gcloud", ".netrc", ".git-credentials")   # never suggested
+SENSITIVE = (".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".local/share/keyrings", ".config/gcloud", ".netrc", ".git-credentials",
+             ".azure", ".docker", ".config/gh", ".config/rclone", ".config/op", ".config/Bitwarden", ".mozilla", ".thunderbird",
+             ".config/google-chrome", ".config/chromium", ".config/BraveSoftware", ".var/app/org.mozilla.firefox", "snap/firefox/common/.mozilla",
+             ".npmrc", ".pypirc", ".cargo/credentials", ".cargo/credentials.toml", ".terraform.d/credentials.tfrc.json",
+             ".bash_history", ".zsh_history", ".config/Signal", ".config/discord", ".bitcoin", ".electrum", ".ethereum")   # never suggested
+# Places that start a program later: at login or boot, in a shell, a git hook or an editor. Reading them is harmless, a write is not, so they
+# only count when the program wrote there or was refused a write, and no whitelist= (read-write) line is suggested for them.
+PERSIST = (".config/autostart", ".config/systemd/user", ".local/share/systemd/user", ".config/environment.d", ".pam_environment",
+           ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout",
+           ".config/fish/config.fish", ".config/fish/conf.d", ".xprofile", ".xinitrc", ".xsessionrc",
+           ".local/bin", "bin", ".cargo/bin", ".local/share/applications", ".gitconfig", ".config/git", ".vimrc", ".config/nvim", ".emacs.d")
+PERSIST_SYSTEM = ("/etc/crontab", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly", "/etc/cron.weekly", "/etc/cron.monthly", "/var/spool/cron",
+                  "/etc/systemd/system", "/etc/profile.d", "/etc/rc.local", "/etc/init.d", "/etc/xdg/autostart", "/etc/ld.so.preload")
 USER_DIRS = ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "Public", "Templates")      # too broad to suggest, like sbx's own folder rule
 WHY = {"denied": "access was refused", "read-only": "it tried to write there", "hidden": "the sandbox hides it"}
 CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -188,6 +200,14 @@ def sensitive(path):
     return any(rel == s or rel.startswith(s + "/") or s.startswith(rel + "/") for s in SENSITIVE)
 
 
+def persists(path):
+    """Is PATH a place that starts programs later (login, boot, a shell, a git hook or an editor), or inside one?"""
+    if path.startswith(HOME + "/"):
+        rel = path[len(HOME) + 1:]
+        return any(rel == s or rel.startswith(s + "/") for s in PERSIST)
+    return any(path == s or path.startswith(s + "/") for s in PERSIST_SYSTEM)
+
+
 def shared_by(name):
     """The paths already shared by default.conf and apps/NAME.conf (whitelist= and read_only=), absolute."""
     out, name = [], re.sub(r"[^A-Za-z0-9._-]", "_", name)
@@ -226,6 +246,7 @@ def suggest(v, shared=()):
         if why: skipped.append({"path": path, "why": why}); continue
         if any(under(path, s) for s in shared): continue
         key = "whitelist" if kind == "read-only" or (rows.get(path) or {}).get("w") else "read_only"
+        if key == "whitelist" and persists(path): skipped.append({"path": path, "why": "writing there could change what starts at login or boot"}); continue
         if any(under(path, l["path"]) for l in lines if l["setting"] == "whitelist" or key == "read_only"): continue
         lines.append({"setting": key, "value": tilde(path), "path": path, "why": WHY.get(kind, "access failed"), "n": b["n"] if isinstance(b.get("n"), int) else 1})
     return {"lines": lines, "skipped": skipped, "outside": outside}
@@ -462,7 +483,7 @@ function drawChips() {
   $("meta").textContent = [D.time, D.exit === null ? "" : "exit " + D.exit, i.calls + " file calls from " + i.processes + " threads", D.host ? "all processes (--host)" : ""].filter(Boolean).join(" \u00b7 ");
   if (i.lost) { $("warn").hidden = false; $("warn").textContent = "bpftrace lost " + i.lost + " events, so this report is incomplete."; }
   $("legend").append(el("span", "mut", "Size is the number of paths. Colour is the most serious thing inside: "));
-  LABEL.forEach((l, k) => { const b = el("span", "badge c" + k, l); if (k === 5) b.title = "A place that holds keys, passwords or tokens, and the program reached it (a blocked or hidden one shows as blocked, with + sensitive in the list)"; $("legend").append(b); });
+  LABEL.forEach((l, k) => { const b = el("span", "badge c" + k, l); if (k === 5) b.title = "A place that holds keys, passwords or tokens, or that starts programs at login or boot (when written to), and the program reached it (a blocked or hidden one shows as blocked, with + sensitive in the list)"; $("legend").append(b); });
   const foot = [];
   if (D.more) foot.push(D.more + " more files are not in the saved report.");
   if (D.noise) foot.push("/proc, /sys, and /dev and /run without errors: " + D.noise + " paths not shown.");
@@ -485,12 +506,12 @@ def holds_secrets(path):
 
 def html_data(v):
     """What the page shows, from a saved report V of any shape: {name, time, exit, host, info, more, noise, rows: [{path, r, w, p, x, e, k, s}]}.
-    k is how it was blocked (denied, read-only, hidden) or None; s is 1 for a path that holds secrets. Paths are for reading: ~ for your home, no control characters."""
+    k is how it was blocked (denied, read-only, hidden) or None; s is 1 for a path that holds secrets, or a startup place that was written to. Paths are for reading: ~ for your home, no control characters."""
     v = v if isinstance(v, dict) else {}
     num = lambda x: x if isinstance(x, int) and not isinstance(x, bool) and x >= 0 else 0
     kinds = {b["path"]: b["kind"] for b in (v.get("blocked") if isinstance(v.get("blocked"), list) else []) if isinstance(b, dict) and isinstance(b.get("path"), str)
              and b.get("kind") in ("denied", "read-only", "hidden")}
-    row = lambda p, r, e: {"path": safe(tilde(p)), **{k: num(r.get(k)) for k in "rwpx"}, "e": {safe(str(k)): num(n) for k, n in e.items() if num(n)}, "k": kinds.get(p), "s": int(holds_secrets(p))}
+    row = lambda p, r, e: {"path": safe(tilde(p)), **{k: num(r.get(k)) for k in "rwpx"}, "e": {safe(str(k)): num(n) for k, n in e.items() if num(n)}, "k": kinds.get(p), "s": int(holds_secrets(p) or (persists(p) and (num(r.get("w")) > 0 or kinds.get(p) == "read-only")))}
     rows, seen, total = [], set(), 0
     for g in ("home", "system"):
         grp = v.get(g) if isinstance(v.get(g), dict) else {}

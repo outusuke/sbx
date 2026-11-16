@@ -450,6 +450,19 @@ class Window(unittest.TestCase):
         G["Win"].entry_row(w, (f"{H}/.ssh", [{"path": f"{H}/.ssh/a", "r": 1, "err": {}}, {"path": f"{H}/.ssh/b", "r": 1, "err": {}}]), made, G["folder_subtitle"], False)
         self.assertTrue(Adw.ExpanderRow.call_args.kwargs["subtitle"].endswith("holds sensitive paths")); Adw.ExpanderRow.return_value.add_prefix.assert_called()
 
+    def test_more_secret_places_and_a_startup_place_that_was_written_to_are_marked(self):
+        G, H = self.G, self.tmp; Adw = G["Adw"]
+        for p in (f"{H}/.docker/config.json", f"{H}/.mozilla/firefox/p/logins.json", f"{H}/.config/gh/hosts.yml", f"{H}/.npmrc"): self.assertTrue(G["sensitive"](p), p)
+        for p in (f"{H}/.bashrc", f"{H}/.config/autostart/a.desktop", f"{H}/.config/systemd/user/x.service", f"{H}/.local/bin/tool", "/etc/cron.d/x", "/etc/profile.d/x.sh"):
+            self.assertFalse(G["sensitive"](p), p); self.assertTrue(G["sensitive"](p, True), p)
+        for p in (f"{H}/.bashrcx", f"{H}/.config", f"{H}/x/.bashrc", "/etc/passwd"): self.assertFalse(G["sensitive"](p, True), p)
+        self.assertFalse(G["risky"]({"path": f"{H}/.bashrc", "r": 1, "err": {}})); self.assertTrue(G["risky"]({"path": f"{H}/.bashrc", "w": 1, "err": {}}))
+        self.assertTrue(G["risky"]({"path": f"{H}/.bashrc", "kind": "read-only", "n": 1})); self.assertFalse(G["risky"]({"path": f"{H}/.bashrc", "kind": "hidden", "n": 1}))
+        w = mock.MagicMock(); w.render_max = G["RENDER_MAX"]
+        for kw, want in (({}, False), ({"wrote": True}, True), ({"kind": "read-only"}, True), ({"kind": "hidden"}, False)):
+            Adw.ActionRow.reset_mock(); G["Win"].path_row(w, f"{H}/.bashrc", "x", **kw)
+            self.assertEqual(Adw.ActionRow.return_value.add_prefix.called, want, kw)
+
     def test_a_group_draws_a_few_rows_and_says_how_many_more_there_are(self):
         G, w = self.G, self.win(); Adw = G["Adw"]; group = mock.MagicMock(); made = []
         def row(it): made.append(it); return mock.MagicMock()
