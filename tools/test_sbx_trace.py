@@ -361,7 +361,7 @@ print(token + "\\to\\t1\\t-2\\t0\\t/etc/missing", flush=True)
                 rc, tr = T.trace(["/bin/sh", "-c", f"test -f {self.tmp}/ready || true; touch {ran}; exit 4"])
         finally:
             for s, h in old.items(): signal.signal(s, h)
-        self.assertEqual(rc, 4); self.assertEqual(st.call_count, 2); self.assertEqual(st.call_args_list[1][0][3], list(T.PROBES[platform.machine()])); self.assertEqual(st.call_args_list[1][1], {"rich": False}); self.assertEqual(st.call_args_list[0][1], {})
+        self.assertEqual(rc, 4); self.assertEqual(st.call_count, 2); self.assertEqual(st.call_args_list[1][0][3], list(T.PROBES[platform.machine()])); self.assertEqual(st.call_args_list[1][1], {"rich": False, "live": None}); self.assertEqual(st.call_args_list[0][1], {"live": None})
         self.assertIn("trying again with the basic set", err.getvalue()); self.assertIn("no such field", err.getvalue()); self.assertEqual(tr.paths["/etc/missing"]["err"], {"ENOENT": 1})
         self.assertTrue(os.path.exists(ran))                                           # it ran once, after the attempt that worked
 
@@ -422,6 +422,32 @@ print(token + "\\to\\t1\\t-2\\t0\\t/etc/missing", flush=True)
         with contextlib.redirect_stdout(out): T.main(["--last", "--json"])
         self.assertEqual(json.loads(out.getvalue())["blocked"][0]["path"], "/etc/shadow")
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): T.main(["--last", "nothing"])
+
+
+class Live(Base):
+    def test_a_snapshot_is_a_report_with_no_exit_code_in_a_folder_that_last_does_not_read(self):
+        T.write_live(self.tr(), False, {"name": "foo", "command": ["foo"]})
+        with open(T.live_path("foo")) as f: v = json.load(f)
+        self.assertTrue(v["live"]); self.assertIsNone(v["exit"]); self.assertEqual(v["name"], "foo"); self.assertEqual(v["command"], ["foo"])
+        self.assertIn("/etc/shadow", [b["path"] for b in v["blocked"]])
+        self.assertEqual(os.stat(T.live_path("foo")).st_mode & 0o777, 0o600)
+        self.assertEqual([n for n in os.listdir(T.STATE) if n.endswith(".json")], [])          # --last would take it for a finished report
+
+    def test_the_loop_writes_while_it_runs_and_removes_the_snapshot_when_it_ends(self):
+        import threading
+        done, t = threading.Event(), self.tr()
+        with mock.patch.object(T, "LIVE_EVERY", 0.05):
+            th = threading.Thread(target=T.live_loop, args=(t, False, {"name": "foo", "command": ["foo"]}, done)); th.start()
+            for _ in range(100):
+                if os.path.exists(T.live_path("foo")): break
+                import time; time.sleep(0.02)
+            self.assertTrue(os.path.exists(T.live_path("foo")))
+            done.set(); th.join(2)
+        self.assertFalse(os.path.exists(T.live_path("foo")))
+
+    def test_a_snapshot_never_raises(self):
+        with mock.patch.object(T, "STATE", "/proc/nope"):
+            T.write_live(self.tr(), False, {"name": "foo", "command": ["foo"]})
 
 
 if __name__ == "__main__":

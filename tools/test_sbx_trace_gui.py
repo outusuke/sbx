@@ -293,6 +293,33 @@ sys.exit(3)"""))
         self.assertLessEqual(len(G["failure_text"]("\n".join(f"line {i}" for i in range(500)))), 700)
 
 
+class Live(Base):
+    def snapshot(self):
+        t = self.T.Trace(4242)
+        for l in SAMPLE: t.feed(l.replace("@H@", self.home))
+        self.T.write_live(t, False, {"name": "foo", "command": ["foo"]})
+        self.G["LIVE_DIR"] = os.path.dirname(self.T.live_path("foo"))
+
+    def test_a_running_trace_is_shown_from_its_snapshot(self):
+        G = self.G
+        self.snapshot()
+        rep = G["load_live"](time.time() - 10)
+        self.assertIsNotNone(rep); self.assertIsNone(rep["exit"]); self.assertEqual(rep["name"], "foo")
+        self.assertIn("/etc/shadow", [b["path"] for b in rep["blocked"]])
+        self.assertIn("blocked so far", G["live_text"](rep))
+
+    def test_an_old_snapshot_left_by_a_trace_that_was_killed_is_not_shown(self):
+        self.snapshot()
+        self.assertIsNone(self.G["load_live"](time.time() + 3600))
+
+    def test_no_snapshot_or_a_broken_one_is_nothing_not_an_error(self):
+        G = self.G
+        G["LIVE_DIR"] = f"{self.tmp}/nothing"
+        self.assertIsNone(G["load_live"](0))
+        os.makedirs(f"{self.tmp}/live"); self.put(f"{self.tmp}/live/x.json", "{not json"); G["LIVE_DIR"] = f"{self.tmp}/live"
+        self.assertIsNone(G["load_live"](0))
+
+
 class Export(Base):
     def test_the_page_is_written_by_the_real_sbx_trace_for_the_report_shown(self):
         G = self.G

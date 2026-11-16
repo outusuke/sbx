@@ -522,6 +522,38 @@ def report_path(name):
     return os.path.join(STATE, f"{name}.json")
 
 
+def live_path(name):
+    return os.path.join(STATE, "live", f"{name}.json")      # in a folder of its own: --last looks only at the reports in STATE itself
+
+
+LIVE_EVERY = 1.5                # seconds between two snapshots of a running trace
+
+
+def write_live(tr, host, meta):
+    """Write what the trace has seen so far (a report that is not finished: no exit code) where the window can read it. Never raises."""
+    snap = Trace(tr.token)
+    try:
+        snap.paths = {p: {**c, "err": dict(c["err"])} if "err" in c else dict(c) for p, c in list(tr.paths.items())}      # a copy: the reader thread keeps adding
+        snap.lines, snap.dropped, snap.unresolved, snap.lost, snap.pids = tr.lines, tr.dropped, tr.unresolved, tr.lost, set(range(len(tr.pids)))
+        v = view(snap, host)
+        v.update(meta, version=VERSION_OF_REPORT, exit=None, time=time.time(), live=True)
+        path = live_path(meta["name"])
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        tmp = f"{path}.tmp{os.getpid()}"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as f: json.dump(v, f)
+        os.replace(tmp, path)
+    except (OSError, RuntimeError, ValueError, TypeError):
+        pass
+
+
+def live_loop(tr, host, meta, done):
+    """Until DONE is set, write a snapshot every LIVE_EVERY seconds; then remove it (the saved report replaces it)."""
+    while not done.wait(LIVE_EVERY): write_live(tr, host, meta)
+    try: os.unlink(live_path(meta["name"]))
+    except OSError: pass
+
+
 def previous_path(name):
     return os.path.join(STATE, "previous", f"{name}.json")
 
@@ -602,7 +634,7 @@ def fail_text(why):
     return "the trace did not start" + (f": {why}" if why else "")
 
 
-def start(cmd, host, helper, names, rich=True):
+def start(cmd, host, helper, names, rich=True, live=None):
     """Run CMD with the helper watching the system calls NAMES. Returns (exit code, Trace). Dies, without running CMD, when the helper can't
     start; raises Rejected when bpftrace ran and refused the program."""
     esc, exe = helper
@@ -641,8 +673,11 @@ def start(cmd, host, helper, names, rich=True):
         if ended and tr.helper.is_set() and not stopped[0]: raise Rejected(why)
         die(fail_text(why) + (" (interrupted)" if stopped[0] else ""))
     os.write(w, b"1"); os.close(w)
+    done = threading.Event()
+    if live: threading.Thread(target=live_loop, args=(tr, host, live, done), daemon=True).start()
     rc = p.wait()
-    th.join(10)                                                     # the helper ends by itself when the first process is gone
+    th.join(10)
+    done.set()                                                     # the helper ends by itself when the first process is gone
     if proc.poll() is None:
         try: proc.terminate()                                       # (a root process may refuse; it ends on its own)
         except OSError: pass
@@ -651,18 +686,18 @@ def start(cmd, host, helper, names, rich=True):
     return (128 - rc if rc < 0 else rc), tr
 
 
-def trace(cmd, host=False):
+def trace(cmd, host=False, live=None):
     """Run CMD with the helper attached. Returns (exit code, Trace). Dies, without running CMD, when the helper can't start. Should bpftrace
     refuse the larger set of system calls (a field or tracepoint this kernel lacks), CMD has not run yet, so it is tried again with the basic set."""
     helper, why = support()
     if not helper: die(f"can't trace here: {why}")
     machine = platform.machine()
     basic, full = list(PROBES[machine]), calls(machine, kernel_calls(machine))
-    try: return start(cmd, host, helper, full)
+    try: return start(cmd, host, helper, full, live=live)
     except Rejected as e:
         if full == basic: die(fail_text(str(e)))
         print(f"sbx-trace: bpftrace did not accept every probe ({safe(str(e)) or 'no message'}); trying again with the basic set, which sees no writes and takes no flags from openat2", file=sys.stderr)
-    try: return start(cmd, host, helper, basic, rich=False)
+    try: return start(cmd, host, helper, basic, rich=False, live=live)
     except Rejected as e: die(fail_text(str(e)))
 
 
@@ -696,7 +731,7 @@ def main(argv):
     else:
         if not rest: die(USAGE)
         if os.geteuid() == 0: die("run it as your own user, not root: it asks for root itself")
-        rc, tr = trace(rest, "--host" in flags)
+        rc, tr = trace(rest, "--host" in flags, {"name": name_of(rest), "command": rest})
         v = view(tr, "--host" in flags); v["version"] = VERSION_OF_REPORT; v["name"] = name_of(rest); v["command"] = rest; v["exit"] = rc; v["time"] = time.time()
         try: save(v["name"], v)
         except OSError as e: print(f"sbx-trace: could not save the report: {e.strerror or e}", file=sys.stderr)

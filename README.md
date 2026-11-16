@@ -113,7 +113,7 @@ sbx-trace --diff               # compare with the run before: did a setting help
 sbx-trace --html -o report.html   # one page to open or send: a map of the folders, and what needs attention
 ```
 
-`sbx-trace-gui` is a window for the same; its save button writes the report as the web page. Install: `sudo install -m755 tools/sbx-trace tools/sbx-trace-gui /usr/local/bin/`. Reports are kept in `~/.local/state/sbx-trace`.
+`sbx-trace-gui` is a window for the same: while the program runs it shows the files touched so far, refreshed every second, and its save button writes the report as the web page. Install: `sudo install -m755 tools/sbx-trace tools/sbx-trace-gui /usr/local/bin/`. Reports are kept in `~/.local/state/sbx-trace`.
 
 ## Test
 

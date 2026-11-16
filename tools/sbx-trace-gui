@@ -13,6 +13,8 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 HOME = os.path.realpath(os.path.expanduser("~"))
 HOMES = HOME + "/.sbx-homes"
+LIVE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local/state"), "sbx-trace", "live")   # where a running sbx-trace writes what it has seen so far
+LIVE_EVERY_MS = 1000            # how often the window looks at it
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 CTRL_KEEP_NL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
@@ -263,6 +265,24 @@ def load_report(name=None):
     except ValueError as e: return None, f"The saved report can't be read: {safe(str(e))}"
 
 
+def load_live(started):
+    """The newest snapshot of a running trace written since STARTED (a report with no exit code), or None. Read as a file, and checked
+    like any report: its file names come from the program."""
+    try:
+        files = [os.path.join(LIVE_DIR, f) for f in os.listdir(LIVE_DIR) if f.endswith(".json")]
+        files = [f for f in files if os.stat(f).st_mtime >= started - 2]
+        if not files: return None
+        with open(max(files, key=lambda f: os.stat(f).st_mtime), encoding="utf-8", errors="replace") as fh:
+            return clean_report(json.load(fh))
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def live_text(rep):
+    i, n = rep["info"], len(rep["blocked"])
+    return f"Live: {i['calls']} file calls from {i['processes']} threads · {n} blocked so far"
+
+
 def load_diff(name):
     """(the comparison of the saved report of NAME with the one before it, or None; why not), from `sbx-trace --diff --json`."""
     exe = trace_cmd()
@@ -339,6 +359,8 @@ class Win(Adw.ApplicationWindow):
         super().__init__(application=app, title="sbx trace", default_width=640, default_height=800)
         self.run, self.report, self.compare, self.closing = None, None, None, False
         self.rows = {}                           # group -> the rows in it now
+        self.open_folders = set()                # folders the person opened: they stay open when the live view redraws
+        self.live_sig = None
         self.toasts = Adw.ToastOverlay()
         view = Adw.ToolbarView()
         bar = Adw.HeaderBar()
@@ -367,7 +389,7 @@ class Win(Adw.ApplicationWindow):
     def build_page(self):
         page = Adw.PreferencesPage()
         g = Adw.PreferencesGroup(title="Trace a program", description="Starts it in the sandbox (sbx PROGRAM) and records every file it opens or looks for. "
-                                 "It starts after you enter your password; the report appears when it ends.")
+                                 "It starts after you enter your password; the files it touches appear while it runs.")
         self.entry = Adw.EntryRow(title="Program or command")
         self.entry.connect("entry-activated", lambda *_: self.start_trace())
         self.names = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["navigation-sidebar"])
@@ -468,7 +490,8 @@ class Win(Adw.ApplicationWindow):
         row.add_suffix(copy)
         for it in items[:RENDER_MAX]: row.add_row(make_item(it))
         if len(items) > RENDER_MAX: row.add_row(Adw.ActionRow(title=f"… {len(items) - RENDER_MAX} more", subtitle="Search to narrow it down.", use_markup=False))
-        row.set_expanded(bool(expand))
+        row.set_expanded(bool(expand) or folder in self.open_folders)
+        row.connect("notify::expanded", lambda r, _p, f=folder: (self.open_folders.add(f) if r.get_expanded() else self.open_folders.discard(f)))
         return row
 
     def fill_group(self, group, title, total, matched, entries, make_row, narrowed):
@@ -615,13 +638,35 @@ class Win(Adw.ApplicationWindow):
         started = time.time()
         try: run = self.run = Run(argv)
         except OSError as e: return self.alert("Couldn't start sbx-trace", str(getattr(e, "strerror", None) or e))
-        self.set_busy(True, f"Tracing {safe(shlex.join(words))}", "Waiting for your password. The program starts after that, and the report appears when it ends.")
+        self.set_busy(True, f"Tracing {safe(shlex.join(words))}", "Waiting for your password. The program starts after that, and the files it touches appear here while it runs.")
+        self.live_sig = None
+        GLib.timeout_add(LIVE_EVERY_MS, self.poll_live, run, started)
 
         def work():
             rc, out = run.wait()
             rep, why = load_report(None)
             GLib.idle_add(lambda: self.finished(run, cmd, started, rc, out, rep, why) and False)
         threading.Thread(target=work, daemon=True).start()
+
+    def poll_live(self, run, started):
+        """Every second while the trace runs: read the snapshot sbx-trace wrote, from a thread, and redraw when it changed."""
+        if self.closing or self.run is not run: return False                        # the trace ended: finished() shows the saved report
+        def work():
+            rep = load_live(started)
+            GLib.idle_add(lambda: self.got_live(run, rep) and False)
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def got_live(self, run, rep):
+        if self.closing or self.run is not run or rep is None: return True
+        sig = (rep["info"]["calls"], len(rep["blocked"]), rep["home"]["total"], rep["system"]["total"])
+        self.status.set_subtitle(live_text(rep))
+        if sig != self.live_sig:                                                    # nothing new: don't rebuild the rows
+            self.live_sig = sig
+            self.report, self.compare = rep, None
+            self.fill_report()
+            self.export_btn.set_sensitive(False)                                    # the page is made from the saved report, which this run has not written yet
+        return True
 
     def stop_trace(self):
         if self.run:
