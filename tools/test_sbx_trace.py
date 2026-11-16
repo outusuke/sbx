@@ -216,6 +216,50 @@ class Suggest(Base):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): T.main(["--suggest", "nothing"])
 
 
+class Compare(Base):
+    def rep(self, blocked, rows=(), t=100.0):
+        return {"name": "foo", "time": t, "blocked": [{"path": p, "kind": k, "n": 1} for p, k in blocked], "home": {"total": 0, "rows": []},
+                "system": {"total": len(rows), "rows": [{"path": p, "err": e} for p, e in rows]}}
+
+    def test_saving_again_keeps_the_report_before_and_it_is_private(self):
+        T.save("foo", self.rep([("/a", "denied")], t=1.0)); self.assertFalse(os.path.exists(T.previous_path("foo")))
+        T.save("foo", self.rep([], t=2.0)); T.save("foo", self.rep([], t=3.0))
+        with open(T.previous_path("foo")) as f: self.assertEqual(json.load(f)["time"], 2.0)
+        with open(T.report_path("foo")) as f: self.assertEqual(json.load(f)["time"], 3.0)
+        self.assertEqual(stat.S_IMODE(os.stat(T.previous_path("foo")).st_mode), 0o600); self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(T.previous_path("foo"))).st_mode), 0o700)
+        T.save("bar", self.rep([])); self.assertFalse(os.path.exists(T.previous_path("bar")))      # one program's history is not another's
+
+    def test_it_says_what_a_setting_changed(self):
+        old = self.rep([("/a", "denied"), ("/b", "hidden"), ("/c", "hidden"), ("/d", "hidden")], [("/z", {})])
+        new = self.rep([("/d", "hidden"), ("/e", "denied")], [("/a", {}), ("/b", {"ENOENT": 1}), ("/e", {"EACCES": 1}), ("/y", {})])
+        d = T.diff(old, new)
+        self.assertEqual({x["path"]: x["now"] for x in d["fixed"]}, {"/a": "works", "/b": "fails another way", "/c": "not touched"})
+        self.assertEqual([b["path"] for b in d["new_blocked"]], ["/e"]); self.assertEqual(d["still_blocked"], 1)
+        self.assertEqual((sorted(d["added"]), d["removed"]), (["/a", "/b", "/e", "/y"], ["/z"]))
+        self.assertEqual(T.diff({}, {}), {"fixed": [], "new_blocked": [], "still_blocked": 0, "added": [], "removed": []})
+        self.assertEqual(T.diff({"blocked": "x", "system": []}, {"blocked": [5, {"path": 3}]})["fixed"], [])          # a report of the wrong shape does not crash it
+
+    def test_diff_compares_the_last_report_with_the_one_before(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): T.main(["--diff"])               # no report at all
+        T.save("foo", self.rep([("/a", "denied")], t=1.0))
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit): T.main(["--diff", "foo"])
+        self.assertIn("no earlier report", err.getvalue())
+        T.save("foo", self.rep([("/b", "hidden")], [("/a", {})], t=2.0))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): self.assertEqual(T.main(["--diff", "foo"]), 0)
+        self.assertIn("no longer blocked (1):\n  /a   works", out.getvalue()); self.assertIn("newly blocked (1):\n  hidden    /b", out.getvalue())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): T.main(["--diff", "--json"])
+        j = json.loads(out.getvalue()); self.assertEqual((j["name"], j["before"], j["time"], j["fixed"][0]["path"]), ("foo", 1.0, 2.0, "/a"))
+
+    def test_a_report_says_which_version_of_the_format_it_is(self):
+        exe = Fake.fake(self, "print(token + '\\tREADY', flush=True)\nwhile True:\n    try: os.kill(pid, 0)\n    except ProcessLookupError: break\n    time.sleep(0.05)\n")
+        with mock.patch.object(T, "support", return_value=(("/usr/bin/env", exe), "")), contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.object(T.os, "geteuid", return_value=1000):
+            T.main(["--", "/bin/sh", "-c", "exit 0"])
+        with open(T.report_path("sh")) as f: self.assertEqual(json.load(f)["version"], T.VERSION_OF_REPORT)
+
+
 class Fake(Base):
     """The real start-up (the held command, the handshake, the pipe) with a fake bpftrace."""
     def fake(self, body):

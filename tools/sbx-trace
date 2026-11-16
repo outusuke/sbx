@@ -3,6 +3,7 @@
 # sbx-trace - run a command with bpftrace watching and report which files it opened, looked for or changed (deleted, renamed, made...), and which attempts failed.
 #     sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]        e.g.   sbx-trace -- sbx firefox
 #     sbx-trace --last [NAME] [--json] [--limit N]                      show the last report again
+#     sbx-trace --diff [NAME] [--json] [--limit N]                      compare the last report with the one before it (did a setting help?)
 #     sbx-trace --suggest [NAME] [--json] [--limit N]                   settings (read_only=, whitelist=) that would let the program reach what it was refused
 # A tool apart from sbx: it only starts a command and watches it from outside. It needs bpftrace, a kernel with BTF and root
 # (sudo on a terminal, else pkexec). If bpftrace refuses the larger set of system calls, it starts again with the basic set (no writes). Without --host only processes inside a new pid namespace are kept, which leaves out
@@ -34,7 +35,8 @@ FIELD = {**WRITES, **READS}                                                # eve
 KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x"}       # a write is w (n for the new name of a rename or link), every other call is a probe: p
 FLAGS = {"open": "args->flags", "openat": "args->flags"}                  # openat2 keeps its flags in a struct: not read, counted as a read
 USAGE = ("usage: sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
-         "   |   sbx-trace --suggest [NAME] [--json] [--limit N]")
+         "   |   sbx-trace --suggest [NAME] [--json] [--limit N]   |   sbx-trace --diff [NAME] [--json] [--limit N]")
+VERSION_OF_REPORT = 1           # saved in every report, so a later change to what a report holds can be told from this one
 SENSITIVE = (".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".local/share/keyrings", ".config/gcloud", ".netrc", ".git-credentials")   # never suggested
 USER_DIRS = ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "Public", "Templates")      # too broad to suggest, like sbx's own folder rule
 WHY = {"denied": "access was refused", "read-only": "it tried to write there", "hidden": "the sandbox hides it"}
@@ -235,6 +237,36 @@ def show_suggest(name, s, limit):
     if s["outside"]: print(f"# {s['outside']} more blocked path{'s' if s['outside'] != 1 else ''} outside your home, /mnt, /media and /srv: no suggestion for {'those' if s['outside'] != 1 else 'it'}")
 
 
+def diff(old, new):
+    """What changed between two reports of the same program: blocked paths that no longer are (and what the program did with them now: works,
+    fails another way, or was not touched), paths newly blocked, and the paths only one of the runs touched (not the noise or what a report
+    does not keep)."""
+    touched = lambda v: {r["path"]: r for g in ("home", "system") for r in (v.get(g) or {}).get("rows", []) if isinstance(r, dict) and isinstance(r.get("path"), str)}
+    blocked = lambda v: {b["path"]: b for b in v.get("blocked") or [] if isinstance(b, dict) and isinstance(b.get("path"), str)}
+    ob, nb, orow, nrow = blocked(old), blocked(new), touched(old), touched(new)
+    fixed = [{"path": p, "now": "not touched" if p not in nrow else "fails another way" if nrow[p].get("err") else "works"} for p in ob if p not in nb]
+    return {"fixed": fixed, "new_blocked": [b for p, b in nb.items() if p not in ob], "still_blocked": sum(1 for p in nb if p in ob),
+            "added": [p for p in nrow if p not in orow], "removed": [p for p in orow if p not in nrow]}
+
+
+def when(v):
+    t = v.get("time")
+    try: return time.strftime("%Y-%m-%d %H:%M", time.localtime(t)) if isinstance(t, (int, float)) else "?"
+    except (ValueError, OverflowError, OSError): return "?"
+
+
+def show_diff(old, new, d, limit):
+    print(f"{new.get('name', '?')}: this run ({when(new)}) compared with the one before it ({when(old)})")
+    for title, rows in (("no longer blocked", [f"{safe(tilde(x['path']))}   {x['now']}" for x in d["fixed"]]),
+                        ("newly blocked", [f"{x.get('kind', '?'):<9} {safe(tilde(x['path']))}" for x in d["new_blocked"]])):
+        print(f"{title} ({len(rows)}):")
+        for r in rows[:limit]: print(f"  {r}")
+        if len(rows) > limit: print(f"  ... {len(rows) - limit} more (--limit N, or --json)")
+        if not rows: print("  nothing")
+    print(f"still blocked: {d['still_blocked']}")
+    print(f"touched only in this run: {len(d['added'])}, only in the one before: {len(d['removed'])} (--json lists them)")
+
+
 def show(v, limit):
     i = v["info"]
     print(f"{v.get('name', '?')}: {i['calls']} file calls from {i['processes']} threads" + (f", {i['dropped']} paths not kept (too many)" if i["dropped"] else "") +
@@ -259,12 +291,22 @@ def report_path(name):
     return os.path.join(STATE, f"{name}.json")
 
 
+def previous_path(name):
+    return os.path.join(STATE, "previous", f"{name}.json")
+
+
 def save(name, v):
+    """Save V as the report of NAME. The one it replaces is kept as the previous one (see diff); failing to keep it never stops the save."""
     os.makedirs(STATE, mode=0o700, exist_ok=True)
     tmp = f"{report_path(name)}.tmp{os.getpid()}"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
         with os.fdopen(fd, "w") as f: json.dump(v, f)
+        try:
+            os.makedirs(os.path.dirname(previous_path(name)), mode=0o700, exist_ok=True)
+            os.replace(report_path(name), previous_path(name))
+        except OSError:
+            pass
         os.replace(tmp, report_path(name))
     except BaseException:
         try: os.unlink(tmp)
@@ -394,12 +436,13 @@ def trace(cmd, host=False):
 
 
 def main(argv):
-    flags, limit, last, ask, i = set(), 40, False, False, 0
+    flags, limit, last, ask, cmp, i = set(), 40, False, False, False, 0
     while i < len(argv) and argv[i].startswith("-") and argv[i] != "--":
         a = argv[i]
         if a in ("--json", "--host"): flags.add(a)
         elif a == "--last": last = True
         elif a == "--suggest": last = ask = True
+        elif a == "--diff": last = cmp = True
         elif a == "--limit":
             if i + 1 >= len(argv) or not (argv[i + 1].isascii() and argv[i + 1].isdigit()): die(f"--limit needs a number\n{USAGE}")
             limit = int(argv[i + 1]); i += 1
@@ -419,9 +462,17 @@ def main(argv):
         if not rest: die(USAGE)
         if os.geteuid() == 0: die("run it as your own user, not root: it asks for root itself")
         rc, tr = trace(rest, "--host" in flags)
-        v = view(tr, "--host" in flags); v["name"] = name_of(rest); v["command"] = rest; v["exit"] = rc; v["time"] = time.time()
+        v = view(tr, "--host" in flags); v["version"] = VERSION_OF_REPORT; v["name"] = name_of(rest); v["command"] = rest; v["exit"] = rc; v["time"] = time.time()
         try: save(v["name"], v)
         except OSError as e: print(f"sbx-trace: could not save the report: {e.strerror or e}", file=sys.stderr)
+    if cmp:
+        try:
+            with open(previous_path(re.sub(r"[^A-Za-z0-9._-]", "_", str(v.get("name"))))) as f: old = json.load(f)
+        except (OSError, ValueError): die(f"no earlier report of {safe(str(v.get('name')))} to compare with: trace it again first")
+        d = diff(old, v)
+        if "--json" in flags: print(json.dumps({"name": v.get("name"), "time": v.get("time"), "before": old.get("time"), **d}))
+        else: show_diff(old, v, d, limit)
+        return 0
     if ask:
         name = v.get("name") if isinstance(v.get("name"), str) and v["name"] else "command"
         s = suggest(v, shared_by(name))

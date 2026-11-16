@@ -100,10 +100,25 @@ Environment variables: `setenv=NAME=value` sets one for the program, `env=NAME` 
 
 Back up or move settings with `sbx export -o FILE` and `sbx import FILE` (`--force` replaces settings that differ); `sbx-gui` has the same buttons.
 
+## Trace
+
+`sbx-trace` runs a program under [bpftrace](https://bpftrace.org) and reports which files it opened, looked for or changed, and which attempts failed (refused, read-only, or hidden by the sandbox). Use it to see what a setting would let through. It needs `bpftrace`, a kernel with BTF and root (it asks through `sudo` or `pkexec`).
+
+```
+sbx-trace -- sbx firefox       # run it and print the report
+sbx-trace --last               # show the last report again
+sbx-trace --suggest            # read_only= / whitelist= lines for what was refused (read them first)
+sbx-trace --diff               # compare with the run before: did a setting help?
+```
+
+`sbx-trace-gui` is a window for the same. Install: `sudo install -m755 tools/sbx-trace tools/sbx-trace-gui /usr/local/bin/`. Reports are kept in `~/.local/state/sbx-trace`.
+
 ## Test
 
 ```
 python3 test_sbx.py              # all tests (isolation tests need bubblewrap)
+python3 tools/test_sbx_trace.py  # sbx-trace and its window (no root or bpftrace needed)
+python3 tools/test_sbx_trace_gui.py
 sbx ./sbx-selftest               # inside the sandbox: every row should say PASS
 sbx ./sbx-report                 # what the program can reach
 ```
