@@ -134,6 +134,51 @@ class Report(Base):
         self.assertEqual(T.name_of(["/opt/sbx", "run me"]), "run_me")
 
 
+class Suggest(Base):
+    def report(self, blocked, rows=()):
+        return {"name": "foo", "blocked": blocked, "home": {"total": len(rows), "rows": list(rows)}, "system": {"total": 0, "rows": []}}
+
+    def test_the_narrowest_safe_setting_for_what_was_refused_or_hidden(self):
+        H = self.home
+        b = lambda path, kind="hidden", n=1: {"path": path, "kind": kind, "n": n}
+        v = self.report([
+            b(f"{H}/Projects/a.txt", "hidden", 3), b(f"{H}/Projects/out", "denied"), b(f"{H}/Projects/out/log"), b(f"{H}/Shared/x"),
+            b("/mnt/data/x", "read-only"), b(f"{H}/.ssh/config"), b(f"{H}/.local/share"), b(f"{H}", "denied"), b(f"{H}/Downloads"),
+            b(f"{H}/.sbx-homes/foo/x"), b(f"{H}/weird\nname"), b(f"{H}/a #b"), b(f"{H}/.config/foo/new"), b("/etc/shadow", "denied"), b("/usr/x", "read-only")],
+            [{"path": f"{H}/Projects/out", "w": 2, "err": {"EACCES": 2}}])
+        os.makedirs(f"{H}/.config/sbx/apps")
+        with open(f"{H}/.config/sbx/apps/foo.conf", "w") as f: f.write("whitelist=~/Shared  # already\nnet=0\n")
+        s = T.suggest(v, T.shared_by("foo"))
+        self.assertEqual([(l["setting"], l["value"]) for l in s["lines"]],
+                         [("read_only", "~/Projects/a.txt"), ("whitelist", "~/Projects/out"), ("whitelist", "/mnt/data/x"), ("read_only", "~/.config/foo/new")])
+        # ~/Projects/out/log is inside the read-write path above; ~/Shared/x is already shared; /etc and /usr are not places a folder setting is suggested for
+        self.assertEqual({k["path"]: k["why"].split(":")[0].split(" ")[0] for k in s["skipped"]},
+                         {f"{H}/.ssh/config": "looks", f"{H}/.local/share": "looks", H: "too", f"{H}/Downloads": "too", f"{H}/.sbx-homes/foo/x": "sbx",
+                          f"{H}/weird\nname": "its", f"{H}/a #b": "its"})
+        self.assertEqual(s["outside"], 2)
+        self.assertEqual(s["lines"][0]["why"], "the sandbox hides it"); self.assertEqual(s["lines"][0]["n"], 3)
+
+    def test_a_read_only_path_inside_an_earlier_read_only_one_is_kept_only_when_it_needs_writing(self):
+        H = self.home
+        v = self.report([{"path": f"{H}/p", "kind": "hidden", "n": 1}, {"path": f"{H}/p/a", "kind": "hidden", "n": 1}, {"path": f"{H}/p/b", "kind": "read-only", "n": 1}])
+        self.assertEqual([(l["setting"], l["value"]) for l in T.suggest(v)["lines"]], [("read_only", "~/p"), ("whitelist", "~/p/b")])
+
+    def test_a_report_of_the_wrong_shape_gives_nothing_and_does_not_crash(self):
+        for v in ({}, {"blocked": "x"}, {"blocked": [5, {"path": 3}, {"kind": "denied"}]}, []):
+            self.assertEqual(T.suggest(v), {"lines": [], "skipped": [], "outside": 0})
+
+    def test_suggest_shows_the_saved_report_as_text_or_json(self):
+        H = self.home
+        T.save("foo", self.report([{"path": f"{H}/Projects/a.txt", "kind": "hidden", "n": 2}, {"path": "/etc/shadow", "kind": "denied", "n": 1}]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): self.assertEqual(T.main(["--suggest", "foo"]), 0)
+        self.assertIn("read_only=~/Projects/a.txt   # the sandbox hides it, 2x", out.getvalue()); self.assertIn("1 more blocked path outside your home", out.getvalue())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): T.main(["--suggest", "--json"])                  # no name: the newest report
+        j = json.loads(out.getvalue()); self.assertEqual((j["name"], j["lines"][0]["value"], j["outside"]), ("foo", "~/Projects/a.txt", 1))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): T.main(["--suggest", "nothing"])
+
+
 class Fake(Base):
     """The real start-up (the held command, the handshake, the pipe) with a fake bpftrace."""
     def fake(self, body):

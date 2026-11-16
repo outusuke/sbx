@@ -3,6 +3,7 @@
 # sbx-trace - run a command with bpftrace watching and report which files it opened or looked for, and which attempts failed.
 #     sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]        e.g.   sbx-trace -- sbx firefox
 #     sbx-trace --last [NAME] [--json] [--limit N]                      show the last report again
+#     sbx-trace --suggest [NAME] [--json] [--limit N]                   settings (read_only=, whitelist=) that would let the program reach what it was refused
 # A tool apart from sbx: it only starts a command and watches it from outside. It needs bpftrace, a kernel with BTF and root
 # (sudo on a terminal, else pkexec). Without --host only processes inside a new pid namespace are kept, which leaves out
 # bubblewrap's own setup work and shows what the sandboxed program did. The command is held until the probes are in place.
@@ -23,7 +24,11 @@ PROBES = {                      # the system calls that take a path; the older o
     "aarch64": ("openat", "openat2", "newfstatat", "statx", "faccessat", "faccessat2", "execve")}
 KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x"}       # every other call is a probe: p
 FLAGS = {"open": "args->flags", "openat": "args->flags"}                  # openat2 keeps its flags in a struct: not read, counted as a read
-USAGE = "usage: sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
+USAGE = ("usage: sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
+         "   |   sbx-trace --suggest [NAME] [--json] [--limit N]")
+SENSITIVE = (".ssh", ".gnupg", ".aws", ".kube", ".password-store", ".local/share/keyrings", ".config/gcloud", ".netrc", ".git-credentials")   # never suggested
+USER_DIRS = ("Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos", "Public", "Templates")      # too broad to suggest, like sbx's own folder rule
+WHY = {"denied": "access was refused", "read-only": "it tried to write there", "hidden": "the sandbox hides it"}
 CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
@@ -130,6 +135,67 @@ def view(tr, host=False):
 
 def tilde(p):
     return "~/" + p[len(HOME) + 1:] if p.startswith(HOME + "/") else p
+
+
+# ---------------------------------------------------------------- suggestions
+def sensitive(path):
+    """Is PATH in your home a place that holds secrets, or a folder that holds one (~/.local/share holds the keyrings)?"""
+    if not path.startswith(HOME + "/"): return False
+    rel = path[len(HOME) + 1:]
+    return any(rel == s or rel.startswith(s + "/") or s.startswith(rel + "/") for s in SENSITIVE)
+
+
+def shared_by(name):
+    """The paths already shared by default.conf and apps/NAME.conf (whitelist= and read_only=), absolute."""
+    out, name = [], re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    for f in ("default.conf", f"apps/{name}.conf"):
+        try:
+            with open(f"{HOME}/.config/sbx/{f}", errors="replace") as fh: lines = fh.read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            k, _, val = (x.strip() for x in re.sub(r"(^|\s)#.*$", "", line).partition("="))
+            if k in ("whitelist", "read_only") and val: out.append(os.path.normpath(HOME + val[1:] if val.startswith("~/") else val))
+    return out
+
+
+def suggest(v, shared=()):
+    """Settings for what the program was refused or could not find, as {lines: [{setting, value, path, why, n}], skipped: [{path, why}],
+    outside: paths no folder setting is suggested for}. The narrowest setting that works: the path itself, never its folder, read-only unless
+    the program tried to write; and never your home, Downloads and the like, the folders sbx keeps away, or anything that holds secrets.
+    A path that is already shared, or inside a path suggested earlier, is left out. These are for you to read: that a sandbox hides a
+    path is often just what you want."""
+    blocked = v.get("blocked") if isinstance(v, dict) else None
+    rows = {r["path"]: r for g in ("home", "system") for r in (v.get(g) or {}).get("rows", []) if isinstance(r, dict) and isinstance(r.get("path"), str)} if blocked else {}
+    roots = (HOME, "/mnt", "/media", "/srv")
+    generic = set(roots) | {f"{HOME}/{d}" for d in USER_DIRS}
+    own = (f"{HOME}/.sbx-homes", f"{HOME}/.config/sbx")
+    under = lambda p, d: p == d or p.startswith(d + "/")
+    lines, skipped, outside = [], [], 0
+    for b in blocked or []:
+        if not isinstance(b, dict) or not isinstance(b.get("path"), str): continue
+        path, kind = b["path"], b.get("kind")
+        if not any(under(path, r) for r in roots): outside += 1; continue
+        why = ("its name has control characters, spaces at the ends or ' #'" if CTRL.search(path) or path != path.strip() or re.search(r"\s#", path)
+               else "sbx keeps its own folders away from programs" if any(under(path, o) for o in own)
+               else "too broad: it holds all sorts of things" if path in generic
+               else "looks sensitive, or holds something that does" if sensitive(path) else None)
+        if why: skipped.append({"path": path, "why": why}); continue
+        if any(under(path, s) for s in shared): continue
+        key = "whitelist" if kind == "read-only" or (rows.get(path) or {}).get("w") else "read_only"
+        if any(under(path, l["path"]) for l in lines if l["setting"] == "whitelist" or key == "read_only"): continue
+        lines.append({"setting": key, "value": tilde(path), "path": path, "why": WHY.get(kind, "access failed"), "n": b["n"] if isinstance(b.get("n"), int) else 1})
+    return {"lines": lines, "skipped": skipped, "outside": outside}
+
+
+def show_suggest(name, s, limit):
+    print(f"# {name}: settings to try, for what the program was refused or could not find")
+    print(f"# Read each line before you add it to ~/.config/sbx/apps/{name}.conf: it gives the program that access.")
+    for l in s["lines"][:limit]: print(f"{l['setting']}={safe(l['value'])}   # {l['why']}, {l['n']}x")
+    if len(s["lines"]) > limit: print(f"# ... {len(s['lines']) - limit} more (--limit N, or --json)")
+    if not s["lines"]: print("# nothing to suggest")
+    for k in s["skipped"][:limit]: print(f"# not suggested: {safe(tilde(k['path']))} ({k['why']})")
+    if s["outside"]: print(f"# {s['outside']} more blocked path{'s' if s['outside'] != 1 else ''} outside your home, /mnt, /media and /srv: no suggestion for {'those' if s['outside'] != 1 else 'it'}")
 
 
 def show(v, limit):
@@ -264,11 +330,12 @@ def trace(cmd, host=False):
 
 
 def main(argv):
-    flags, limit, last, i = set(), 40, False, 0
+    flags, limit, last, ask, i = set(), 40, False, False, 0
     while i < len(argv) and argv[i].startswith("-") and argv[i] != "--":
         a = argv[i]
         if a in ("--json", "--host"): flags.add(a)
         elif a == "--last": last = True
+        elif a == "--suggest": last = ask = True
         elif a == "--limit":
             if i + 1 >= len(argv) or not (argv[i + 1].isascii() and argv[i + 1].isdigit()): die(f"--limit needs a number\n{USAGE}")
             limit = int(argv[i + 1]); i += 1
@@ -291,6 +358,12 @@ def main(argv):
         v = view(tr, "--host" in flags); v["name"] = name_of(rest); v["command"] = rest; v["exit"] = rc; v["time"] = time.time()
         try: save(v["name"], v)
         except OSError as e: print(f"sbx-trace: could not save the report: {e.strerror or e}", file=sys.stderr)
+    if ask:
+        name = v.get("name") if isinstance(v.get("name"), str) and v["name"] else "command"
+        s = suggest(v, shared_by(name))
+        if "--json" in flags: print(json.dumps({"name": name, **s}))
+        else: show_suggest(name, s, limit)
+        return 0
     if "--json" in flags: print(json.dumps(v))
     else: show(v, limit)
     return v.get("exit", 0) if not last else 0
