@@ -69,6 +69,10 @@ class Parser(Base):
         self.assertEqual(p["/usr/y"], {"w": 1, "err": {"EROFS": 1}}); self.assertEqual(p["/tmp/ok"], {"w": 1})
         self.assertEqual(T.view(t)["blocked"][0], {"path": "/usr/x", "kind": "read-only", "n": 1})
 
+    def test_a_write_through_openat2_is_a_write_once_its_flags_are_read(self):
+        t = self.tr(["4242\to\t1\t3\t577\t/tmp/a", "4242\to\t1\t3\t0\t/tmp/b"])                # O_WRONLY|O_CREAT|O_TRUNC, and no flags
+        self.assertEqual((t.paths["/tmp/a"], t.paths["/tmp/b"]), ({"w": 1}, {"r": 1}))
+
     def test_a_long_path_is_counted_not_kept_cut_off(self):
         self.assertEqual(self.tr(["4242\to\t1\t3\t0\t/" + "a" * 300]).unresolved, 1)
 
@@ -114,6 +118,9 @@ class Program(unittest.TestCase):
         self.assertIn("str(args->newname)", line("renameat2")); self.assertIn("str(args->filename)", line("openat"))
         out = next(l for l in sc.splitlines() if "sys_exit_rename " in l); self.assertIn("\\tn\\t", out)         # the new name of a rename: n
         self.assertIn("\\tw\\t", next(l for l in sc.splitlines() if "sys_exit_unlink " in l)); self.assertIn("\\tp\\t", next(l for l in sc.splitlines() if "sys_exit_readlink " in l))
+        for m in T.PROBES:
+            self.assertIn("str(args->filename); @f[tid] = args->how->flags;", T.script(m).split("sys_enter_openat2 ")[1].split("\n")[0])      # the flags of openat2 are in a struct
+            self.assertNotIn("how->flags", T.script(m, rich=False)); self.assertIn("sys_enter_openat2 ", T.script(m, rich=False))     # the basic set keeps the call, not the struct
         arm = T.script("aarch64")
         for c in T.LEGACY: self.assertNotIn(f"sys_enter_{c} ", arm, c)                  # arm64 has only the newer calls
         self.assertIn("sys_enter_unlinkat ", arm)
@@ -307,7 +314,7 @@ print(token + "\\to\\t1\\t-2\\t0\\t/etc/missing", flush=True)
                 rc, tr = T.trace(["/bin/sh", "-c", f"test -f {self.tmp}/ready || true; touch {ran}; exit 4"])
         finally:
             for s, h in old.items(): signal.signal(s, h)
-        self.assertEqual(rc, 4); self.assertEqual(st.call_count, 2); self.assertEqual(st.call_args_list[1][0][3], list(T.PROBES[platform.machine()]))
+        self.assertEqual(rc, 4); self.assertEqual(st.call_count, 2); self.assertEqual(st.call_args_list[1][0][3], list(T.PROBES[platform.machine()])); self.assertEqual(st.call_args_list[1][1], {"rich": False}); self.assertEqual(st.call_args_list[0][1], {})
         self.assertIn("trying again with the basic set", err.getvalue()); self.assertIn("no such field", err.getvalue()); self.assertEqual(tr.paths["/etc/missing"]["err"], {"ENOENT": 1})
         self.assertTrue(os.path.exists(ran))                                           # it ran once, after the attempt that worked
 

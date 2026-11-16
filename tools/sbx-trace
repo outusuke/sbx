@@ -33,7 +33,8 @@ READS = {"readlink": "path", "readlinkat": "pathname"}                    # a lo
 LEGACY = {"unlink", "rmdir", "mkdir", "creat", "mknod", "chmod", "chown", "lchown", "rename", "symlink", "link", "readlink"}
 FIELD = {**WRITES, **READS}                                                # every other call keeps its path in "filename"
 KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x"}       # a write is w (n for the new name of a rename or link), every other call is a probe: p
-FLAGS = {"open": "args->flags", "openat": "args->flags"}                  # openat2 keeps its flags in a struct: not read, counted as a read
+FLAGS = {"open": "args->flags", "openat": "args->flags"}                  # openat2 keeps its flags in a struct (RICH_FLAGS); without them it is counted as a read
+RICH_FLAGS = {"openat2": "args->how->flags"}                              # checked on kernel 7.3 with bpftrace 0.26; the basic set does not use it, so it can fall back without
 USAGE = ("usage: sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
          "   |   sbx-trace --suggest [NAME] [--json] [--limit N]   |   sbx-trace --diff [NAME] [--json] [--limit N]")
 VERSION_OF_REPORT = 1           # saved in every report, so a later change to what a report holds can be told from this one
@@ -79,10 +80,11 @@ def kernel_calls(machine, path="/proc/kallsyms"):
     return out or None
 
 
-def script(machine, sandbox_only=True, names=None):
+def script(machine, sandbox_only=True, names=None, rich=True):
     """$1 is the host thread id of the process we started, $2 a random number that starts every line the program prints (so a file name
     with a newline in it can't forge a line). It follows that process and everything it starts, keeps only tasks inside a new pid
-    namespace when SANDBOX_ONLY, and ends when the first process does. NAMES are the system calls to watch (calls(MACHINE) when None).
+    namespace when SANDBOX_ONLY, and ends when the first process does. NAMES are the system calls to watch (calls(MACHINE) when None); RICH
+    also reads what a call keeps in a struct (the flags of openat2).
     Lines: TOKEN <tab> o|p|x|w|n <tab> thread <tab> result <tab> open flags <tab> path. The token is printed with %llu: bpftrace 0.26 prints %u as 32 bits, which cut the token short."""
     inside = " && ((struct task_struct *)curtask)->thread_pid->level >= 1" if sandbox_only else ""
     gone = "delete(@t[tid]); delete(@c[tid]); delete(@p[tid]); delete(@f[tid]);"
@@ -90,7 +92,7 @@ def script(machine, sandbox_only=True, names=None):
            'tracepoint:sched:sched_process_fork /@t[(uint64)args->parent_pid]/ { @t[(uint64)args->child_pid] = 1; }',
            f'tracepoint:sched:sched_process_exit /@t[tid]/ {{ {gone} if (tid == (uint64)$1) {{ exit(); }} }}']
     for c in names if names is not None else calls(machine):
-        out.append(f'tracepoint:syscalls:sys_enter_{c} /@t[tid]{inside}/ {{ @c[tid] = 1; @p[tid] = str(args->{FIELD.get(c, "filename")}); @f[tid] = {FLAGS.get(c, "-1")}; }}')
+        out.append(f'tracepoint:syscalls:sys_enter_{c} /@t[tid]{inside}/ {{ @c[tid] = 1; @p[tid] = str(args->{FIELD.get(c, "filename")}); @f[tid] = {({**FLAGS, **RICH_FLAGS} if rich else FLAGS).get(c, "-1")}; }}')
         out.append(f'tracepoint:syscalls:sys_exit_{c} /@c[tid]/ {{ printf("%llu\\t{kind_of(c)}\\t%d\\t%d\\t%d\\t%s\\n", $2, tid, args->ret, @f[tid], @p[tid]); delete(@c[tid]); }}')
     out.append("END { clear(@t); clear(@c); clear(@p); clear(@f); }")
     return "\n".join(out)
@@ -371,7 +373,7 @@ def fail_text(why):
     return "the trace did not start" + (f": {why}" if why else "")
 
 
-def start(cmd, host, helper, names):
+def start(cmd, host, helper, names, rich=True):
     """Run CMD with the helper watching the system calls NAMES. Returns (exit code, Trace). Dies, without running CMD, when the helper can't
     start; raises Rejected when bpftrace ran and refused the program."""
     esc, exe = helper
@@ -390,7 +392,7 @@ def start(cmd, host, helper, names):
     print(f"sbx-trace: starting bpftrace with {os.path.basename(esc)} (needs root)", file=sys.stderr)
     try:
         argv = [esc, shutil.which("sh") or "/bin/sh", "-c", WRAP, "sh", token, shutil.which("env") or "/usr/bin/env", f"BPFTRACE_STRLEN={STRLEN}", exe, "-e",
-                script(platform.machine(), not host, names), str(p.pid), token]
+                script(platform.machine(), not host, names, rich), str(p.pid), token]
         proc = subprocess.Popen(argv, stdin=None if sys.stdin.isatty() else subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errf)
         th = threading.Thread(target=tr.read_pipe, args=(proc.stdout,), daemon=True); th.start()
         end = time.time() + START_WAIT
@@ -430,8 +432,8 @@ def trace(cmd, host=False):
     try: return start(cmd, host, helper, full)
     except Rejected as e:
         if full == basic: die(fail_text(str(e)))
-        print(f"sbx-trace: bpftrace did not accept every probe ({safe(str(e)) or 'no message'}); trying again with the basic set, which sees no writes", file=sys.stderr)
-    try: return start(cmd, host, helper, basic)
+        print(f"sbx-trace: bpftrace did not accept every probe ({safe(str(e)) or 'no message'}); trying again with the basic set, which sees no writes and takes no flags from openat2", file=sys.stderr)
+    try: return start(cmd, host, helper, basic, rich=False)
     except Rejected as e: die(fail_text(str(e)))
 
 
