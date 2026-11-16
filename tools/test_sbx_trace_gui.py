@@ -411,44 +411,6 @@ class Window(unittest.TestCase):
         G["Win"].fill_report(w); w.head_row.set_subtitle.assert_called_with("No path has an error.")
 
 
-class Suggestions(Base):
-    def test_a_foreign_list_cannot_put_anything_odd_on_the_clipboard(self):
-        G = self.G
-        for bad in ([], "x", None, {}, {"lines": "x"}):
-            with self.assertRaises(ValueError, msg=repr(bad)): G["clean_suggestions"](bad)
-        s = G["clean_suggestions"]({"lines": [{"setting": "read_only", "value": "~/a", "why": "x", "n": -1}, {"setting": "net", "value": "0"}, {"setting": "whitelist", "value": "~/b\x1b[31m"},
-                                              {"setting": "whitelist", "value": "~/c\nnet=1"}, {"setting": "whitelist", "value": ""}, "x", {"setting": "whitelist", "value": "/mnt/d", "why": 5}],
-                                    "skipped": [{"path": "/x", "why": "no"}, {"path": 3}, "y"]})
-        self.assertEqual(s["lines"], [{"setting": "read_only", "value": "~/a", "why": "x", "n": 1}, {"setting": "whitelist", "value": "/mnt/d", "why": "", "n": 1}])
-        self.assertEqual(s["skipped"], [{"path": "/x", "why": "no"}])
-
-    def test_it_reads_what_the_real_sbx_trace_suggests(self):
-        G, H = self.G, self.home
-        G["trace_cmd"] = lambda: f"{HERE}/sbx-trace"
-        v = self.real_report()
-        v["blocked"] = [{"path": f"{H}/Projects/a.txt", "kind": "hidden", "n": 4}, {"path": f"{H}/.ssh/config", "kind": "hidden", "n": 1}]
-        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": f"{self.tmp}/state", "HOME": H}):
-            s, why = G["load_suggestions"]("foo"); self.assertIsNone(s); self.assertIn("no report yet", why)             # nothing saved yet
-            self.T.save("foo", v)
-            s, why = G["load_suggestions"]("foo")
-        self.assertEqual(why, ""); self.assertEqual([(l["setting"], l["value"], l["n"]) for l in s["lines"]], [("read_only", "~/Projects/a.txt", 4)])
-        self.assertEqual([k["path"] for k in s["skipped"]], [f"{H}/.ssh/config"])
-        self.assertEqual(G["load_suggestions"]("../x"), (None, "")); self.assertEqual(G["load_suggestions"](None), (None, ""))     # not a name
-
-    def test_the_rows_copy_the_setting_and_the_window_ignores_suggestions_for_an_old_report(self):
-        G = self.G
-        w = mock.MagicMock(); w.rows = {}; w.closing = False
-        s = {"lines": [{"setting": "read_only", "value": "~/a", "why": "the sandbox hides it", "n": 2}], "skipped": [{"path": "/home/u/.ssh", "why": "looks sensitive"}]}
-        w.suggestions = s; w.suggest = mock.MagicMock(); w.copy_all = mock.MagicMock()
-        G["Win"].fill_suggestions(w, []); w.suggest.set_visible.assert_called_with(True); self.assertEqual(w.suggest.add.call_count, 2)    # the setting, and what was not suggested
-        w.suggest.reset_mock(); G["Win"].fill_suggestions(w, ["zzz"]); w.suggest.set_visible.assert_called_with(False)
-        w.suggestions = None; w.suggest.reset_mock(); G["Win"].fill_suggestions(w, []); w.suggest.set_visible.assert_called_with(False)
-        rep, other = object(), object()
-        w.report = rep; w.suggestions = None; G["Win"].got_suggestions(w, other, s); self.assertIsNone(w.suggestions); w.fill_report.assert_not_called()
-        G["Win"].got_suggestions(w, rep, s); self.assertIs(w.suggestions, s); w.fill_report.assert_called_once()
-        w.suggestions = s; G["Win"].copy_suggestions(w); w.copy_text.assert_called_with("read_only=~/a\n", "Copied all the settings")
-
-
 class Comparison(Base):
     def test_a_foreign_comparison_cannot_break_it(self):
         G = self.G

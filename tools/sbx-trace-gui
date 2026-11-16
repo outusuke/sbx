@@ -152,18 +152,6 @@ def clean_report(v):
             "info": {k: info[k] if num(info.get(k)) else 0 for k in ("calls", "processes", "dropped", "unresolved", "lost")}}
 
 
-def clean_suggestions(v):
-    """What `sbx-trace --suggest --json` printed -> {lines: [{setting, value, why, n}], skipped: [{path, why}]}, or ValueError. A value
-    is put on the clipboard, so one with a control character in it is dropped."""
-    if not isinstance(v, dict) or not isinstance(v.get("lines"), list): raise ValueError("not a list of suggestions")
-    lines = [{"setting": l["setting"], "value": l["value"], "why": l["why"] if isinstance(l.get("why"), str) else "", "n": l["n"] if num(l.get("n")) else 1}
-             for l in v["lines"] if isinstance(l, dict) and l.get("setting") in ("whitelist", "read_only") and isinstance(l.get("value"), str)
-             and l["value"] and not CTRL.search(l["value"])]
-    skipped = [{"path": k["path"], "why": k["why"] if isinstance(k.get("why"), str) else ""} for k in v.get("skipped", []) if isinstance(k, dict) and isinstance(k.get("path"), str)] \
-        if isinstance(v.get("skipped"), list) else []
-    return {"lines": lines, "skipped": skipped}
-
-
 NOW = ("works", "fails another way", "not touched")                         # what became of a path that is no longer blocked
 
 
@@ -275,17 +263,6 @@ def load_report(name=None):
     except ValueError as e: return None, f"The saved report can't be read: {safe(str(e))}"
 
 
-def load_suggestions(name):
-    """(the suggestions for the saved report of NAME, or None; why not), from `sbx-trace --suggest --json`."""
-    exe = trace_cmd()
-    if not exe or not name or not NAME_RE.match(name): return None, ""
-    try: r = subprocess.run([exe, "--suggest", "--json", name], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.SubprocessError) as e: return None, f"Couldn't run sbx-trace: {getattr(e, 'strerror', None) or e}"
-    if r.returncode != 0: return None, safe(r.stderr.strip().splitlines()[-1]) if r.stderr.strip() else f"sbx-trace exited with {r.returncode}"
-    try: return clean_suggestions(json.loads(r.stdout)), ""
-    except ValueError as e: return None, safe(str(e))
-
-
 def load_diff(name):
     """(the comparison of the saved report of NAME with the one before it, or None; why not), from `sbx-trace --diff --json`."""
     exe = trace_cmd()
@@ -342,7 +319,7 @@ def failure_text(out):
 class Win(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="sbx trace", default_width=640, default_height=800)
-        self.run, self.report, self.suggestions, self.compare, self.closing = None, None, None, None, False
+        self.run, self.report, self.compare, self.closing = None, None, None, False
         self.rows = {}                           # group -> the rows in it now
         self.toasts = Adw.ToastOverlay()
         view = Adw.ToolbarView()
@@ -403,13 +380,8 @@ class Win(Adw.ApplicationWindow):
         self.home = Adw.PreferencesGroup(description="A probe is a look without opening the file (stat, access).")
         self.system = Adw.PreferencesGroup()
         self.compare_group = Adw.PreferencesGroup(title="Compared with the run before", description="Did a setting help? Blocked paths that no longer are, and new ones.")
-        self.suggest = Adw.PreferencesGroup(title="Settings to try", description="For the paths that were refused or hidden: the narrowest setting that would open each, "
-                                            "read-only unless the program tried to write. Read each one before you use it: a hidden path is often what you want. Add them in sbx-gui or to the program's .conf file.")
-        self.copy_all = Gtk.Button(label="Copy all", valign=Gtk.Align.CENTER, css_classes=["flat"])
-        self.copy_all.connect("clicked", lambda *_: self.copy_suggestions())
-        self.suggest.set_header_suffix(self.copy_all)
         self.noise = Adw.PreferencesGroup()
-        for grp in (self.head, self.view, self.compare_group, self.suggest, self.blocked, self.home, self.system, self.noise): page.add(grp)
+        for grp in (self.head, self.view, self.compare_group, self.blocked, self.home, self.system, self.noise): page.add(grp)
         return page
 
     # -- helpers --
@@ -496,7 +468,7 @@ class Win(Adw.ApplicationWindow):
 
     def fill_report(self):
         rep = self.report
-        for grp in (self.view, self.compare_group, self.suggest, self.blocked, self.home, self.system, self.noise): grp.set_visible(False)
+        for grp in (self.view, self.compare_group, self.blocked, self.home, self.system, self.noise): grp.set_visible(False)
         if rep is None:
             self.head_row.set_title("No report yet")
             self.head_row.set_subtitle("Trace a program to see which files it touches.")
@@ -519,7 +491,6 @@ class Win(Adw.ApplicationWindow):
         self.noise.set_description(f"/proc, /sys, and /dev and /run without errors: {rep['noise']} paths not shown")
         self.noise.set_visible(True)
         self.fill_compare()
-        self.fill_suggestions(terms)
         if narrowed and not (self.blocked.get_visible() or self.home.get_visible() or self.system.get_visible()):
             self.head_row.set_subtitle(f"Nothing matches “{safe(' '.join(terms))}”." if terms else "No path has an error.")
 
@@ -552,45 +523,6 @@ class Win(Adw.ApplicationWindow):
             self.fill_report()
         return True
 
-    def suggestion_row(self, line):
-        text = f"{line['setting']}={line['value']}"
-        row = Adw.ActionRow(title=safe(text), subtitle=safe(f"{line['why']} · {line['n']}×" if line["why"] else f"{line['n']}×"), use_markup=False)
-        copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Copy the setting")
-        copy.connect("clicked", lambda *_, t=text: self.copy_text(t, "Copied the setting"))
-        row.add_suffix(copy)
-        return row
-
-    def fill_suggestions(self, terms):
-        for r in self.rows.get(self.suggest, []): self.suggest.remove(r)
-        s = self.suggestions
-        lines = [l for l in (s["lines"] if s else []) if matches(l["value"], terms, l["setting"])]
-        rows = self.rows[self.suggest] = [self.suggestion_row(l) for l in lines[:RENDER_MAX]]
-        if len(lines) > RENDER_MAX: rows.append(Adw.ActionRow(title=f"… {len(lines) - RENDER_MAX} more", subtitle="Search to narrow it down.", use_markup=False))
-        if s and s["skipped"] and not terms:
-            why = "; ".join(f"{tilde(k['path'])} ({k['why']})" for k in s["skipped"][:3])
-            rows.append(Adw.ActionRow(title=f"{len(s['skipped'])} not suggested", subtitle=safe(why + ("; …" if len(s["skipped"]) > 3 else "")), use_markup=False))
-        for r in rows: self.suggest.add(r)
-        self.suggest.set_visible(bool(rows))
-        self.copy_all.set_sensitive(bool(lines))
-
-    def copy_suggestions(self):
-        if self.suggestions and self.suggestions["lines"]:
-            self.copy_text("\n".join(f"{l['setting']}={l['value']}" for l in self.suggestions["lines"]) + "\n", "Copied all the settings")
-
-    def load_suggestions_for(self, rep):
-        """The suggestions for REP, from a thread; they are drawn when they arrive, if REP is still the report shown."""
-        self.suggestions = None
-        def work():
-            s, _why = load_suggestions(rep["name"])
-            GLib.idle_add(lambda: self.got_suggestions(rep, s) and False)
-        threading.Thread(target=work, daemon=True).start()
-
-    def got_suggestions(self, rep, s):
-        if not self.closing and self.report is rep and s is not None:
-            self.suggestions = s
-            self.fill_report()
-        return True
-
     def show_last(self, name, quiet=False):
         """The saved report of NAME (the newest when None), read by sbx-trace from a thread."""
         def work():
@@ -601,9 +533,8 @@ class Win(Adw.ApplicationWindow):
     def got_report(self, rep, why, name, quiet):
         if self.closing: return True
         if rep is not None:
-            self.report, self.suggestions, self.compare = rep, None, None           # what was worked out for the old report doesn't belong to this one
+            self.report, self.compare = rep, None                                   # what was worked out for the old report doesn't belong to this one
             self.fill_report()
-            self.load_suggestions_for(rep)
             self.load_diff_for(rep)
         elif not quiet:
             self.toast(f"No report for {name}" if name and why.startswith("no report") else why)
@@ -647,9 +578,8 @@ class Win(Adw.ApplicationWindow):
         if self.run is run: self.run = None
         self.set_busy(False)
         if is_fresh(rep, cmd, started):
-            self.report, self.suggestions, self.compare = rep, None, None           # what was worked out for the old report doesn't belong to this one
+            self.report, self.compare = rep, None                                   # what was worked out for the old report doesn't belong to this one
             self.fill_report()
-            self.load_suggestions_for(rep)
             self.load_diff_for(rep)
             self.toast("Trace finished" + (f" (the program exited with {rc})" if rc else ""))
         else:
