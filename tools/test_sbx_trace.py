@@ -3,7 +3,7 @@
 # Tests for sbx-trace. Run as a normal user:   python3 tools/test_sbx_trace.py
 # Nothing here needs bpftrace or root: the parser, the bpftrace program text, the report and the held start are tested, and the
 # helper is a small fake that prints what bpftrace would.
-import contextlib, importlib.machinery, importlib.util, io, json, os, signal, stat, tempfile, unittest
+import contextlib, importlib.machinery, importlib.util, io, json, os, platform, signal, stat, tempfile, unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -58,6 +58,17 @@ class Parser(Base):
         self.assertNotIn("/forged", p)                                               # a line without this run's token is not ours
         self.assertEqual(t.lines, 10); self.assertEqual(len(t.pids), 2)
 
+    def test_writes_count_as_writes_and_what_is_normal_is_not_an_error(self):
+        t = self.tr(["4242\tw\t1\t-30\t-1\t/usr/x", "4242\tw\t1\t-17\t-1\t/tmp/d", "4242\tw\t1\t-2\t-1\t/tmp/gone", "4242\tn\t1\t-2\t-1\t/tmp/new",
+                     "4242\tn\t1\t-30\t-1\t/usr/y", "4242\tn\t1\t0\t-1\t/tmp/ok"])
+        p = t.paths
+        self.assertEqual(p["/usr/x"], {"w": 1, "err": {"EROFS": 1}})                    # refused: an error
+        self.assertEqual(p["/tmp/d"], {"w": 1})                                         # mkdir of what exists: not
+        self.assertEqual(p["/tmp/gone"], {"w": 1, "err": {"ENOENT": 1}})                # unlink of what is not there is a look: an error, as for a read
+        self.assertEqual(p["/tmp/new"], {"w": 1})                                       # a missing OLD name says nothing about the new one
+        self.assertEqual(p["/usr/y"], {"w": 1, "err": {"EROFS": 1}}); self.assertEqual(p["/tmp/ok"], {"w": 1})
+        self.assertEqual(T.view(t)["blocked"][0], {"path": "/usr/x", "kind": "read-only", "n": 1})
+
     def test_a_long_path_is_counted_not_kept_cut_off(self):
         self.assertEqual(self.tr(["4242\to\t1\t3\t0\t/" + "a" * 300]).unresolved, 1)
 
@@ -89,12 +100,38 @@ class Program(unittest.TestCase):
             sc = T.script(m)
             self.assertIn("sched_process_fork", sc); self.assertIn("->level >= 1", sc); self.assertIn("exit();", sc)
             self.assertNotIn("->level", T.script(m, False))
-            for c in T.PROBES[m]: self.assertIn(f"sys_enter_{c} ", sc); self.assertIn(f"sys_exit_{c} ", sc)
-            self.assertEqual(sc.count("printf"), len(T.PROBES[m]) + 1)               # READY and one line per call
+            for c in T.calls(m): self.assertIn(f"sys_enter_{c} ", sc); self.assertIn(f"sys_exit_{c} ", sc)
+            self.assertEqual(sc.count("printf"), len(T.calls(m)) + 1)                # READY and one line per call
             self.assertTrue(all('printf("%llu\\t' in l for l in sc.splitlines() if "printf" in l))   # the token comes first on every line, in 64 bits: %u is 32 bits in bpftrace 0.26
         self.assertIn("args->flags", T.script("x86_64").split("sys_enter_openat ")[1].split("\n")[0])
         self.assertNotIn("sys_enter_open ", T.script("aarch64"))                     # the old calls don't exist on arm64
         for m in T.PROBES: self.assertNotIn("sys_enter_stat ", T.script(m)); self.assertNotIn("sys_enter_lstat ", T.script(m))   # no tracepoint on newer kernels: bpftrace refuses the whole script
+
+
+    def test_the_writes_are_watched_with_the_field_that_holds_their_path(self):
+        sc = T.script("x86_64"); line = lambda c: next(l for l in sc.splitlines() if f"sys_enter_{c} " in l)
+        for c, field in {**T.WRITES, **T.READS}.items(): self.assertIn(f"str(args->{field})", line(c), c)
+        self.assertIn("str(args->newname)", line("renameat2")); self.assertIn("str(args->filename)", line("openat"))
+        out = next(l for l in sc.splitlines() if "sys_exit_rename " in l); self.assertIn("\\tn\\t", out)         # the new name of a rename: n
+        self.assertIn("\\tw\\t", next(l for l in sc.splitlines() if "sys_exit_unlink " in l)); self.assertIn("\\tp\\t", next(l for l in sc.splitlines() if "sys_exit_readlink " in l))
+        arm = T.script("aarch64")
+        for c in T.LEGACY: self.assertNotIn(f"sys_enter_{c} ", arm, c)                  # arm64 has only the newer calls
+        self.assertIn("sys_enter_unlinkat ", arm)
+
+    def test_a_call_the_kernel_lacks_is_left_out_but_the_basic_ones_are_always_kept(self):
+        have = {"unlink", "mkdirat"}
+        got = T.calls("x86_64", have)
+        self.assertEqual([c for c in got if c not in T.PROBES["x86_64"]], ["unlink", "mkdirat"]); self.assertEqual(got[:len(T.PROBES["x86_64"])], list(T.PROBES["x86_64"]))
+        self.assertEqual(T.calls("x86_64", set())[:], list(T.PROBES["x86_64"])); self.assertGreater(len(T.calls("x86_64")), len(T.PROBES["x86_64"]))    # nothing known: all of them
+
+    def test_the_calls_of_the_kernel_come_from_its_symbols(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = f"{d}/kallsyms"
+            with open(p, "w") as f: f.write("0000000000000000 T __x64_sys_unlink\n0000000000000000 t __x64_sys_rename.cold\n0000000000000000 T vfs_unlink\n0000000000000000 T __arm64_sys_openat [mod]\nbad\n")
+            self.assertEqual(T.kernel_calls("x86_64", p), {"unlink", "rename.cold"}); self.assertEqual(T.kernel_calls("aarch64", p), {"openat"})
+            self.assertIsNone(T.kernel_calls("riscv64", p)); self.assertIsNone(T.kernel_calls("x86_64", f"{d}/missing"))
+            with open(p, "w") as f: f.write("0 T vfs_unlink\n")
+            self.assertIsNone(T.kernel_calls("x86_64", p))                               # no system calls found: unknown, not "none"
 
 
 class Report(Base):
@@ -207,6 +244,45 @@ print(token + "\\to\\t1\\t-2\\t0\\t/etc/missing", flush=True)
 """)
         rc, tr = self.run_trace(exe, ["/bin/sh", "-c", f"test -f {mark} || exit 9; exit 3"])    # exits 9 if it started before READY
         self.assertEqual(rc, 3); self.assertEqual(tr.paths["/etc/missing"]["err"], {"ENOENT": 1})
+
+    def test_when_bpftrace_refuses_the_full_set_it_is_tried_again_with_the_basic_set_before_the_command_runs(self):
+        ran = f"{self.tmp}/ran"
+        exe = self.fake("""
+if "sys_enter_unlink " in " ".join(sys.argv): print("ERROR: no such field", file=sys.stderr); sys.exit(1)
+print(token + "\\tREADY", flush=True)
+while True:
+    try: os.kill(pid, 0)
+    except ProcessLookupError: break
+    time.sleep(0.05)
+print(token + "\\to\\t1\\t-2\\t0\\t/etc/missing", flush=True)
+""")
+        err = io.StringIO(); old = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        try:
+            with mock.patch.object(T, "support", return_value=(("/usr/bin/env", exe), "")), mock.patch.object(T, "kernel_calls", return_value=None), \
+                    mock.patch.object(T, "start", wraps=T.start) as st, contextlib.redirect_stderr(err):
+                rc, tr = T.trace(["/bin/sh", "-c", f"test -f {self.tmp}/ready || true; touch {ran}; exit 4"])
+        finally:
+            for s, h in old.items(): signal.signal(s, h)
+        self.assertEqual(rc, 4); self.assertEqual(st.call_count, 2); self.assertEqual(st.call_args_list[1][0][3], list(T.PROBES[platform.machine()]))
+        self.assertIn("trying again with the basic set", err.getvalue()); self.assertIn("no such field", err.getvalue()); self.assertEqual(tr.paths["/etc/missing"]["err"], {"ENOENT": 1})
+        self.assertTrue(os.path.exists(ran))                                           # it ran once, after the attempt that worked
+
+    def test_a_refused_password_is_not_tried_again_and_a_basic_failure_is_final(self):
+        old = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        ran = f"{self.tmp}/ran"
+        try:
+            with mock.patch.object(T, "support", return_value=(("/bin/false", self.fake("sys.exit(1)\n")), "")), mock.patch.object(T, "kernel_calls", return_value=None), \
+                    mock.patch.object(T, "start", wraps=T.start) as st, contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                T.trace(["/bin/sh", "-c", f"touch {ran}"])                              # the helper never says it started: one attempt
+            self.assertEqual(st.call_count, 1)
+            with mock.patch.object(T, "support", return_value=(("/usr/bin/env", self.fake("print('ERROR: nope', file=sys.stderr)\nsys.exit(1)\n")), "")), \
+                    mock.patch.object(T, "kernel_calls", return_value=None), mock.patch.object(T, "start", wraps=T.start) as st, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                T.trace(["/bin/sh", "-c", f"touch {ran}"])                              # refused with the full set and then with the basic one: two attempts, then it ends
+            self.assertEqual(st.call_count, 2)
+        finally:
+            for s, h in old.items(): signal.signal(s, h)
+        self.assertFalse(os.path.exists(ran))
 
     def test_when_the_helper_fails_the_command_is_not_run(self):
         ran = f"{self.tmp}/ran"

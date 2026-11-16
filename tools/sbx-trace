@@ -1,11 +1,11 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# sbx-trace - run a command with bpftrace watching and report which files it opened or looked for, and which attempts failed.
+# sbx-trace - run a command with bpftrace watching and report which files it opened, looked for or changed (deleted, renamed, made...), and which attempts failed.
 #     sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]        e.g.   sbx-trace -- sbx firefox
 #     sbx-trace --last [NAME] [--json] [--limit N]                      show the last report again
 #     sbx-trace --suggest [NAME] [--json] [--limit N]                   settings (read_only=, whitelist=) that would let the program reach what it was refused
 # A tool apart from sbx: it only starts a command and watches it from outside. It needs bpftrace, a kernel with BTF and root
-# (sudo on a terminal, else pkexec). Without --host only processes inside a new pid namespace are kept, which leaves out
+# (sudo on a terminal, else pkexec). If bpftrace refuses the larger set of system calls, it starts again with the basic set (no writes). Without --host only processes inside a new pid namespace are kept, which leaves out
 # bubblewrap's own setup work and shows what the sandboxed program did. The command is held until the probes are in place.
 import errno, json, os, platform, re, shutil, signal, subprocess, sys, tempfile, threading, time
 
@@ -22,7 +22,16 @@ QUIET = ("/dev", "/run")        # shown only when an attempt failed: a missing /
 PROBES = {                      # the system calls that take a path; the older ones don't exist on arm64, and stat/lstat have no tracepoint on newer kernels (glibc uses newfstatat)
     "x86_64": ("open", "openat", "openat2", "newfstatat", "statx", "access", "faccessat", "faccessat2", "execve"),
     "aarch64": ("openat", "openat2", "newfstatat", "statx", "faccessat", "faccessat2", "execve")}
-KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x"}       # every other call is a probe: p
+# What else is watched, so that a refused write is seen too. The value is the field that holds the path. The older calls don't exist on arm64.
+WRITES = {"unlink": "pathname", "unlinkat": "pathname", "rmdir": "pathname", "mkdir": "pathname", "mkdirat": "pathname", "creat": "pathname",
+          "mknod": "filename", "mknodat": "filename", "chmod": "filename", "fchmodat": "filename", "fchmodat2": "filename", "chown": "filename",
+          "lchown": "filename", "fchownat": "filename", "truncate": "path", "utimensat": "filename",
+          "rename": "newname", "renameat": "newname", "renameat2": "newname", "symlink": "newname", "symlinkat": "newname", "link": "newname", "linkat": "newname"}
+NEWNAME = {c for c, f in WRITES.items() if f == "newname"}                # the path is what a rename or link creates: a missing old name must not count against it
+READS = {"readlink": "path", "readlinkat": "pathname"}                    # a look at a link: a probe
+LEGACY = {"unlink", "rmdir", "mkdir", "creat", "mknod", "chmod", "chown", "lchown", "rename", "symlink", "link", "readlink"}
+FIELD = {**WRITES, **READS}                                                # every other call keeps its path in "filename"
+KIND = {"open": "o", "openat": "o", "openat2": "o", "execve": "x"}       # a write is w (n for the new name of a rename or link), every other call is a probe: p
 FLAGS = {"open": "args->flags", "openat": "args->flags"}                  # openat2 keeps its flags in a struct: not read, counted as a read
 USAGE = ("usage: sbx-trace [--json] [--host] [--limit N] [--] COMMAND [args]   |   sbx-trace --last [NAME] [--json] [--limit N]"
          "   |   sbx-trace --suggest [NAME] [--json] [--limit N]")
@@ -42,19 +51,45 @@ def safe(s):
 
 
 # ---------------------------------------------------------------- the bpftrace program
-def script(machine, sandbox_only=True):
+def kind_of(call):
+    return KIND.get(call) or ("n" if call in NEWNAME else "w" if call in WRITES else "p")
+
+
+def calls(machine, have=None):
+    """The system calls to watch on MACHINE: the ones that open or look at a path, then the writes and link reads. HAVE, when known, is the set
+    of system calls this kernel has; one it lacks has no tracepoint, and bpftrace refuses the whole program for a missing one, so it is left out.
+    The first group is always kept: it is known to work."""
+    extra = [c for c in (*WRITES, *READS) if machine != "aarch64" or c not in LEGACY]
+    return list(PROBES[machine]) + [c for c in extra if have is None or c in have]
+
+
+def kernel_calls(machine, path="/proc/kallsyms"):
+    """The names of the system calls this kernel has (from its symbols, which any user can read), or None when that can't be told."""
+    prefix = {"x86_64": "__x64_sys_", "aarch64": "__arm64_sys_"}.get(machine)
+    out = set()
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                p = line.split()
+                if prefix and len(p) >= 3 and p[2].startswith(prefix): out.add(p[2][len(prefix):])
+    except OSError:
+        return None
+    return out or None
+
+
+def script(machine, sandbox_only=True, names=None):
     """$1 is the host thread id of the process we started, $2 a random number that starts every line the program prints (so a file name
     with a newline in it can't forge a line). It follows that process and everything it starts, keeps only tasks inside a new pid
-    namespace when SANDBOX_ONLY, and ends when the first process does. Lines: TOKEN <tab> o|p|x <tab> thread <tab> result <tab>
-    open flags <tab> path. The token is printed with %llu: bpftrace 0.26 prints %u as 32 bits, which cut the token short."""
+    namespace when SANDBOX_ONLY, and ends when the first process does. NAMES are the system calls to watch (calls(MACHINE) when None).
+    Lines: TOKEN <tab> o|p|x|w|n <tab> thread <tab> result <tab> open flags <tab> path. The token is printed with %llu: bpftrace 0.26 prints %u as 32 bits, which cut the token short."""
     inside = " && ((struct task_struct *)curtask)->thread_pid->level >= 1" if sandbox_only else ""
     gone = "delete(@t[tid]); delete(@c[tid]); delete(@p[tid]); delete(@f[tid]);"
     out = ['BEGIN { @t[(uint64)$1] = 1; printf("%llu\\tREADY\\n", $2); }',
            'tracepoint:sched:sched_process_fork /@t[(uint64)args->parent_pid]/ { @t[(uint64)args->child_pid] = 1; }',
            f'tracepoint:sched:sched_process_exit /@t[tid]/ {{ {gone} if (tid == (uint64)$1) {{ exit(); }} }}']
-    for c in PROBES[machine]:
-        out.append(f'tracepoint:syscalls:sys_enter_{c} /@t[tid]{inside}/ {{ @c[tid] = 1; @p[tid] = str(args->filename); @f[tid] = {FLAGS.get(c, "-1")}; }}')
-        out.append(f'tracepoint:syscalls:sys_exit_{c} /@c[tid]/ {{ printf("%llu\\t{KIND.get(c, "p")}\\t%d\\t%d\\t%d\\t%s\\n", $2, tid, args->ret, @f[tid], @p[tid]); delete(@c[tid]); }}')
+    for c in names if names is not None else calls(machine):
+        out.append(f'tracepoint:syscalls:sys_enter_{c} /@t[tid]{inside}/ {{ @c[tid] = 1; @p[tid] = str(args->{FIELD.get(c, "filename")}); @f[tid] = {FLAGS.get(c, "-1")}; }}')
+        out.append(f'tracepoint:syscalls:sys_exit_{c} /@c[tid]/ {{ printf("%llu\\t{kind_of(c)}\\t%d\\t%d\\t%d\\t%s\\n", $2, tid, args->ret, @f[tid], @p[tid]); delete(@c[tid]); }}')
     out.append("END { clear(@t); clear(@c); clear(@p); clear(@f); }")
     return "\n".join(out)
 
@@ -69,14 +104,15 @@ class Trace:
         self.token = str(token)
         self.paths, self.pids = {}, set()
         self.lines = self.dropped = self.unresolved = self.lost = 0      # lost: events bpftrace says it dropped, so the report is incomplete
-        self.ready = threading.Event()
+        self.ready, self.helper = threading.Event(), threading.Event()      # helper: the root helper started (so a failure after it is bpftrace's own)
 
     def feed(self, line):
         if len(line) > LINE_MAX: return
         f = line.split("\t", 5)
         if len(f) < 2 or f[0] != self.token: return                  # bpftrace's own messages, or the rest of a name that had a newline in it
         if f[1] == "READY": self.ready.set(); return
-        if len(f) != 6 or f[1] not in ("o", "p", "x") or not f[5]: return
+        if f[1] == "HELPER": self.helper.set(); return
+        if len(f) != 6 or f[1] not in ("o", "p", "x", "w", "n") or not f[5]: return
         try: tid, ret, flags = int(f[2]), int(f[3]), int(f[4])
         except ValueError: return
         if len(self.pids) < 100_000: self.pids.add(tid)
@@ -85,8 +121,9 @@ class Trace:
         if not path.startswith("/") or len(os.fsencode(path)) >= STRLEN - 1: self.unresolved += 1; return
         path = os.path.normpath(path)
         if path.startswith("//"): path = "/" + path.lstrip("/")
-        key = {"p": "p", "x": "x"}.get(f[1]) or ("w" if flags >= 0 and (flags & 3 or flags & 0o3100) else "r")      # O_WRONLY|O_RDWR, O_CREAT|O_TRUNC|O_APPEND
-        self.record(path, key, ret < 0, errno.errorcode.get(-ret, "E?") if ret < 0 else None)
+        key = {"p": "p", "x": "x", "w": "w", "n": "w"}.get(f[1]) or ("w" if flags >= 0 and (flags & 3 or flags & 0o3100) else "r")      # O_WRONLY|O_RDWR, O_CREAT|O_TRUNC|O_APPEND
+        benign = f[1] in ("w", "n") and -ret in ((errno.EEXIST, errno.ENOENT) if f[1] == "n" else (errno.EEXIST,))    # mkdir of what is there; the old name of a rename is what was missing
+        self.record(path, key, ret < 0 and not benign, errno.errorcode.get(-ret, "E?") if ret < 0 else None)
 
     def record(self, path, key, failed, err):
         c = self.paths.get(path)
@@ -257,6 +294,7 @@ def support():
     return (esc, exe), ""
 
 
+WRAP = 'printf "%s\\tHELPER\\n" "$1"; shift; exec "$@"'                   # as root: say so (so a refused password is told from a refused program), then become bpftrace
 HOLD = "import os,sys;f=int(sys.argv[1]);os.read(f,1);os.close(f);os.execvp(sys.argv[2],sys.argv[2:])"      # wait for the helper, then become the command
 
 
@@ -283,10 +321,17 @@ def tail_of(f):
         return ""
 
 
-def trace(cmd, host=False):
-    """Run CMD with the helper attached. Returns (exit code, Trace). Dies, without running CMD, when the helper can't start."""
-    helper, why = support()
-    if not helper: die(f"can't trace here: {why}")
+class Rejected(Exception):
+    """bpftrace itself started and then refused the program (a probe or field it doesn't have). The command was not run."""
+
+
+def fail_text(why):
+    return "the trace did not start" + (f": {why}" if why else "")
+
+
+def start(cmd, host, helper, names):
+    """Run CMD with the helper watching the system calls NAMES. Returns (exit code, Trace). Dies, without running CMD, when the helper can't
+    start; raises Rejected when bpftrace ran and refused the program."""
     esc, exe = helper
     token = str(int.from_bytes(os.urandom(7), "big"))
     tr = Trace(token)
@@ -302,7 +347,8 @@ def trace(cmd, host=False):
     errf, proc, th = tempfile.TemporaryFile(), None, None
     print(f"sbx-trace: starting bpftrace with {os.path.basename(esc)} (needs root)", file=sys.stderr)
     try:
-        argv = [esc, shutil.which("env") or "/usr/bin/env", f"BPFTRACE_STRLEN={STRLEN}", exe, "-e", script(platform.machine(), not host), str(p.pid), token]
+        argv = [esc, shutil.which("sh") or "/bin/sh", "-c", WRAP, "sh", token, shutil.which("env") or "/usr/bin/env", f"BPFTRACE_STRLEN={STRLEN}", exe, "-e",
+                script(platform.machine(), not host, names), str(p.pid), token]
         proc = subprocess.Popen(argv, stdin=None if sys.stdin.isatty() else subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errf)
         th = threading.Thread(target=tr.read_pipe, args=(proc.stdout,), daemon=True); th.start()
         end = time.time() + START_WAIT
@@ -311,13 +357,16 @@ def trace(cmd, host=False):
     except OSError as e:
         errf.write(str(e.strerror or e).encode())
     if not tr.ready.is_set():
+        ended = proc is not None and proc.poll() is not None
+        if ended and th: th.join(2)                                 # its last lines (the helper's) may still be on the way
         p.kill(); p.wait(); os.close(w)
         if proc and proc.poll() is None:
             try: proc.terminate()
             except OSError: pass
         why = tail_of(errf); errf.close()
         if proc and proc.stdout: proc.stdout.close()
-        die("the trace did not start" + (f": {why}" if why else "") + (" (interrupted)" if stopped[0] else ""))
+        if ended and tr.helper.is_set() and not stopped[0]: raise Rejected(why)
+        die(fail_text(why) + (" (interrupted)" if stopped[0] else ""))
     os.write(w, b"1"); os.close(w)
     rc = p.wait()
     th.join(10)                                                     # the helper ends by itself when the first process is gone
@@ -327,6 +376,21 @@ def trace(cmd, host=False):
     tr.lost = lost_events(errf)
     errf.close(); proc.stdout.close()
     return (128 - rc if rc < 0 else rc), tr
+
+
+def trace(cmd, host=False):
+    """Run CMD with the helper attached. Returns (exit code, Trace). Dies, without running CMD, when the helper can't start. Should bpftrace
+    refuse the larger set of system calls (a field or tracepoint this kernel lacks), CMD has not run yet, so it is tried again with the basic set."""
+    helper, why = support()
+    if not helper: die(f"can't trace here: {why}")
+    machine = platform.machine()
+    basic, full = list(PROBES[machine]), calls(machine, kernel_calls(machine))
+    try: return start(cmd, host, helper, full)
+    except Rejected as e:
+        if full == basic: die(fail_text(str(e)))
+        print(f"sbx-trace: bpftrace did not accept every probe ({safe(str(e)) or 'no message'}); trying again with the basic set, which sees no writes", file=sys.stderr)
+    try: return start(cmd, host, helper, basic)
+    except Rejected as e: die(fail_text(str(e)))
 
 
 def main(argv):
