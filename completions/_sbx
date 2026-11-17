@@ -25,7 +25,7 @@ _sbx() {
             clean) compadd -- --yes --unused; _sbx_homes; return ;;
             reset) compadd -- --yes --default --all; _sbx_apps; return ;;
             link) compadd -- --remove --desktop; _command_names -e; return ;;
-            install) compadd -- --launcher; _files; return ;;
+            install) compadd -- --launcher --link; _files; return ;;
             uninstall) compadd -- --yes ${(f)"$(ls ~/.config/sbx/installed 2>/dev/null)"}; return ;;
             stop) (( CURRENT == i + 1 )) && _sbx_homes; return ;;
             list) compadd -- --all; return ;;

@@ -2109,15 +2109,17 @@ class Install(unittest.TestCase):
         _, tar = self.program()
         code, out, err = self.call("cmd_install", tar)
         self.assertIsNone(code, err)
+        self.assertFalse(os.path.lexists(f"{h}/.local/bin/anki"), "nothing goes in PATH unless asked")
         app = f"{h}/Apps/anki"
         self.assertEqual(os.stat(f"{app}/anki").st_mode & 0o111, 0, "the launcher loses its execute bit")
         self.assertNotEqual(os.stat(f"{app}/lib/helper").st_mode & 0o100, 0, "the program's own helpers keep theirs")
         with open(f"{h}/.config/sbx/installed/anki") as f: self.assertEqual(f.read(), f"{app}/anki\n")
         with open(f"{h}/.config/sbx/apps/anki.conf") as f: self.assertEqual(f.read(), "read_only=~/Apps/anki\n")
-        self.assertTrue(S["is_sbx_link"](f"{h}/.local/bin/anki"))
         with open(f"{h}/.local/share/applications/anki.desktop") as f: d = f.read()
-        self.assertIn("X-Sbx-Sandboxed=true", d); self.assertIn(f"Exec={h}/.local/bin/anki %U", d)
-        self.assertEqual(S["launcher_program"](f"{h}/.local/share/applications/anki.desktop"), "anki")
+        self.assertIn("X-Sbx-Sandboxed=true", d); self.assertIn(f"Exec={self.inst}/sbx --name=anki {app}/anki %U", d)
+        self.assertEqual(S["our_launchers"]("anki"), [f"{h}/.local/share/applications/anki.desktop"])
+        self.assertIsNone(self.call("cmd_link", "anki")[0])                                            # a terminal command can come later
+        self.assertTrue(S["is_sbx_link"](f"{h}/.local/bin/anki"))
         self.assertTrue(os.path.exists(tar), "an archive is left where it is")
         self.assertEqual([n for n in os.listdir(f"{h}/Apps") if n.startswith(".")], [], "no temporary folder left")
         started = []
@@ -2143,7 +2145,7 @@ class Install(unittest.TestCase):
         self.assertTrue(os.path.isdir(f"{h}/Apps/other"))
         with open(f"{h}/.local/bin/taken", "w") as f: f.write("mine\n")                             # a command of that name that is not ours
         folder, _ = self.program(top="taken-1.0")
-        code, _, err = self.call("cmd_install", folder); self.assertEqual(code, 1); self.assertTrue(os.path.isdir(folder), "nothing moved")
+        code, _, err = self.call("cmd_install", folder, "--link"); self.assertEqual(code, 1); self.assertTrue(os.path.isdir(folder), "nothing moved")
         with open(f"{h}/.local/bin/taken") as f: self.assertEqual(f.read(), "mine\n")
 
     def test_an_archive_with_a_link_out_of_its_folder_is_refused_and_leaves_nothing(self):

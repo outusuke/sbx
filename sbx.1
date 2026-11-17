@@ -145,7 +145,7 @@ does for every app\-menu launcher whose Exec line starts NAME; with
 .B \-\-remove
 it takes those out again. Without it, sbx only says when such a launcher exists.
 .TP
-.B sbx install FOLDER|ARCHIVE [NAME] [\-\-launcher PATH]
+.B sbx install FOLDER|ARCHIVE [NAME] [\-\-launcher PATH] [\-\-link]
 Install a downloaded program (an extracted folder, or a tar or zip archive) so that it only starts through sbx. The program goes to
 .I ~/Apps/NAME
 (a folder moves, an archive is unpacked; NAME defaults to the file name up to its first \-DIGIT). Its launcher, the one program at the top of
@@ -156,11 +156,13 @@ run. sbx writes
 .I ~/.config/sbx/apps/NAME.conf
 with
 .B read_only=~/Apps/NAME
-(unless the file exists), a link
+(unless the file exists) and an app\-menu entry that starts the program through sbx. Nothing is put in your PATH unless
+.B \-\-link
+is given, which also makes the link
 .I ~/.local/bin/NAME
 as
 .B sbx link
-does, and an app\-menu entry. Nothing in the program is run. What the program saves goes to its private home, as for any program. Refuses an archive that holds a link
+does (add it later with that command). Nothing in the program is run. What the program saves goes to its private home, as for any program. Refuses an archive that holds a link
 pointing outside its folder, and any NAME already in use. Not from inside a sandbox.
 .TP
 .B sbx uninstall [\-\-yes] NAME

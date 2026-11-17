@@ -61,7 +61,7 @@ sbx export [NAME]   settings as one text file (-o FILE)
 sbx import FILE     load an export back
 sbx link NAME       typing NAME starts it through sbx
 sbx open FILE       run a downloaded program ("Open with")
-sbx install SRC     move a program (folder or archive) to ~/Apps/NAME, start it only through sbx
+sbx install SRC     move a program (folder or archive) to ~/Apps/NAME, menu entry through sbx (--link: terminal command)
 sbx uninstall NAME  remove a program made by sbx install
 ```
 
@@ -71,7 +71,7 @@ Options go before the program name.
 
 ```
 sbx install ~/Downloads/anki-26.9.4-linux-x86_64.tar.zst      # or the extracted folder; NAME is guessed (anki), or give one
-anki                                                           # starts it through sbx; so does the app-menu entry
+                                                               # an app-menu entry starts it through sbx; add --link for a terminal command (typing: anki)
 sbx uninstall anki
 ```
 

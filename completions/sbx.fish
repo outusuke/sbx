@@ -29,6 +29,7 @@ complete -c sbx -f -n "__fish_seen_subcommand_from link" -l remove -d "Remove a 
 complete -c sbx -f -n "__fish_seen_subcommand_from link" -l desktop -d "Also the app-menu launchers that start it"
 complete -c sbx -f -n "__fish_seen_subcommand_from link" -a "(__fish_complete_command)"
 complete -c sbx -n "__fish_seen_subcommand_from install" -l launcher -r -d "The file that starts the program"
+complete -c sbx -f -n "__fish_seen_subcommand_from install" -l link -d "Also a command in the terminal (~/.local/bin)"
 complete -c sbx -f -n "__fish_seen_subcommand_from uninstall" -l yes -d "Don't ask"
 complete -c sbx -f -n "__fish_seen_subcommand_from uninstall" -a "(ls ~/.config/sbx/installed 2>/dev/null)"
 complete -c sbx -f -n "__fish_seen_subcommand_from stop" -a "(__sbx_homes)"

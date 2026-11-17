@@ -1787,7 +1787,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx export [NAME|--default|--all] [-o FILE] [--force]  write settings (default: all) as one text file, to stdout or FILE\n"
          "sbx import FILE [--force]               load an export back; --force replaces settings that differ\n"
          "sbx link NAME [--desktop] | --remove NAME [--desktop]  make typing NAME in a terminal start it through sbx (a link in ~/.local/bin); --desktop covers its app-menu launchers too\n"
-         "sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH]  move a downloaded program to ~/Apps/NAME, take the execute bit off its launcher, and make NAME (terminal and app menu) start it through sbx\n"
+         "sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]  move a downloaded program to ~/Apps/NAME, take the execute bit off its launcher, add an app-menu entry that starts it through sbx (--link: a terminal command too)\n"
          "sbx uninstall [--yes] NAME             delete a program made by sbx install, with its link and menu entry (its private home stays; see sbx clean)\n"
          "sbx open FILE                          run a downloaded program with sensible defaults (for \"Open with\")\n"
          "sbx desktop NAME | --remove NAME       make a launcher start the program through sbx (NAME = its id, or the program it starts)\n"
@@ -2664,17 +2664,19 @@ def unpack(src, into):
 
 
 def cmd_install(a):
-    """sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH]: ~/Apps/NAME holds the program; its launcher loses the execute bit (so running it by
-    path outside the sandbox fails, and sbx sets the bit just for its own run); NAME in a terminal and an app-menu entry start it through sbx.
+    """sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]: ~/Apps/NAME holds the program; its launcher loses the execute bit (so running
+    it by path outside the sandbox fails, and sbx sets the bit just for its own run); an app-menu entry starts it through sbx. --link also makes
+    NAME start it in a terminal (a link in ~/.local/bin, as sbx link does); nothing is put in your PATH without it.
     The program's folder is shared read-only (a settings file, read_only=...). Data goes to its private home, as for any program."""
-    launcher, rest, i = None, [], 0
+    launcher, rest, i, want_link = None, [], 0, False
     while i < len(a):
-        if a[i] == "--launcher":
+        if a[i] == "--link": want_link = True; i += 1
+        elif a[i] == "--launcher":
             if i + 1 >= len(a): die("--launcher needs a path")
             launcher = a[i + 1]; i += 2
-        elif a[i].startswith("-"): die(f"unknown option {a[i]}\nusage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH]")
+        elif a[i].startswith("-"): die(f"unknown option {a[i]}\nusage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]")
         else: rest.append(a[i]); i += 1
-    if not 1 <= len(rest) <= 2: die("usage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH]")
+    if not 1 <= len(rest) <= 2: die("usage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]")
     if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
     if os.geteuid() == 0: die("refusing to run as root")
     src = os.path.abspath(rest[0])
@@ -2685,7 +2687,10 @@ def cmd_install(a):
     if os.path.isdir(src) and (os.path.realpath(src) in generic_folders() or os.path.realpath(src) == HOME):
         die(f"{tilde(src)} holds all sorts of things; install the program's own folder")
     dest, link = f"{APPS}/{name}", f"{HOME}/.local/bin/{name}"
+    me = shutil.which("sbx") or os.path.realpath(sys.argv[0])
+    if os.path.basename(me) != "sbx": die("can't tell where sbx is installed; start this command by the name sbx")
     for p, what in ((dest, "a program folder"), (link, "a command"), (f"{INSTALLED}/{name}", "an install record"), (f"{user_launchers()}/{name}.desktop", "a menu entry")):
+        if p == link and not want_link: continue
         if os.path.lexists(p): die(f"{tilde(p)} already exists ({what}). Pick another NAME, or remove the old one first: sbx uninstall {name}")
     os.makedirs(APPS, exist_ok=True)
     tmp = None
@@ -2720,13 +2725,14 @@ def cmd_install(a):
         print(f"wrote {tilde(conf)}: the program's folder is shared read-only. If it must write there, change that line to folder=1")
     else:
         warn(f"{tilde(conf)} already exists and was left alone; it must share {tilde(dest)} (read_only=...) for the program to find its files")
-    cmd_link([name])
-    ln = f'"{link}"' if " " in link else link
-    text = f"[Desktop Entry]\nX-Sbx-Sandboxed=true\nType=Application\nName={name}\nExec={ln} %U\nTerminal=false\nCategories=Utility;\n"
+    if want_link: cmd_link([name])
+    q = lambda x: f'"{x}"' if re.search(r"\s", x) else x
+    text = f"[Desktop Entry]\nX-Sbx-Sandboxed=true\nType=Application\nName={name}\nExec={q(me)} --name={name} {q(main)} %U\nTerminal=false\nCategories=Utility;\n"
     os.makedirs(user_launchers(), exist_ok=True)
     with open(f"{user_launchers()}/{name}.desktop", "w") as f: f.write(text)
     if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", user_launchers()], stderr=subprocess.DEVNULL)
-    print(f"app menu: wrote {tilde(user_launchers())}/{name}.desktop\nStart it with: {name}\nUndo with: sbx uninstall {name}")
+    print(f"app menu: wrote {tilde(user_launchers())}/{name}.desktop (it starts the program through sbx)")
+    print(f"Start it from the app menu" + (f" or with: {name}" if want_link else f". For a terminal command too: sbx link {name}") + f"\nUndo with: sbx uninstall {name}")
 
 
 def cmd_uninstall(a):
