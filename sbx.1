@@ -291,6 +291,10 @@ Resource limits, through
 .BI \-\-name= NAME
 Use another private home, machine\-id and settings name than the program's.
 .TP
+.BI \-\-loader= PATH
+Start the program through this dynamic loader (an absolute path, such as /lib64/ld\-linux\-x86\-64.so.2) instead of running it directly.
+sbx does this by itself for a dynamically linked file that has no execute bit and whose mode it cannot change.
+.TP
 .B \-\-ignore\-config
 Ignore the settings files for this run.
 .TP

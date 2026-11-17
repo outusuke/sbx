@@ -293,6 +293,33 @@ class Units(unittest.TestCase):
         with self.assertRaises(S["WlError"]):
             wl.roundtrip(2)
 
+    # -- the hand-written lists must follow the tables
+    def test_completions_man_page_and_usage_list_every_option_command_and_setting(self):
+        S = self.S
+        def read(rel):
+            with open(f"{HERE}/{rel}") as f: return f.read()
+        bash, zsh, fish, man = read("completions/sbx.bash"), read("completions/_sbx"), read("completions/sbx.fish"), read("sbx.1").replace("\\-", "-")
+        flag_re = r"--[a-z][a-z0-9-]*"
+        flags = {f.split("=")[0] for f in list(S["FLAGS"]) + list(S["VALUE_FLAGS"])}
+        portal = {f for f in flags if f.startswith("--portal-")}
+        fish_l = set(re.findall(r"-l ([a-z][a-z0-9-]*)", fish))
+        fish_loop = {w for m in re.findall(r"^for \w+ in ([^\n]+)$", fish, re.M) for w in m.split()}
+        have = {"usage": set(re.findall(flag_re, S["USAGE"])), "bash": set(re.findall(flag_re, bash)), "zsh": set(re.findall(flag_re, zsh)),
+                "fish": {"--" + w for w in fish_l | fish_loop} | {"--portal-" + w for w in fish_loop}, "man": set(re.findall(flag_re, man))}
+        have["usage"] |= {f for f in portal if f[2:] in S["USAGE"]}                            # the portal flags share two lines
+        missing = {name: sorted(flags - found - (portal if name == "man" else set())) for name, found in have.items()}
+        what = man.split("WHAT being", 1)[1].split("(settings", 1)[0]                          # the man page lists the portals once: --portal-WHAT
+        missing["man"] += sorted(f for f in portal if f[9:] not in what)
+        self.assertEqual({k: v for k, v in missing.items() if v}, {}, "an option is missing from this file")
+        cmds = set(S["COMMANDS"])
+        zsh_cmds = set(re.search(r"cmds=\(([^)]*)\)", zsh).group(1).split())
+        fish_cmds = set(re.search(r"set -l cmds ([^\n]+)", fish).group(1).split())
+        man_cmds = set(re.findall(r"^\.B sbx ([a-z]+)", man, re.M))
+        for name, found in (("zsh", zsh_cmds), ("fish", fish_cmds), ("man", man_cmds)):
+            self.assertEqual(sorted(cmds - found), [], f"a command is missing from the {name} file")
+        defaults = man.split("Defaults:", 1)[1].split(".PP", 1)[0]
+        self.assertEqual([k for k in S["SCALARS"] if not re.search(r"\b%s\b" % k, defaults)], [], "a setting is missing from the defaults in sbx.1")
+
     # -- settings
     def test_parse_conf_reads_everything_and_reports_what_it_skips(self):
         p = self.write("c.conf", "# comment\nnet=0  # off\n gpu = no \nsound=maybe\nx11=\nbogus=1\nmemory=2G\ntasks=lots\n"
