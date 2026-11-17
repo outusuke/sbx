@@ -2677,25 +2677,41 @@ def link_escapes(root):
     return None
 
 
+def progress(msg, final=False):
+    """Show where an install is, on stderr (stdout is read by the file manager's popup). One updating line on a terminal."""
+    tty = sys.stderr.isatty()
+    sys.stderr.write(("\r\033[K" + msg if tty else msg) + ("\n" if final or not tty else "")); sys.stderr.flush()
+
+
 def unpack(src, into):
-    """Unpack a .zip or a tar archive (any compression tar knows) into the empty folder INTO."""
+    """Unpack a .zip or a tar archive (any compression tar knows) into the empty folder INTO, telling how far it is."""
+    size = os.path.getsize(src) / 1048576
+    progress(f"unpacking {os.path.basename(src)} ({size:.0f} MB)...", final=not sys.stderr.isatty())
     if src.lower().endswith(".zip"):
         base = os.path.realpath(into)
         with zipfile.ZipFile(src) as z:
-            for i in z.infolist():
+            items = z.infolist()
+            for i in items:
                 t = os.path.realpath(os.path.join(into, i.filename))
                 if t != base and not t.startswith(base + "/"): die(f"the archive holds a path that leaves its folder: {i.filename}")
-            z.extractall(into)
-            for i in z.infolist():                                    # zipfile drops the permission bits
-                mode = i.external_attr >> 16
+            step = max(1, len(items) // 20)
+            for n, i in enumerate(items, 1):
+                z.extract(i, into)
+                mode = i.external_attr >> 16                          # zipfile drops the permission bits
                 if mode & 0o100 and not i.is_dir():
                     p = os.path.join(into, i.filename); os.chmod(p, os.stat(p).st_mode | 0o111)
+                if n % step == 0 or n == len(items): progress(f"unpacking: {n * 100 // len(items)}% ({n}/{len(items)} files)", final=n == len(items))
         return
     if not shutil.which("tar"): die(f"tar is missing: {install_hint('tar')}")
-    r = subprocess.run(["tar", "-xf", src, "-C", into, "--no-same-owner"], stderr=subprocess.PIPE)
-    if r.returncode != 0:
-        why = r.stderr.decode(errors="replace").strip().splitlines()
-        die("tar couldn't unpack it: " + " ".join(why[-2:]) + (f"; for .zst files install zstd: {install_hint('zstd')}" if src.lower().endswith(".zst") else ""))
+    pr = subprocess.Popen(["tar", "-xvf", src, "-C", into, "--no-same-owner"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    n, last = 0, []
+    for line in pr.stdout:
+        n += 1; last = (last + [line.strip()])[-3:]
+        if n % 200 == 0: progress(f"unpacking: {n} files...")
+    pr.wait()
+    if pr.returncode != 0:
+        die("tar couldn't unpack it: " + " ".join(last[-2:]) + (f"; for .zst files install zstd: {install_hint('zstd')}" if src.lower().endswith(".zst") else ""))
+    progress(f"unpacked {n} files", final=True)
 
 
 def install_with_popup(args, src):
@@ -2713,9 +2729,14 @@ def install_with_popup(args, src):
     sys.exit(r.returncode)
 
 
+ICON_SIZES = (16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256, 512)       # the size folders the hicolor theme lists
+ICON_THEME = f"{HOME}/.local/share/icons/hicolor"
+
+
 def find_icon(folder, name):
     """The icon a program brought along, for its menu entry: the Icon= of a .desktop file in its folder (a file of that name inside it, else
-    the icon theme name), else an image named like the program (an svg, else the biggest png). A path inside FOLDER, a theme name, or None."""
+    the icon theme name), else an image named like the program, else the best image in a folder called icons/ (Firefox keeps
+    browser/chrome/icons/default/default128.png). An svg, else the biggest png. A path inside FOLDER, a theme name, or None."""
     norm = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
     stem = lambda p: norm(os.path.splitext(os.path.basename(p))[0])
     images, wanted = [], None
@@ -2740,7 +2761,48 @@ def find_icon(folder, name):
         hit = best([p for p in images if stem(p) == norm(os.path.splitext(wanted)[0])])
         return hit or wanted
     n = norm(name)
-    return best([p for p in images if n and stem(p).startswith(n)])
+    hit = best([p for p in images if n and stem(p).startswith(n)])
+    if hit: return hit
+    in_icons = [p for p in images if "icons" in os.path.relpath(p, folder).lower().split("/")[:-1] and not p.lower().endswith(".xpm")]
+    return best(in_icons)
+
+
+def image_kind(p):
+    """('svg', None), ('png', pixels) or None for a file that is neither (checked by what is inside, not by its name)."""
+    try:
+        with open(p, "rb") as f: head = f.read(16384)
+    except OSError:
+        return None
+    if head[:8] == b"\x89PNG\r\n\x1a\n" and len(head) >= 24:
+        w, h = struct.unpack(">II", head[16:24])
+        return ("png", max(w, h)) if 16 <= max(w, h) <= 8192 else None
+    return ("svg", None) if b"<svg" in head.lower() else None
+
+
+def remove_icons(name):
+    for p in glob.glob(f"{glob.escape(ICON_THEME)}/*/apps/sbx-{name}.*"):
+        try: os.unlink(p)
+        except OSError: pass
+
+
+def install_icon(name, icon):
+    """Copy the program's icon into the icon theme as sbx-NAME, so the menu finds it whatever the file was called or where it sits.
+    Returns what Icon= should say: the new name, or ICON unchanged when it is a theme name or can't be copied."""
+    if not icon or not icon.startswith("/"): return icon
+    kind = image_kind(icon)
+    if not kind or os.path.getsize(icon) > 5_000_000: return icon
+    ext, px = kind
+    size = "scalable" if ext == "svg" else "%dx%d" % ((s := min(ICON_SIZES, key=lambda x: (abs(x - px), -x))), s)
+    remove_icons(name)
+    try:
+        os.makedirs(f"{ICON_THEME}/{size}/apps", exist_ok=True)
+        shutil.copyfile(icon, f"{ICON_THEME}/{size}/apps/sbx-{name}.{ext}")
+        os.utime(ICON_THEME)                                              # the theme trusts an old cache unless its top folder is newer
+    except OSError:
+        return icon
+    tool = shutil.which("gtk-update-icon-cache") or shutil.which("gtk4-update-icon-cache")
+    if tool and os.path.exists(f"{ICON_THEME}/icon-theme.cache"): subprocess.run([tool, "-f", "-t", ICON_THEME], capture_output=True, check=False)
+    return f"sbx-{name}"
 
 
 def cmd_install(a):
@@ -2775,6 +2837,7 @@ def cmd_install(a):
         if p == link and not want_link: continue
         if os.path.lexists(p): die(f"{tilde(p)} already exists ({what}). Pick another NAME, or remove the old one first: sbx uninstall {name}")
     os.makedirs(APPS, exist_ok=True)
+    from_dir = os.path.isdir(src)
     tmp = None
     try:
         if os.path.isdir(src):
@@ -2787,35 +2850,51 @@ def cmd_install(a):
             bad = link_escapes(root)
             if bad: die(f"the archive holds a link that points outside its folder ({os.path.relpath(bad, root)}); not installing it")
         rel = pick_launcher(root, name, launcher)
+        progress(f"moving it to {tilde(dest)}...", final=not sys.stderr.isatty())
         if os.path.isdir(src): shutil.move(root, dest)
         else: os.rename(root, dest)
     finally:
         if tmp: shutil.rmtree(tmp, ignore_errors=True)
-    print(f"program is in {tilde(dest)}" + (f" (moved from {tilde(src)})" if os.path.isdir(src) else ""))
-    main = f"{dest}/{rel}"
-    if elf_interpreter(main):
-        os.chmod(main, os.stat(main).st_mode & ~0o111)
-        print(f"took the execute bit off {rel}: starting it by its path outside sbx now fails; sbx sets the bit for its own run")
-    else:
-        warn(f"{rel} keeps its execute bit: sbx can only start a program without it if it is a dynamically linked ELF file")
-    os.makedirs(INSTALLED, exist_ok=True)
-    with open(f"{INSTALLED}/{name}", "w") as f: f.write(main + "\n")
-    conf = f"{CONF}/apps/{name}.conf"
-    if not os.path.exists(conf):
-        os.makedirs(os.path.dirname(conf), exist_ok=True)
-        with open(conf, "w") as f: f.write(f"read_only={tilde(dest)}\n")
-        print(f"wrote {tilde(conf)}: the program's folder is shared read-only. If it must write there, change that line to folder=1")
-    else:
-        warn(f"{tilde(conf)} already exists and was left alone; it must share {tilde(dest)} (read_only=...) for the program to find its files")
-    if want_link: cmd_link([name])
-    q = lambda x: f'"{x}"' if re.search(r"\s", x) else x
-    icon = find_icon(dest, name)
-    text = f"[Desktop Entry]\nX-Sbx-Sandboxed=true\nType=Application\nName={name}\n" + (f"Icon={icon}\n" if icon else "") + f"Exec={q(me)} --name={name} {q(main)} %U\nTerminal=false\nCategories=Utility;\n"
-    os.makedirs(user_launchers(), exist_ok=True)
-    with open(f"{user_launchers()}/{name}.desktop", "w") as f: f.write(text)
-    if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", user_launchers()], stderr=subprocess.DEVNULL)
-    print(f"app menu: wrote {tilde(user_launchers())}/{name}.desktop (it starts the program through sbx)" + (f", icon {tilde(icon)}" if icon else ", no icon found in its folder: add Icon=... to that file"))
-    print("Start it from the app menu" + (f" or with: {name}" if want_link else f". For a terminal command too: sbx link {name}") + f"\nUndo with: sbx uninstall {name}")
+    made_conf = not os.path.exists(f"{CONF}/apps/{name}.conf")
+    try:
+        print(f"program is in {tilde(dest)}" + (f" (moved from {tilde(src)})" if from_dir else ""))
+        main = f"{dest}/{rel}"
+        if elf_interpreter(main):
+            os.chmod(main, os.stat(main).st_mode & ~0o111)
+            print(f"took the execute bit off {rel}: starting it by its path outside sbx now fails; sbx sets the bit for its own run")
+        else:
+            warn(f"{rel} keeps its execute bit: sbx can only start a program without it if it is a dynamically linked ELF file")
+        os.makedirs(INSTALLED, exist_ok=True)
+        with open(f"{INSTALLED}/{name}", "w") as f: f.write(main + "\n")
+        conf = f"{CONF}/apps/{name}.conf"
+        if not os.path.exists(conf):
+            os.makedirs(os.path.dirname(conf), exist_ok=True)
+            with open(conf, "w") as f: f.write(f"read_only={tilde(dest)}\n")
+            print(f"wrote {tilde(conf)}: the program's folder is shared read-only. If it must write there, change that line to folder=1")
+        else:
+            warn(f"{tilde(conf)} already exists and was left alone; it must share {tilde(dest)} (read_only=...) for the program to find its files")
+        if want_link: cmd_link([name])
+        q = lambda x: f'"{x}"' if re.search(r"\s", x) else x
+        icon = install_icon(name, find_icon(dest, name))
+        text = f"[Desktop Entry]\nX-Sbx-Sandboxed=true\nType=Application\nName={name}\n" + (f"Icon={icon}\n" if icon else "") + f"Exec={q(me)} --name={name} {q(main)} %U\nTerminal=false\nCategories=Utility;\n"
+        os.makedirs(user_launchers(), exist_ok=True)
+        with open(f"{user_launchers()}/{name}.desktop", "w") as f: f.write(text)
+        if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", user_launchers()], stderr=subprocess.DEVNULL)
+        print(f"app menu: wrote {tilde(user_launchers())}/{name}.desktop (it starts the program through sbx)" + (f", icon {tilde(icon)}" if icon else ", no icon found in its folder: add Icon=... to that file"))
+        print("Start it from the app menu" + (f" or with: {name}" if want_link else f". For a terminal command too: sbx link {name}") + f"\nUndo with: sbx uninstall {name}")
+    except BaseException:                                                  # nothing half-installed stays behind
+        progress(f"install of {name} failed; undoing it", final=True)
+        for p in (f"{INSTALLED}/{name}", f"{user_launchers()}/{name}.desktop") + ((f"{CONF}/apps/{name}.conf",) if made_conf else ()):
+            try: os.unlink(p)
+            except OSError: pass
+        remove_icons(name)
+        if want_link and is_sbx_link(link): os.unlink(link)
+        try:
+            if from_dir: shutil.move(dest, src)                         # a folder goes back where it came from
+            else: shutil.rmtree(dest, ignore_errors=True)
+        except OSError: pass
+        raise
+
 
 
 def move_to_trash(path):
@@ -2866,7 +2945,7 @@ def cmd_uninstall(a):
     link = f"{HOME}/.local/bin/{name}"
     if is_sbx_link(link): os.unlink(link); print(f"removed {tilde(link)}")
     for p in our_launchers(name): os.unlink(p); print(f"removed {tilde(p)}")
-    os.unlink(rec)
+    os.unlink(rec); remove_icons(name)
     if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", user_launchers()], stderr=subprocess.DEVNULL)
     left = [x for x in (f"{HOMES}/{name}", f"{CONF}/apps/{name}.conf") if os.path.exists(x)]
     if left: print("kept " + " and ".join(tilde(x) for x in left) + f". Delete them with: sbx clean {name}; sbx reset {name}")

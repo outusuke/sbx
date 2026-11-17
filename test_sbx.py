@@ -2184,6 +2184,25 @@ class Install(unittest.TestCase):
         with open(f"{h}/.local/share/applications/plain.desktop") as fh: self.assertNotIn("Icon=", fh.read())
         self.assertIn("no icon found", out)
 
+    def test_install_finds_a_firefox_style_icon_and_puts_it_in_the_icon_theme(self):
+        h = self.home; png = b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + struct.pack(">II", 128, 128) + b"\0" * 8
+        folder, _ = self.program(top="firefox-1.0", files={"firefox": (self.dynamic_elf(), 0o755), "browser/chrome/icons/default/default128.png": (png, 0o644),
+                                                           "browser/chrome/icons/default/default16.png": (png[:16] + struct.pack(">II", 16, 16) + b"\0" * 8, 0o644)})
+        self.S["ICON_THEME"] = f"{h}/.local/share/icons/hicolor"
+        code, out, err = self.call("cmd_install", folder, "firefox"); self.assertIsNone(code, err)
+        with open(f"{h}/.local/share/applications/firefox.desktop") as fh: self.assertIn("Icon=sbx-firefox\n", fh.read())
+        self.assertTrue(os.path.isfile(f"{h}/.local/share/icons/hicolor/128x128/apps/sbx-firefox.png"))
+        self.assertIsNone(self.call("cmd_uninstall", "--yes", "firefox")[0])
+        self.assertFalse(os.path.exists(f"{h}/.local/share/icons/hicolor/128x128/apps/sbx-firefox.png"))
+
+    def test_a_failed_install_leaves_nothing_behind_and_gives_a_folder_back(self):
+        h = self.home; folder, _ = self.program(top="tool-1.0")
+        self.S["user_launchers"] = lambda: (_ for _ in ()).throw(OSError("boom"))
+        try: self.call("cmd_install", folder, "mytool")
+        except OSError: pass
+        self.assertTrue(os.path.isdir(folder)); self.assertFalse(os.path.lexists(f"{h}/Apps/mytool"))
+        self.assertFalse(os.path.lexists(f"{h}/.config/sbx/installed/mytool"))
+
     def test_a_folder_is_moved_and_uninstall_refuses_what_it_did_not_install(self):
         h = self.home
         folder, _ = self.program(top="tool-1.0")
