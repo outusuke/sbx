@@ -2195,6 +2195,42 @@ class Install(unittest.TestCase):
         self.assertIsNone(self.call("cmd_uninstall", "--yes", "firefox")[0])
         self.assertFalse(os.path.exists(f"{h}/.local/share/icons/hicolor/128x128/apps/sbx-firefox.png"))
 
+    def test_a_settings_file_left_by_an_earlier_install_gets_the_folder_added(self):
+        h = self.home; conf = f"{h}/.config/sbx/apps/mytool.conf"
+        os.makedirs(os.path.dirname(conf))
+        with open(conf, "w") as fh: fh.write("net=0")                                                  # no newline, no folder: the program would not start
+        self.S["ask_about_conf"] = lambda n, c, d: "add"                                               # (the real one may open a dialog)
+        folder, _ = self.program(top="tool-1.0", files={"mytool": (self.dynamic_elf(), 0o755)})
+        code, out, err = self.call("cmd_install", folder, "mytool"); self.assertIsNone(code, err)
+        with open(conf) as fh: self.assertEqual(fh.read(), "net=0\nread_only=~/Apps/mytool\n")
+        self.assertIn("added read_only=~/Apps/mytool", out); self.assertEqual(self.warned, [])
+        self.assertIsNone(self.call("cmd_uninstall", "--yes", "mytool")[0])
+        folder, _ = self.program(top="tool-1.0", files={"mytool": (self.dynamic_elf(), 0o755)})        # now it already shares the folder: left as it is
+        code, out, err = self.call("cmd_install", folder, "mytool"); self.assertIsNone(code, err)
+        with open(conf) as fh: self.assertEqual(fh.read(), "net=0\nread_only=~/Apps/mytool\n")
+        self.assertIn("kept your settings", out)
+
+    def test_the_question_about_a_left_over_settings_file(self):
+        h = self.home; conf = f"{h}/.config/sbx/apps/mytool.conf"; os.makedirs(os.path.dirname(conf))
+        with open(conf, "w") as fh: fh.write("net=0\n")
+        asked = []
+        self.S["ask_about_conf"] = lambda n, c, d: asked.append((n, c, d)) or "fresh"
+        folder, _ = self.program(top="tool-1.0", files={"mytool": (self.dynamic_elf(), 0o755)})
+        self.S["ask_about_conf"] = lambda n, c, d: None                                                # "don't install": nothing moves, nothing is written
+        code, out, err = self.call("cmd_install", folder, "mytool"); self.assertEqual(code, 0)
+        self.assertTrue(os.path.isdir(folder)); self.assertFalse(os.path.exists(f"{h}/Apps/mytool"))
+        with open(conf) as fh: self.assertEqual(fh.read(), "net=0\n")
+        self.S["ask_about_conf"] = lambda n, c, d: asked.append((n, c, d)) or "fresh"                  # "fresh settings": the old file is replaced
+        self.assertIsNone(self.call("cmd_install", folder, "mytool")[0])
+        with open(conf) as fh: self.assertEqual(fh.read(), "read_only=~/Apps/mytool\n")
+        self.assertEqual(asked, [("mytool", conf, f"{h}/Apps/mytool")])
+        self.assertIsNone(self.call("cmd_uninstall", "--yes", "mytool")[0])
+        folder, _ = self.program(top="tool-1.0", files={"mytool": (self.dynamic_elf(), 0o755)})
+        with open(conf, "w") as fh: fh.write("net=0\n")
+        self.S["ask_about_conf"] = lambda *a: self.fail("--yes must not ask")
+        self.assertIsNone(self.call("cmd_install", folder, "mytool", "--yes")[0])
+        with open(conf) as fh: self.assertEqual(fh.read(), "net=0\nread_only=~/Apps/mytool\n")
+
     def test_a_failed_install_leaves_nothing_behind_and_gives_a_folder_back(self):
         h = self.home; folder, _ = self.program(top="tool-1.0")
         self.S["user_launchers"] = lambda: (_ for _ in ()).throw(OSError("boom"))
@@ -2277,7 +2313,7 @@ class Install(unittest.TestCase):
         h, S = self.home, self.S
         _, tar = self.program()
         sent = []
-        S["notify"] = lambda title, body="", icon="dialog-error": sent.append((title, body, icon))
+        S["notify"] = lambda title, body="", icon="dialog-error", replace=None: sent.append((title, body, icon))
         shutil.copy(f"{HERE}/sbx", f"{self.inst}/sbx")                                                      # the real script, so the child process is real
         os.chmod(f"{self.inst}/sbx", 0o755)
         env = {"SBX_HOME": h, "PATH": os.environ.get("PATH", "")}
@@ -2286,14 +2322,14 @@ class Install(unittest.TestCase):
             with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", [f"{self.inst}/sbx"]), contextlib.redirect_stderr(io.StringIO()):
                 try: S["cmd_install"](["--notify", *args]); return 0
                 except SystemExit as e: return e.code
-        real_run = subprocess.run
+        real_run = subprocess.Popen
         def child(cmd, **kw):                                                                          # the child must not be root-refused: run it as the test user
             code = "import sys,os;os.geteuid=lambda:1000;sys.argv[0]=%r;ns={'__name__':'x'};exec(compile(open(%r).read(),'sbx','exec'),ns);ns['main'](sys.argv[1:])" % (cmd[1], cmd[1])
             return real_run([cmd[0], "-c", code, *cmd[2:]], **kw)
-        with mock.patch.object(S["subprocess"], "run", child): self.assertEqual(run(tar), 0, sent)
+        with mock.patch.object(S["subprocess"], "Popen", child): self.assertEqual(run(tar), 0, sent)
         self.assertEqual(len(sent), 1); self.assertEqual(sent[0][0], "Installed anki"); self.assertEqual(sent[0][2], "dialog-information")
         self.assertTrue(os.path.isfile(f"{h}/Apps/anki/anki"))
-        with mock.patch.object(S["subprocess"], "run", child): self.assertEqual(run(tar), 1)                # again: refused, and it says why
+        with mock.patch.object(S["subprocess"], "Popen", child): self.assertEqual(run(tar), 1)                # again: refused, and it says why
         self.assertEqual(sent[0][0], "Can't install anki-26.9.4-linux-x86_64.tar"); self.assertIn("already exists", sent[0][1]); self.assertEqual(sent[0][2], "dialog-error")
 
     def test_install_and_uninstall_are_documented_and_refuse_a_sandbox_and_bad_names(self):

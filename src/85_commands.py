@@ -547,12 +547,12 @@ def cmd_desktop(a):
 
 
 # ---------------------------------------------------------------- opening downloaded programs
-def notify(title, body="", icon="dialog-error"):
+def notify(title, body="", icon="dialog-error", replace=None):
     """A desktop notification (there is no terminal to print to when started from a file manager). Also printed."""
     warn(f"{title}: {body}" if body else title)
     ns = shutil.which("notify-send")
     if ns:
-        try: subprocess.run([ns, "-a", "sbx", "-i", icon, title, body[:400]], timeout=5, stdin=subprocess.DEVNULL)
+        try: subprocess.run([ns, "-a", "sbx", "-i", icon, *(["-h", f"string:x-canonical-private-synchronous:{replace}"] if replace else []), title, body[:400]], timeout=5, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired): pass
 
 

@@ -90,14 +90,24 @@ def install_with_popup(args, src):
     """sbx install --notify ...: what "Install in sbx" in the file manager runs. There is no terminal there, so the result is a notification."""
     me = os.path.realpath(sys.argv[0]) if os.path.isfile(sys.argv[0]) else shutil.which("sbx")
     if not me: notify("sbx not found"); sys.exit(1)
-    r = subprocess.run([sys.executable, me, "install", *args], capture_output=True, text=True, errors="replace")
-    sys.stderr.write(r.stderr)
+    pr = subprocess.Popen([sys.executable, me, "install", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    ns, err, title = shutil.which("notify-send"), [], f"Installing {os.path.basename(src.rstrip('/'))}"
+    for line in pr.stderr:                                                 # the install's progress lines: one notification, updated in place
+        err.append(line); sys.stderr.write(line)
+        if ns and not line.startswith("sbx:"):
+            try: subprocess.run([ns, "-a", "sbx", "-i", "system-software-install", "-h", "string:x-canonical-private-synchronous:sbx-install", title, line.strip()[:200]], timeout=5, stdin=subprocess.DEVNULL)
+            except (OSError, subprocess.TimeoutExpired): pass
+    out = pr.communicate()[0]
+    r = subprocess.CompletedProcess(pr.args, pr.wait(), out, "".join(err))
+    got = re.search(r"^program is in (\S+)", r.stdout, re.M)
+    if r.returncode == 0 and not got:
+        notify(f"Not installed: {os.path.basename(src.rstrip('/'))}", "Nothing was changed.", "dialog-information", replace="sbx-install"); return
     if r.returncode == 0:
-        got = re.search(r"^program is in (\S+)", r.stdout, re.M)
         what = os.path.basename(got[1]) if got else os.path.basename(src)
-        notify(f"Installed {what}", "Start it from the app menu. Undo with: sbx uninstall " + what, "dialog-information")
+        notes = [l[5:].strip() for l in r.stderr.splitlines() if l.startswith("sbx:")] + [l for l in r.stdout.splitlines() if l.startswith("added read_only")]
+        notify(f"Installed {what}", "Start it from the app menu. Undo with: sbx uninstall " + what + ("".join(" " + n + "." for n in notes)), "dialog-information", replace="sbx-install")
         return
-    notify(f"Can't install {os.path.basename(src.rstrip('/'))}", failure_reason(r.stderr, r.returncode) + " (try it in a terminal: sbx install ...)")
+    notify(f"Can't install {os.path.basename(src.rstrip('/'))}", failure_reason(r.stderr, r.returncode) + " (try it in a terminal: sbx install ...)", replace="sbx-install")
     sys.exit(r.returncode)
 
 
@@ -177,21 +187,52 @@ def install_icon(name, icon):
     return f"sbx-{name}"
 
 
+def conf_shares(conf, folder):
+    """True if the settings file CONF already shares FOLDER (or a folder above it) through whitelist= or read_only=."""
+    base = os.path.realpath(folder)
+    try:
+        with open(conf, errors="replace") as f: lines = f.read().splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        k, _, v = (x.strip() for x in re.sub(r"(^|\s)#.*$", "", line).partition("="))
+        if k in ("whitelist", "read_only") and v:
+            q = os.path.realpath(HOME + v[1:] if v == "~" or v.startswith("~/") else v)
+            if q == "/" or (base + "/").startswith(q.rstrip("/") + "/"): return True
+    return False
+
+
+def ask_about_conf(name, conf, dest):
+    """The settings file of NAME is left from an earlier install and doesn't share DEST. Ask: 'add' its folder line, start 'fresh', or None
+    (don't install). On a terminal it asks there; from the file manager it uses zenity or kdialog; with neither it adds the line (nothing is lost)."""
+    q = f"{tilde(conf)} is left from an earlier install of '{name}' and doesn't share {tilde(dest)}, so the program wouldn't find its files."
+    if sys.stdin.isatty() and sys.stderr.isatty():
+        a = input(f"{q}\n  [a] add read_only={tilde(dest)} to it, keeping your other settings\n  [f] start with fresh settings (the old file is replaced)\n  [n] don't install\nChoice [A/f/n] ").strip().lower()
+        return "fresh" if a.startswith("f") else None if a.startswith("n") else "add"
+    for cmd in (["zenity", "--question", "--title=sbx", "--text=" + q + "\n\nAdd the folder to those settings?", "--ok-label=Add it", "--cancel-label=Don't install"],
+                ["kdialog", "--yesno", q + "\n\nAdd the folder to those settings?", "--title", "sbx", "--yes-label", "Add it", "--no-label", "Don't install"]):
+        if shutil.which(cmd[0]):
+            try: return "add" if subprocess.run(cmd, stdin=subprocess.DEVNULL, timeout=300).returncode == 0 else None
+            except (OSError, subprocess.TimeoutExpired): return None
+    return "add"
+
+
 def cmd_install(a):
-    """sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]: ~/Apps/NAME holds the program; its launcher loses the execute bit (so running
+    """sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link] [--yes]: ~/Apps/NAME holds the program; its launcher loses the execute bit (so running
     it by path outside the sandbox fails, and sbx sets the bit just for its own run); an app-menu entry starts it through sbx. --link also makes
     NAME start it in a terminal (a link in ~/.local/bin, as sbx link does); nothing is put in your PATH without it.
     The program's folder is shared read-only (a settings file, read_only=...). Data goes to its private home, as for any program."""
-    launcher, rest, i, want_link, popup = None, [], 0, False, False
+    launcher, rest, i, want_link, popup, yes = None, [], 0, False, False, False
     while i < len(a):
         if a[i] == "--link": want_link = True; i += 1
         elif a[i] == "--notify": popup = True; i += 1
+        elif a[i] == "--yes": yes = True; i += 1
         elif a[i] == "--launcher":
             if i + 1 >= len(a): die("--launcher needs a path")
             launcher = a[i + 1]; i += 2
-        elif a[i].startswith("-"): die(f"unknown option {a[i]}\nusage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]")
+        elif a[i].startswith("-"): die(f"unknown option {a[i]}\nusage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link] [--yes]")
         else: rest.append(a[i]); i += 1
-    if not 1 <= len(rest) <= 2: die("usage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]")
+    if not 1 <= len(rest) <= 2: die("usage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link] [--yes]")
     if popup: return install_with_popup([x for x in a if x != "--notify"], rest[0])
     if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
     if os.geteuid() == 0: die("refusing to run as root")
@@ -208,6 +249,11 @@ def cmd_install(a):
     for p, what in ((dest, "a program folder"), (link, "a command"), (f"{INSTALLED}/{name}", "an install record"), (f"{user_launchers()}/{name}.desktop", "a menu entry")):
         if p == link and not want_link: continue
         if os.path.lexists(p): die(f"{tilde(p)} already exists ({what}). Pick another NAME, or remove the old one first: sbx uninstall {name}")
+    conf = f"{CONF}/apps/{name}.conf"
+    fix = None
+    if os.path.exists(conf) and not conf_shares(conf, dest):
+        fix = "add" if yes else ask_about_conf(name, conf, dest)
+        if not fix: die("nothing installed", 0)
     os.makedirs(APPS, exist_ok=True)
     from_dir = os.path.isdir(src)
     tmp = None
@@ -227,7 +273,7 @@ def cmd_install(a):
         else: os.rename(root, dest)
     finally:
         if tmp: shutil.rmtree(tmp, ignore_errors=True)
-    made_conf = not os.path.exists(f"{CONF}/apps/{name}.conf")
+    made_conf = not os.path.exists(conf)
     try:
         print(f"program is in {tilde(dest)}" + (f" (moved from {tilde(src)})" if from_dir else ""))
         main = f"{dest}/{rel}"
@@ -238,13 +284,16 @@ def cmd_install(a):
             warn(f"{rel} keeps its execute bit: sbx can only start a program without it if it is a dynamically linked ELF file")
         os.makedirs(INSTALLED, exist_ok=True)
         with open(f"{INSTALLED}/{name}", "w") as f: f.write(main + "\n")
-        conf = f"{CONF}/apps/{name}.conf"
-        if not os.path.exists(conf):
+        if fix == "fresh" or not os.path.exists(conf):
             os.makedirs(os.path.dirname(conf), exist_ok=True)
             with open(conf, "w") as f: f.write(f"read_only={tilde(dest)}\n")
             print(f"wrote {tilde(conf)}: the program's folder is shared read-only. If it must write there, change that line to folder=1")
-        else:
-            warn(f"{tilde(conf)} already exists and was left alone; it must share {tilde(dest)} (read_only=...) for the program to find its files")
+        elif conf_shares(conf, dest):
+            print(f"kept your settings in {tilde(conf)} (they already share {tilde(dest)})")
+        else:                                                              # left over from an earlier install: add the line the program needs, keep the rest
+            with open(conf) as f: old = f.read()
+            with open(conf, "a") as f: f.write(("" if not old or old.endswith("\n") else "\n") + f"read_only={tilde(dest)}\n")
+            print(f"added read_only={tilde(dest)} to {tilde(conf)} (your other settings there are unchanged), so the program finds its files")
         if want_link: cmd_link([name])
         q = lambda x: f'"{x}"' if re.search(r"\s", x) else x
         icon = install_icon(name, find_icon(dest, name))
