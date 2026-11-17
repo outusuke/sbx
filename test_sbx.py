@@ -3131,6 +3131,29 @@ class Gui(unittest.TestCase):
         self.assertTrue(all(c.kwargs.get("subtitle") is None for c in adw.ActionRow.call_args_list))
         self.assertFalse(G["is_installed_folder"](None, "~/Apps/app")); self.assertFalse(G["is_installed_folder"]("../x", "~/Apps/x"))
 
+    def test_uninstall_button_runs_sbx_uninstall_and_says_when_it_fails(self):
+        G = self.G; win = mock.MagicMock(); run = G["subprocess"]
+        G["program_running"] = lambda n: True
+        with mock.patch.object(run, "run") as r: G["Win"].uninstall_program(win, "app"); r.assert_not_called(); win.alert.assert_called_once()
+        G["program_running"] = lambda n: False; win.alert.reset_mock()
+        ok = types.SimpleNamespace(returncode=0, stdout="removed ~/Apps/app\n", stderr="")
+        with mock.patch.object(run, "run", return_value=ok) as r:
+            G["Win"].uninstall_program(win, "app")
+            self.assertEqual(r.call_args[0][0][1:], ["uninstall", "--yes", "app"])
+        win.alert.assert_not_called(); win.nav.replace.assert_called_once(); win.fill_apps.assert_called_once()
+        bad = types.SimpleNamespace(returncode=1, stdout="", stderr="sbx: 'app' is running\n")
+        win.nav.replace.reset_mock()
+        with mock.patch.object(run, "run", return_value=bad): G["Win"].uninstall_program(win, "app")
+        self.assertEqual(win.alert.call_args[0][0], "Couldn't uninstall"); win.nav.replace.assert_not_called()
+        with mock.patch.object(run, "run", side_effect=OSError("no sbx")): G["Win"].uninstall_program(win, "app")
+        self.assertEqual(win.alert.call_args[0][0], "Couldn't run sbx")
+
+    def test_is_installed_means_sbx_install_recorded_it(self):
+        G = self.G; os.makedirs(G["INSTALLED"], exist_ok=True)
+        self.assertFalse(G["is_installed"]("app")); self.assertFalse(G["is_installed"](None))
+        with open(f"{G['INSTALLED']}/app", "w") as f: f.write("x\n")
+        self.assertTrue(G["is_installed"]("app")); self.assertFalse(G["is_installed"]("../app"))
+
     def test_resetting_the_private_home_moves_it_to_the_trash_and_shows_the_new_size(self):
         G = self.G; win = mock.MagicMock(); refresh = mock.MagicMock(); G["program_running"] = lambda n: False
         G["Win"].trash_home(win, "a", mock.MagicMock(), refresh)                                     # nothing saved yet

@@ -881,9 +881,14 @@ def installed_launcher(name):
 INSTALLED_NOTE = "Added by sbx install: the program’s own files. Remove only if it still starts."
 
 
+def is_installed(name):
+    """True if NAME was made by `sbx install` (its record exists)."""
+    return bool(name) and bool(NAME_RE.match(name)) and os.path.isfile(f"{INSTALLED}/{name}")
+
+
 def is_installed_folder(name, path):
     """True if PATH is ~/Apps/NAME of a program made by `sbx install` (installed/NAME exists): the folder `sbx install` shares so the program finds its own files."""
-    if not name or not NAME_RE.match(name) or not os.path.isfile(f"{INSTALLED}/{name}"): return False
+    if not is_installed(name): return False
     p = HOME + path[1:] if path.startswith("~/") else path
     return os.path.normpath(p) == f"{HOME}/Apps/{name}"
 
@@ -1350,10 +1355,19 @@ class Win(Adw.ApplicationWindow):
         if scope is not None:
             body = "Its settings are deleted and its private home is moved to the Trash, where you can restore it from. "
             if link_is_ours(scope) or launcher_is_ours(scope): body += "Its terminal link and app menu launcher stay: turn those off first if you don't want them."
+            installed = is_installed(scope)
+            if installed: body = body.rstrip() + f" It was made by sbx install: its folder ~/Apps/{scope} stays too, and installing it again is refused until that is gone. Uninstall deletes it."
             xg = Adw.PreferencesGroup(description=body)
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            if installed:
+                ubtn = Gtk.Button(label="Uninstall…", halign=Gtk.Align.CENTER, css_classes=["destructive-action"])
+                ubtn.connect("clicked", lambda *_: self.ask(f"Uninstall {scope}?", f"Deletes ~/Apps/{scope}, its terminal link and its app menu entry. This can't be undone. "
+                                                            "Its settings and private home stay; Forget removes those.", "Uninstall", lambda: self.uninstall_program(scope)))
+                col.append(ubtn)
             fbtn = Gtk.Button(label="Forget this program…", halign=Gtk.Align.CENTER, css_classes=["destructive-action"])
             fbtn.connect("clicked", lambda *_: self.ask(f"Forget {scope}?", body, "Forget", lambda: self.remove_program(scope)))
-            xg.add(fbtn)
+            col.append(fbtn)
+            xg.add(col)
             page.add(xg)
         refresh_tech()
         pg = self.page(DEFAULTS_TITLE if scope is None else scope, page, [toggle], banner=searchbar)
@@ -1895,6 +1909,17 @@ class Win(Adw.ApplicationWindow):
         CURRENT[:] = []
         self.nav.replace([self.main]); self.fill_apps()
         self.toasts.add_toast(Adw.Toast(title=f"Removed {name} from the list"))
+
+    def uninstall_program(self, name):
+        """Uninstall…: what `sbx uninstall NAME` does (the program's folder in ~/Apps, its link, menu entry and record). Settings and private home stay."""
+        if program_running(name): return self.alert("It is running", f"Stop it first (sbx stop {name}), then uninstall it.")
+        try: r = subprocess.run([sbx_cmd(), "uninstall", "--yes", name], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as e: return self.alert("Couldn't run sbx", str(e))
+        if r.returncode != 0: return self.alert("Couldn't uninstall", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
+        self.nav.replace([self.main, self.program_page(name)])              # without the Uninstall button now
+        self.fill_apps()
+        if r.stderr.strip(): self.alert("Uninstalled, but check this", r.stderr.strip()[-700:])
+        else: self.toasts.add_toast(Adw.Toast(title=f"Uninstalled {name}"))
 
     def trash_home(self, name, row, refresh=None):
         """Storage's Reset…: the private home to the Trash (restorable). REFRESH shows the new size in ROW afterwards."""

@@ -343,9 +343,14 @@ def installed_launcher(name):
 INSTALLED_NOTE = "Added by sbx install: the program’s own files. Remove only if it still starts."
 
 
+def is_installed(name):
+    """True if NAME was made by `sbx install` (its record exists)."""
+    return bool(name) and bool(NAME_RE.match(name)) and os.path.isfile(f"{INSTALLED}/{name}")
+
+
 def is_installed_folder(name, path):
     """True if PATH is ~/Apps/NAME of a program made by `sbx install` (installed/NAME exists): the folder `sbx install` shares so the program finds its own files."""
-    if not name or not NAME_RE.match(name) or not os.path.isfile(f"{INSTALLED}/{name}"): return False
+    if not is_installed(name): return False
     p = HOME + path[1:] if path.startswith("~/") else path
     return os.path.normpath(p) == f"{HOME}/Apps/{name}"
 
