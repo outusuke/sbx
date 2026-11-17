@@ -2076,7 +2076,8 @@ class Install(unittest.TestCase):
                       INSTALLED=f"{self.home}/.config/sbx/installed")
         self.warned = []
         self.S["warn"] = self.warned.append
-        self.S["ask_about_same_name"] = lambda n, o: True                                              # (the real one may open a dialog)
+        self.S["ask_about_same_name"] = lambda n, o: True                                              # (the real ones may open a dialog)
+        self.S["ask_to_install"] = lambda n, s, d: True
         self.dl = f"{self.tmp}/dl"; os.makedirs(self.dl)
 
     def dynamic_elf(self):
@@ -2265,8 +2266,20 @@ class Install(unittest.TestCase):
             S["shutil"] = mock.MagicMock(which=lambda n: f"/usr/bin/{n}" if n in have else None)
             S["subprocess"] = mock.MagicMock(run=fake, SubprocessError=subprocess.SubprocessError, DEVNULL=subprocess.DEVNULL)
             return f("mytool", "/usr/bin/mytool")
-        self.assertTrue(run("install\n", ["notify-send"])); self.assertFalse(run("\n", ["notify-send"]))             # clicked / closed
+        self.assertTrue(run("yes\n", ["notify-send"])); self.assertFalse(run("\n", ["notify-send"]))             # clicked / closed
         with self.assertRaises(SystemExit): run("", [])                                                              # nothing to ask with: not installed
+
+    def test_a_normal_install_from_the_file_manager_asks_once_and_cancel_changes_nothing(self):
+        h = self.home; folder, _ = self.program(top="tool-1.0", files={"mytool": (self.dynamic_elf(), 0o755)}); asked = []
+        self.S["ask_to_install"] = lambda n, s, d: asked.append((n, s, d)) or False                    # no terminal in call(): it asks
+        code, out, err = self.call("cmd_install", folder, "mytool"); self.assertEqual(code, 0)
+        self.assertEqual(asked, [("mytool", folder, f"{h}/Apps/mytool")])
+        self.assertTrue(os.path.isdir(folder)); self.assertFalse(os.path.exists(f"{h}/Apps/mytool"))
+        self.S["ask_to_install"] = lambda *a: self.fail("--yes must not ask")
+        self.assertIsNone(self.call("cmd_install", folder, "mytool", "--yes")[0])
+        S = load_sbx()                                                                                  # nothing can ask: it installs, as before
+        S["ask_without_terminal"] = lambda q, t, ok: None
+        self.assertTrue(S["ask_to_install"]("mytool", folder, f"{h}/Apps/mytool"))
 
     def test_a_failed_install_leaves_nothing_behind_and_gives_a_folder_back(self):
         h = self.home; folder, _ = self.program(top="tool-1.0")

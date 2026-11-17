@@ -217,16 +217,11 @@ def ask_about_conf(name, conf, dest):
     return "add"
 
 
-def ask_about_same_name(name, other):
-    """A different program called NAME (OTHER, in your PATH) is already on this computer; the installed one would share its private home and
-    settings. Ask whether to go on: True = install, False = don't. On a terminal it asks there; from the file manager it uses zenity, kdialog,
-    or a notification with an Install button (notify-send --action). With none of them there is no way to ask, so it doesn't install."""
-    q = (f"A program called {name} is already on this computer ({tilde(other)}). The one you install would share its private home "
-         f"({tilde(HOMES)}/{name}) and settings; two versions of one program can damage each other's profile.")
-    if sys.stdin.isatty() and sys.stderr.isatty():
-        return input(f"{q}\nInstall it anyway? [y/N] ").strip().lower() in ("y", "yes")
-    for cmd in (["zenity", "--question", "--title=sbx", "--text=" + q + "\nInstall it anyway?", "--ok-label=Install", "--cancel-label=Cancel"],
-                ["kdialog", "--yesno", q + "\nInstall it anyway?", "--title", "sbx", "--yes-label", "Install", "--no-label", "Cancel"]):
+def ask_without_terminal(q, title, ok):
+    """A yes/no question where there is no terminal (the file manager's Install in sbx): zenity, kdialog, or a notification with a button
+    (notify-send --action). True = yes, False = no or closed, None = nothing here can ask."""
+    for cmd in (["zenity", "--question", "--title=sbx", "--text=" + q, "--ok-label=" + ok, "--cancel-label=Cancel"],
+                ["kdialog", "--yesno", q, "--title", "sbx", "--yes-label", ok, "--no-label", "Cancel"]):
         if shutil.which(cmd[0]):
             try: return subprocess.run(cmd, stdin=subprocess.DEVNULL, timeout=300).returncode == 0
             except (OSError, subprocess.TimeoutExpired): return False
@@ -234,11 +229,32 @@ def ask_about_same_name(name, other):
     if ns:
         try:
             if "--action" in subprocess.run([ns, "--help"], capture_output=True, text=True, timeout=5).stdout:
-                r = subprocess.run([ns, "-u", "critical", "-a", "sbx", "--wait", "--action=install=Install anyway", "Install " + name + "?", q],
+                r = subprocess.run([ns, "-u", "critical", "-a", "sbx", "--wait", f"--action=yes={ok}", title, q],
                                    capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=300)
-                return r.stdout.strip() == "install"
+                return r.stdout.strip() == "yes"
         except (OSError, subprocess.SubprocessError): pass
-    die(f"a program called {name} is already on this computer ({tilde(other)}), and there is no way to ask here. Install in a terminal (sbx install ...) or add --yes")
+    return None
+
+
+def ask_about_same_name(name, other):
+    """A different program called NAME (OTHER, in your PATH) is already on this computer; the installed one would share its private home and
+    settings. Ask whether to go on: True = install, False = don't. With no way to ask (no terminal, no dialog) it doesn't install."""
+    q = (f"A program called {name} is already on this computer ({tilde(other)}). The one you install would share its private home "
+         f"({tilde(HOMES)}/{name}) and settings; two versions of one program can damage each other's profile.")
+    if sys.stdin.isatty() and sys.stderr.isatty():
+        return input(f"{q}\nInstall it anyway? [y/N] ").strip().lower() in ("y", "yes")
+    got = ask_without_terminal(q + "\nInstall it anyway?", f"Install {name}?", "Install anyway")
+    if got is None:
+        die(f"a program called {name} is already on this computer ({tilde(other)}), and there is no way to ask here. Install in a terminal (sbx install ...) or add --yes")
+    return got
+
+
+def ask_to_install(name, src, dest):
+    """The question before a normal install started from the file manager (on a terminal you typed the command, so nothing is asked).
+    True = install. Where nothing can ask, it installs, as before."""
+    q = f"Move {tilde(src)} to {tilde(dest)} and start it only through sbx (an app menu entry is added)?"
+    got = ask_without_terminal(q, f"Install {name}?", "Install")
+    return True if got is None else got
 
 
 def cmd_install(a):
@@ -274,7 +290,10 @@ def cmd_install(a):
         if p == link and not want_link: continue
         if os.path.lexists(p): die(f"{tilde(p)} already exists ({what}). Pick another NAME, or remove the old one first: sbx uninstall {name}")
     other = None if yes else find_in_path(name)                         # a program of that name that is not this one: they would share a home
-    if other and not ask_about_same_name(name, other): die("nothing installed", 0)
+    if other:
+        if not ask_about_same_name(name, other): die("nothing installed", 0)
+    elif not yes and not (sys.stdin.isatty() and sys.stderr.isatty()):   # from the file manager nobody typed the command: ask once
+        if not ask_to_install(name, src, dest): die("nothing installed", 0)
     conf = f"{CONF}/apps/{name}.conf"
     fix = None
     if os.path.exists(conf) and not conf_shares(conf, dest):
