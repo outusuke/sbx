@@ -2784,7 +2784,7 @@ def cmd_install(a):
     with open(f"{user_launchers()}/{name}.desktop", "w") as f: f.write(text)
     if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", user_launchers()], stderr=subprocess.DEVNULL)
     print(f"app menu: wrote {tilde(user_launchers())}/{name}.desktop (it starts the program through sbx)")
-    print(f"Start it from the app menu" + (f" or with: {name}" if want_link else f". For a terminal command too: sbx link {name}") + f"\nUndo with: sbx uninstall {name}")
+    print("Start it from the app menu" + (f" or with: {name}" if want_link else f". For a terminal command too: sbx link {name}") + f"\nUndo with: sbx uninstall {name}")
 
 
 def cmd_uninstall(a):
