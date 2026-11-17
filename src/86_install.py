@@ -190,12 +190,25 @@ def cmd_install(a):
     print("Start it from the app menu" + (f" or with: {name}" if want_link else f". For a terminal command too: sbx link {name}") + f"\nUndo with: sbx uninstall {name}")
 
 
+def move_to_trash(path):
+    """Move PATH to the Trash (restorable) with `gio trash`. Raises OSError with the reason when that can't be done."""
+    gio = shutil.which("gio")
+    if not gio: raise OSError("gio is missing (the glib command-line tools: libglib2.0-bin on Debian and Ubuntu, glib2 elsewhere)")
+    top = os.stat(path).st_mode
+    if os.path.isdir(path) and not os.path.islink(path): os.chmod(path, top | 0o700)    # moving a folder to another parent needs write access to it
+    r = subprocess.run([gio, "trash", path], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, errors="replace")
+    if r.returncode != 0:
+        if os.path.lexists(path) and not os.path.islink(path): os.chmod(path, top & 0o7777)
+        raise OSError(r.stderr.strip() or f"gio trash exited with {r.returncode}")
+
+
 def cmd_uninstall(a):
-    """sbx uninstall [--yes] NAME: delete a program made by sbx install, with its link, menu entry and install record. Its private home
-    (what it saved) and its settings file stay; sbx clean NAME and sbx reset NAME remove those."""
-    yes = "--yes" in a
-    a = [x for x in a if x != "--yes"]
-    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx uninstall [--yes] NAME")
+    """sbx uninstall [--yes] [--trash] NAME: remove a program made by sbx install, with its link, menu entry and install record. Its folder
+    is deleted, or with --trash moved to the Trash (restorable). Its private home (what it saved) and its settings file stay; sbx clean NAME
+    and sbx reset NAME remove those."""
+    yes, trash = "--yes" in a, "--trash" in a
+    a = [x for x in a if x not in ("--yes", "--trash")]
+    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx uninstall [--yes] [--trash] NAME")
     if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
     name = a[0]
     if clean(name) != name: die(bad_name(name))
@@ -207,9 +220,13 @@ def cmd_uninstall(a):
     inside = bool(made) and os.path.isdir(dest) and not os.path.islink(dest) and os.path.realpath(made).startswith(os.path.realpath(dest) + "/")
     if not yes:
         if not sys.stdin.isatty(): die("not asking without a terminal; add --yes")
-        if input(f"Delete {tilde(dest) if inside else 'the install record'} of '{name}', its link and its menu entry? Its private home stays. [y/N] ").strip().lower() not in ("y", "yes"):
+        if input(f"{'Move to the Trash' if trash and inside else 'Delete'} {tilde(dest) if inside else 'the install record'} of '{name}', its link and its menu entry? Its private home stays. [y/N] ").strip().lower() not in ("y", "yes"):
             die("nothing deleted", 0)
-    if inside:
+    if inside and trash:
+        try: move_to_trash(dest)
+        except OSError as e: die(f"couldn't move {tilde(dest)} to the Trash ({e}); nothing was changed. Without --trash it is deleted instead")
+        print(f"moved {tilde(dest)} to the Trash")
+    elif inside:
         def unlock(fn, p, _exc):
             os.chmod(os.path.dirname(p), 0o700)
             if not os.path.islink(p): os.chmod(p, 0o700)

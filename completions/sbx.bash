@@ -17,7 +17,7 @@ _sbx() {
             reset) COMPREPLY=($(compgen -W "--yes --default --all $(ls ~/.config/sbx/apps 2>/dev/null | sed 's/\.conf$//')" -- "$cur")); return ;;
             link) COMPREPLY=($(compgen -W "--remove --desktop" -- "$cur") $(compgen -c -- "$cur")); return ;;
             install) COMPREPLY=($(compgen -W "--launcher --link" -- "$cur") $(compgen -f -- "$cur")); return ;;
-            uninstall) COMPREPLY=($(compgen -W "--yes $(ls ~/.config/sbx/installed 2>/dev/null)" -- "$cur")); return ;;
+            uninstall) COMPREPLY=($(compgen -W "--yes --trash $(ls ~/.config/sbx/installed 2>/dev/null)" -- "$cur")); return ;;
             stop) COMPREPLY=($(compgen -W "$(ls ~/.sbx-homes 2>/dev/null)" -- "$cur")); return ;;
             list) COMPREPLY=($(compgen -W "--all" -- "$cur")); return ;;
             rebind) COMPREPLY=($(compgen -W "--dismiss $(ls ~/.config/sbx/pending 2>/dev/null)" -- "$cur")); return ;;

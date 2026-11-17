@@ -63,7 +63,7 @@ sbx import FILE     load an export back
 sbx link NAME       typing NAME starts it through sbx
 sbx open FILE       run a downloaded program ("Open with")
 sbx install SRC     move a program (folder or archive) to ~/Apps/NAME, menu entry through sbx (--link: terminal command)
-sbx uninstall NAME  remove a program made by sbx install
+sbx uninstall NAME  remove a program made by sbx install (--trash: its folder goes to the Trash)
 ```
 
 Options go before the program name.

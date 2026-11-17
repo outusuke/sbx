@@ -2137,6 +2137,26 @@ class Install(unittest.TestCase):
         self.assertTrue(os.path.exists(f"{h}/.config/sbx/apps/anki.conf"), "settings stay")
         self.assertEqual(self.call("cmd_uninstall", "--yes", "anki")[0], 1)
 
+    def test_uninstall_trash_moves_the_folder_to_the_trash_and_changes_nothing_when_that_fails(self):
+        h, S = self.home, self.S
+        _, tar = self.program()
+        self.assertIsNone(self.call("cmd_install", tar)[0]); app = f"{h}/Apps/anki"
+        trash = f"{h}/trash"; os.makedirs(trash)
+        S["shutil"].which, real = (lambda n: None if n == "gio" else real(n)), S["shutil"].which
+        code, _, err = self.call("cmd_uninstall", "--yes", "--trash", "anki")                        # no gio: refused, nothing touched
+        self.assertEqual(code, 1); self.assertIn("gio is missing", err)
+        for p in (app, f"{h}/.local/share/applications/anki.desktop", f"{h}/.config/sbx/installed/anki"): self.assertTrue(os.path.lexists(p), p)
+        S["shutil"].which = lambda n: "/fake/gio" if n == "gio" else real(n)
+        def fake_run(cmd, **kw):
+            if cmd[0] == "/fake/gio": os.rename(cmd[2], f"{trash}/{os.path.basename(cmd[2])}"); return types.SimpleNamespace(returncode=0, stderr="")
+            return types.SimpleNamespace(returncode=0, stderr="", stdout="")
+        S["subprocess"].run, orig = fake_run, S["subprocess"].run
+        try: code, out, err = self.call("cmd_uninstall", "--yes", "--trash", "anki")
+        finally: S["subprocess"].run = orig; S["shutil"].which = real
+        self.assertIsNone(code, err); self.assertIn("to the Trash", out)
+        self.assertTrue(os.path.isdir(f"{trash}/anki"), "the folder is in the trash, not deleted")
+        for p in (app, f"{h}/.local/share/applications/anki.desktop", f"{h}/.config/sbx/installed/anki"): self.assertFalse(os.path.lexists(p), p)
+
     def test_the_menu_entry_gets_the_icon_the_program_brought(self):
         f = self.S["find_icon"]; t = f"{self.home}/icons"
         def mk(path, data="x"):
@@ -3131,22 +3151,25 @@ class Gui(unittest.TestCase):
         self.assertTrue(all(c.kwargs.get("subtitle") is None for c in adw.ActionRow.call_args_list))
         self.assertFalse(G["is_installed_folder"](None, "~/Apps/app")); self.assertFalse(G["is_installed_folder"]("../x", "~/Apps/x"))
 
-    def test_uninstall_button_runs_sbx_uninstall_and_says_when_it_fails(self):
+    def test_forgetting_a_program_made_by_sbx_install_uninstalls_it_first(self):
         G = self.G; win = mock.MagicMock(); run = G["subprocess"]
-        G["program_running"] = lambda n: True
-        with mock.patch.object(run, "run") as r: G["Win"].uninstall_program(win, "app"); r.assert_not_called(); win.alert.assert_called_once()
-        G["program_running"] = lambda n: False; win.alert.reset_mock()
-        ok = types.SimpleNamespace(returncode=0, stdout="removed ~/Apps/app\n", stderr="")
-        with mock.patch.object(run, "run", return_value=ok) as r:
-            G["Win"].uninstall_program(win, "app")
-            self.assertEqual(r.call_args[0][0][1:], ["uninstall", "--yes", "app"])
-        win.alert.assert_not_called(); win.nav.replace.assert_called_once(); win.fill_apps.assert_called_once()
-        bad = types.SimpleNamespace(returncode=1, stdout="", stderr="sbx: 'app' is running\n")
-        win.nav.replace.reset_mock()
-        with mock.patch.object(run, "run", return_value=bad): G["Win"].uninstall_program(win, "app")
-        self.assertEqual(win.alert.call_args[0][0], "Couldn't uninstall"); win.nav.replace.assert_not_called()
-        with mock.patch.object(run, "run", side_effect=OSError("no sbx")): G["Win"].uninstall_program(win, "app")
-        self.assertEqual(win.alert.call_args[0][0], "Couldn't run sbx")
+        win.run_uninstall = lambda name: G["Win"].run_uninstall(win, name)
+        G["program_running"] = lambda n: False
+        os.makedirs(G["INSTALLED"], exist_ok=True)
+        with open(f"{G['INSTALLED']}/app", "w") as f: f.write("x\n")
+        bad = types.SimpleNamespace(returncode=1, stdout="", stderr="sbx: couldn't move it to the Trash\n")
+        with mock.patch.object(run, "run", return_value=bad), mock.patch.dict(G, {"forget_program": mock.MagicMock()}):
+            G["Win"].remove_program(win, "app")
+            G["forget_program"].assert_not_called()                                                  # uninstall failed: nothing else touched
+        self.assertEqual(win.alert.call_args[0][0], "Couldn't uninstall"); win.alert.reset_mock()
+        ok = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        with mock.patch.object(run, "run", return_value=ok) as r, mock.patch.dict(G, {"forget_program": mock.MagicMock()}):
+            G["Win"].remove_program(win, "app")
+            self.assertEqual(r.call_args[0][0][1:], ["uninstall", "--yes", "--trash", "app"])
+            G["forget_program"].assert_called_once_with("app")
+        os.unlink(f"{G['INSTALLED']}/app")                                                           # not made by sbx install: no uninstall
+        with mock.patch.object(run, "run") as r, mock.patch.dict(G, {"forget_program": mock.MagicMock()}):
+            G["Win"].remove_program(win, "app"); r.assert_not_called(); G["forget_program"].assert_called_once_with("app")
 
     def test_is_installed_means_sbx_install_recorded_it(self):
         G = self.G; os.makedirs(G["INSTALLED"], exist_ok=True)

@@ -165,14 +165,18 @@ as
 does (add it later with that command). Nothing in the program is run. What the program saves goes to its private home, as for any program. Refuses an archive that holds a link
 pointing outside its folder, and any NAME already in use. Not from inside a sandbox.
 .TP
-.B sbx uninstall [\-\-yes] NAME
-Delete a program made by
+.B sbx uninstall [\-\-yes] [\-\-trash] NAME
+Remove a program made by
 .BR "sbx install" :
 its folder in
 .IR ~/Apps ,
 its link, its menu entry and its install record, after asking unless
 .B \-\-yes
-is given. Its private home and settings file stay; remove them with
+is given. Its folder is deleted, or with
+.B \-\-trash
+moved to the Trash (restorable; needs
+.BR gio ).
+Its private home and settings file stay; remove them with
 .B sbx clean
 and
 .BR "sbx reset" .
