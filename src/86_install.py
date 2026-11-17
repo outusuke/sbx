@@ -205,12 +205,12 @@ def conf_shares(conf, folder):
 def ask_about_conf(name, conf, dest):
     """The settings file of NAME is left from an earlier install and doesn't share DEST. Ask: 'add' its folder line, start 'fresh', or None
     (don't install). On a terminal it asks there; from the file manager it uses zenity or kdialog; with neither it adds the line (nothing is lost)."""
-    q = f"{tilde(conf)} is left from an earlier install of '{name}' and doesn't share {tilde(dest)}, so the program wouldn't find its files."
+    q = f"Old settings for {name} don't share {tilde(dest)}."
     if sys.stdin.isatty() and sys.stderr.isatty():
-        a = input(f"{q}\n  [a] add read_only={tilde(dest)} to it, keeping your other settings\n  [f] start with fresh settings (the old file is replaced)\n  [n] don't install\nChoice [A/f/n] ").strip().lower()
+        a = input(f"{q}\n  [a] add it, keep your other settings   [f] fresh settings   [n] don't install\nChoice [A/f/n] ").strip().lower()
         return "fresh" if a.startswith("f") else None if a.startswith("n") else "add"
-    for cmd in (["zenity", "--question", "--title=sbx", "--text=" + q + "\n\nAdd the folder to those settings?", "--ok-label=Add it", "--cancel-label=Don't install"],
-                ["kdialog", "--yesno", q + "\n\nAdd the folder to those settings?", "--title", "sbx", "--yes-label", "Add it", "--no-label", "Don't install"]):
+    for cmd in (["zenity", "--question", "--title=sbx", "--text=" + q + "\nAdd it?", "--ok-label=Add it", "--cancel-label=Cancel"],
+                ["kdialog", "--yesno", q + "\nAdd it?", "--title", "sbx", "--yes-label", "Add it", "--no-label", "Cancel"]):
         if shutil.which(cmd[0]):
             try: return "add" if subprocess.run(cmd, stdin=subprocess.DEVNULL, timeout=300).returncode == 0 else None
             except (OSError, subprocess.TimeoutExpired): return None
