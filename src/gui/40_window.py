@@ -381,13 +381,15 @@ class Win(Adw.ApplicationWindow):
         dg = Adw.PreferencesGroup()
         ebtn = Gtk.Button(label="Export settings…", halign=Gtk.Align.CENTER)
         ebtn.connect("clicked", lambda *_: self.export_settings(scope or "--default", f"sbx-{scope or 'default'}.txt"))
-        dg.add(ebtn)
+        btns = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)                  # a group puts its rows right against each other
+        btns.append(ebtn)
         rbtn = Gtk.Button(label="Reset settings…", halign=Gtk.Align.CENTER, css_classes=["destructive-action"])
         rbtn.connect("clicked", lambda *_: self.ask("Reset settings?",
                                                     ("The default settings are deleted. Programs with their own settings keep them. " if scope is None
                                                      else "This program's own settings are deleted, so it uses the default settings again. ") + "Program data is not touched.",
                                                     "Reset", lambda: self.reset(scope)))
-        dg.add(rbtn)
+        btns.append(rbtn)
+        dg.add(btns)
         page.add(dg)
         if scope is not None:
             body = "Its settings are deleted and its private home is moved to the Trash, where you can restore it from. "
