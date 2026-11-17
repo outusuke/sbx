@@ -118,7 +118,7 @@ ICON_THEME = f"{HOME}/.local/share/icons/hicolor"
 def find_icon(folder, name):
     """The icon a program brought along, for its menu entry: the Icon= of a .desktop file in its folder (a file of that name inside it, else
     the icon theme name), else an image named like the program, else the best image in a folder called icons/ (Firefox keeps
-    browser/chrome/icons/default/default128.png). An svg, else the biggest png. A path inside FOLDER, a theme name, or None."""
+    browser/chrome/icons/default/default128.png). An xpm first (Anki ships one), else an svg, else the biggest png. A path inside FOLDER, a theme name, or None."""
     norm = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
     stem = lambda p: norm(os.path.splitext(os.path.basename(p))[0])
     images, wanted = [], None
@@ -137,20 +137,22 @@ def find_icon(folder, name):
             elif f.lower().endswith((".svg", ".png", ".xpm")): images.append(p)
 
     def best(c):
-        svg = [p for p in c if p.lower().endswith(".svg")]
-        return svg[0] if svg else max(c, key=os.path.getsize) if c else None
+        for ext in (".xpm", ".svg", ".png"):                               # an xpm first (the biggest), then an svg, else the biggest png
+            hit = [p for p in c if p.lower().endswith(ext)]
+            if hit: return hit[0] if ext == ".svg" else max(hit, key=os.path.getsize)
+        return None
     if wanted and not wanted.startswith("/") and re.fullmatch(r"[A-Za-z0-9._+-]+", wanted):
         hit = best([p for p in images if stem(p) == norm(os.path.splitext(wanted)[0])])
         return hit or wanted
     n = norm(name)
     hit = best([p for p in images if n and stem(p).startswith(n)])
     if hit: return hit
-    in_icons = [p for p in images if "icons" in os.path.relpath(p, folder).lower().split("/")[:-1] and not p.lower().endswith(".xpm")]
+    in_icons = [p for p in images if "icons" in os.path.relpath(p, folder).lower().split("/")[:-1]]
     return best(in_icons)
 
 
 def image_kind(p):
-    """('svg', None), ('png', pixels) or None for a file that is neither (checked by what is inside, not by its name)."""
+    """('svg', None), ('png', pixels), ('xpm', pixels) or None for a file that is neither (checked by what is inside, not by its name)."""
     try:
         with open(p, "rb") as f: head = f.read(16384)
     except OSError:
@@ -158,6 +160,9 @@ def image_kind(p):
     if head[:8] == b"\x89PNG\r\n\x1a\n" and len(head) >= 24:
         w, h = struct.unpack(">II", head[16:24])
         return ("png", max(w, h)) if 16 <= max(w, h) <= 8192 else None
+    if head.lstrip()[:9] == b"/* XPM */":
+        m = re.search(rb'"\s*(\d+)\s+(\d+)\s+\d+\s+\d+', head)               # the first string is "width height colors chars"
+        return ("xpm", max(int(m[1]), int(m[2]))) if m and 16 <= max(int(m[1]), int(m[2])) <= 8192 else None
     return ("svg", None) if b"<svg" in head.lower() else None
 
 

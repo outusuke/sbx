@@ -2168,7 +2168,10 @@ class Install(unittest.TestCase):
         mk("share/pixmaps/other.png"); self.assertIsNone(f(t, "cool"), "an image of another name is not its icon")
         mk("Cool-Logo.png", "x" * 10); mk("res/cool.png", "x" * 50)
         self.assertEqual(f(t, "cool"), f"{t}/res/cool.png", "named like the program: the biggest png")
-        mk("cool.svg"); self.assertEqual(f(t, "cool"), f"{t}/cool.svg", "an svg is preferred")
+        mk("cool.svg"); self.assertEqual(f(t, "cool"), f"{t}/cool.svg", "an svg is preferred to a png")
+        mk("cool.xpm", "x"); mk("res/cool.xpm", "x" * 20)
+        self.assertEqual(f(t, "cool"), f"{t}/res/cool.xpm", "an xpm comes first, the biggest one")
+        os.unlink(f"{t}/cool.xpm"); os.unlink(f"{t}/res/cool.xpm")
         mk("cool.desktop", "[Desktop Entry]\nIcon=other\n"); self.assertEqual(f(t, "cool"), f"{t}/share/pixmaps/other.png", "the program's own .desktop names its icon")
         mk("cool.desktop", "[Desktop Entry]\nIcon=org.cool.App\n"); self.assertEqual(f(t, "cool"), "org.cool.App", "else the theme name")
         mk("cool.desktop", "[Desktop Entry]\nIcon=/etc/passwd\n"); self.assertEqual(f(t, "cool"), f"{t}/cool.svg", "an absolute path outside is not followed")
@@ -2185,6 +2188,19 @@ class Install(unittest.TestCase):
         code, out, err = self.call("cmd_install", folder, "plain"); self.assertIsNone(code, err)
         with open(f"{h}/.local/share/applications/plain.desktop") as fh: self.assertNotIn("Icon=", fh.read())
         self.assertIn("no icon found", out)
+
+    def test_install_puts_an_xpm_icon_in_the_icon_theme_ahead_of_png_and_svg(self):
+        h = self.home; xpm = b'/* XPM */\nstatic char * t_xpm[] = {\n"32 32 2 1",\n". c None",\n"X c #000000",\n'
+        png = b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + struct.pack(">II", 128, 128) + b"\0" * 8
+        icons = f"{h}/.local/share/icons/hicolor"; self.S["ICON_THEME"] = icons
+        folder, _ = self.program(top="xp-1.0", files={"xp": (self.dynamic_elf(), 0o755), "xp.desktop": (b"[Desktop Entry]\nIcon=xp\n", 0o644),
+                                                      "xp.xpm": (xpm, 0o644), "xp.png": (png, 0o644), "xp.svg": (b"<svg/>", 0o644)})
+        code, out, err = self.call("cmd_install", folder, "xp"); self.assertIsNone(code, err)
+        with open(f"{h}/.local/share/applications/xp.desktop") as fh: self.assertIn("Icon=sbx-xp\n", fh.read())
+        self.assertTrue(os.path.isfile(f"{icons}/32x32/apps/sbx-xp.xpm"))
+        self.assertFalse(os.path.exists(f"{icons}/128x128/apps/sbx-xp.png"), "the png is not used when there is an xpm")
+        self.assertIsNone(self.call("cmd_uninstall", "--yes", "xp")[0])
+        self.assertFalse(os.path.exists(f"{icons}/32x32/apps/sbx-xp.xpm"))
 
     def test_install_finds_a_firefox_style_icon_and_puts_it_in_the_icon_theme(self):
         h = self.home; png = b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + struct.pack(">II", 128, 128) + b"\0" * 8
