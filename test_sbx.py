@@ -2888,6 +2888,18 @@ class Gui(unittest.TestCase):
             os.unlink(prog); os.symlink("/usr/local/bin/sbx", prog)
             self.assertIsNone(G["start_command"]("tool")[0])                                                       # an sbx link is not the program
 
+    def test_the_window_starts_a_program_made_by_sbx_install(self):
+        G = self.G; h = G["HOME"]; cli = G["sbx_cmd"]()
+        launcher = f"{h}/Apps/g-diffuser/G-Diffuser"; os.makedirs(os.path.dirname(launcher)); os.makedirs(G["INSTALLED"])
+        with open(launcher, "wb") as f: f.write(b"\x7fELF")                                                          # no execute bit: sbx sets it for the run
+        with open(f"{G['INSTALLED']}/g-diffuser", "w") as f: f.write(launcher + "\n")
+        with mock.patch.dict(os.environ, {"PATH": f"{h}/bin"}):
+            self.assertEqual(G["start_command"]("g-diffuser"), ([cli, "--name=g-diffuser", launcher], None))
+            self.assertEqual(G["preview_command"]("g-diffuser"), ([cli, "preview", "--name=g-diffuser", launcher], None))
+            os.unlink(launcher)
+            self.assertIn("not in your PATH", G["start_command"]("g-diffuser")[1])                                 # file gone: nothing to start
+        self.assertIsNone(G["installed_launcher"]("../x"))
+
     def test_run_hands_the_recorded_file_to_sbx(self):
         G = self.G; game = f"{G['HOME']}/Games/Crash"; self._gui_origin("Crash", game); win = mock.MagicMock()
         with mock.patch.dict(os.environ, {"PATH": f"{G['HOME']}/nowhere"}), mock.patch.object(G["subprocess"], "Popen") as popen:

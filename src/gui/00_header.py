@@ -16,6 +16,7 @@ HOME  = os.path.realpath(os.path.expanduser("~"))
 USER  = pwd.getpwuid(os.getuid()).pw_name
 CONF  = HOME + "/.config/sbx"
 APPS  = CONF + "/apps"
+INSTALLED = CONF + "/installed"       # written by `sbx install`: installed/NAME holds the path of the program's launcher
 HOMES = HOME + "/.sbx-homes"
 LOG   = HOME + "/.local/state/sbx/sbx.log"        # written by sbx: starts, exits, warnings, stderr of programs without a terminal
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

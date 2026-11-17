@@ -330,10 +330,22 @@ def in_path(name):
     return False
 
 
+def installed_launcher(name):
+    """The launcher file `sbx install` recorded for NAME (a file without the execute bit; sbx sets it for the run), or None."""
+    if not NAME_RE.match(name): return None
+    try:
+        with open(f"{INSTALLED}/{name}") as f: p = f.readline().strip()
+    except OSError:
+        return None
+    return p if p.startswith("/") and os.path.isfile(p) else None
+
+
 def start_command(name):
-    """(the sbx command that starts NAME from the window, or None, and why not). A program in your PATH starts by its name. One that is not (a
+    """(the sbx command that starts NAME from the window, or None, and why not). A program made by sbx install starts from the launcher it recorded. A program in your PATH starts by its name. One that is not (a
     downloaded game) starts from the file sbx recorded for it, as `sbx open` does when you use Open With; a name that was given with --name
     keeps it. When that file is gone there is nothing to start: run it once from its new place and sbx recognises it (see check_origin)."""
+    made = installed_launcher(name)
+    if made: return [sbx_cmd(), f"--name={name}", made], None                                # from sbx install: its file has no execute bit, so PATH can't find it
     if in_path(name): return [sbx_cmd(), name], None
     rec = read_origin(name)
     if not rec: return None, f"{name} is not in your PATH, and sbx has not run it from a file yet. Open it once with Open With, Run in sbx."
