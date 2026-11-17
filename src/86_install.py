@@ -85,6 +85,36 @@ def install_with_popup(args, src):
     sys.exit(r.returncode)
 
 
+def find_icon(folder, name):
+    """The icon a program brought along, for its menu entry: the Icon= of a .desktop file in its folder (a file of that name inside it, else
+    the icon theme name), else an image named like the program (an svg, else the biggest png). A path inside FOLDER, a theme name, or None."""
+    norm = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
+    stem = lambda p: norm(os.path.splitext(os.path.basename(p))[0])
+    images, wanted = [], None
+    for d, dirs, files in os.walk(folder):
+        if d[len(folder):].count("/") >= 4: dirs[:] = []
+        dirs.sort()
+        for f in sorted(files):
+            p = os.path.join(d, f)
+            if os.path.islink(p) or not os.path.isfile(p) or re.search(r"[\x00-\x1f]", p): continue
+            if f.endswith(".desktop") and wanted is None and d[len(folder):].count("/") <= 1:
+                try:
+                    with open(p, errors="replace") as fh:
+                        for line in fh:
+                            if line.startswith("Icon="): wanted = line[5:].strip(); break
+                except OSError: pass
+            elif f.lower().endswith((".svg", ".png", ".xpm")): images.append(p)
+
+    def best(c):
+        svg = [p for p in c if p.lower().endswith(".svg")]
+        return svg[0] if svg else max(c, key=os.path.getsize) if c else None
+    if wanted and not wanted.startswith("/") and re.fullmatch(r"[A-Za-z0-9._+-]+", wanted):
+        hit = best([p for p in images if stem(p) == norm(os.path.splitext(wanted)[0])])
+        return hit or wanted
+    n = norm(name)
+    return best([p for p in images if n and stem(p).startswith(n)])
+
+
 def cmd_install(a):
     """sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]: ~/Apps/NAME holds the program; its launcher loses the execute bit (so running
     it by path outside the sandbox fails, and sbx sets the bit just for its own run); an app-menu entry starts it through sbx. --link also makes
@@ -151,11 +181,12 @@ def cmd_install(a):
         warn(f"{tilde(conf)} already exists and was left alone; it must share {tilde(dest)} (read_only=...) for the program to find its files")
     if want_link: cmd_link([name])
     q = lambda x: f'"{x}"' if re.search(r"\s", x) else x
-    text = f"[Desktop Entry]\nX-Sbx-Sandboxed=true\nType=Application\nName={name}\nExec={q(me)} --name={name} {q(main)} %U\nTerminal=false\nCategories=Utility;\n"
+    icon = find_icon(dest, name)
+    text = f"[Desktop Entry]\nX-Sbx-Sandboxed=true\nType=Application\nName={name}\n" + (f"Icon={icon}\n" if icon else "") + f"Exec={q(me)} --name={name} {q(main)} %U\nTerminal=false\nCategories=Utility;\n"
     os.makedirs(user_launchers(), exist_ok=True)
     with open(f"{user_launchers()}/{name}.desktop", "w") as f: f.write(text)
     if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", user_launchers()], stderr=subprocess.DEVNULL)
-    print(f"app menu: wrote {tilde(user_launchers())}/{name}.desktop (it starts the program through sbx)")
+    print(f"app menu: wrote {tilde(user_launchers())}/{name}.desktop (it starts the program through sbx)" + (f", icon {tilde(icon)}" if icon else ", no icon found in its folder: add Icon=... to that file"))
     print("Start it from the app menu" + (f" or with: {name}" if want_link else f". For a terminal command too: sbx link {name}") + f"\nUndo with: sbx uninstall {name}")
 
 

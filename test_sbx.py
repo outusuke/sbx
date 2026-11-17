@@ -2137,6 +2137,33 @@ class Install(unittest.TestCase):
         self.assertTrue(os.path.exists(f"{h}/.config/sbx/apps/anki.conf"), "settings stay")
         self.assertEqual(self.call("cmd_uninstall", "--yes", "anki")[0], 1)
 
+    def test_the_menu_entry_gets_the_icon_the_program_brought(self):
+        f = self.S["find_icon"]; t = f"{self.home}/icons"
+        def mk(path, data="x"):
+            os.makedirs(os.path.dirname(f"{t}/{path}"), exist_ok=True)
+            with open(f"{t}/{path}", "w") as fh: fh.write(data)
+        mk("bin/cool"); self.assertIsNone(f(t, "cool"), "nothing to find")
+        mk("share/pixmaps/other.png"); self.assertIsNone(f(t, "cool"), "an image of another name is not its icon")
+        mk("Cool-Logo.png", "x" * 10); mk("res/cool.png", "x" * 50)
+        self.assertEqual(f(t, "cool"), f"{t}/res/cool.png", "named like the program: the biggest png")
+        mk("cool.svg"); self.assertEqual(f(t, "cool"), f"{t}/cool.svg", "an svg is preferred")
+        mk("cool.desktop", "[Desktop Entry]\nIcon=other\n"); self.assertEqual(f(t, "cool"), f"{t}/share/pixmaps/other.png", "the program's own .desktop names its icon")
+        mk("cool.desktop", "[Desktop Entry]\nIcon=org.cool.App\n"); self.assertEqual(f(t, "cool"), "org.cool.App", "else the theme name")
+        mk("cool.desktop", "[Desktop Entry]\nIcon=/etc/passwd\n"); self.assertEqual(f(t, "cool"), f"{t}/cool.svg", "an absolute path outside is not followed")
+        os.symlink("/etc/passwd", f"{t}/link.png"); mk("deep/a/b/c/d/cool.png", "x" * 99)
+        self.assertEqual(f(t, "link"), None, "links and very deep files are not used")
+
+    def test_install_writes_the_icon_into_the_menu_entry(self):
+        h = self.home; folder, _ = self.program(top="tool-1.0")
+        with open(f"{folder}/mytool.png", "w") as fh: fh.write("x")
+        code, out, err = self.call("cmd_install", folder, "mytool"); self.assertIsNone(code, err)
+        with open(f"{h}/.local/share/applications/mytool.desktop") as fh: d = fh.read()
+        self.assertIn(f"Icon={h}/Apps/mytool/mytool.png\n", d); self.assertIn("icon ~/Apps/mytool/mytool.png", out)
+        folder, _ = self.program(top="plain-1.0")
+        code, out, err = self.call("cmd_install", folder, "plain"); self.assertIsNone(code, err)
+        with open(f"{h}/.local/share/applications/plain.desktop") as fh: self.assertNotIn("Icon=", fh.read())
+        self.assertIn("no icon found", out)
+
     def test_a_folder_is_moved_and_uninstall_refuses_what_it_did_not_install(self):
         h = self.home
         folder, _ = self.program(top="tool-1.0")
