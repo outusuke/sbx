@@ -35,28 +35,65 @@ def bus_rules(cfg=None):
     return rules + (tray_rules() if cfg and cfg.get("tray") else [])
 
 
-def start_proxy(sock, cfg=None):
-    """Start xdg-dbus-proxy with the portal and tray rules. Returns (process, pipe) or None (a warning says why)."""
+PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")
+
+
+def proxy_sandbox(info, rt):
+    """bwrap arguments for a small root to run xdg-dbus-proxy in: the system read-only, your runtime folder read-write (the bus is there,
+    and the proxy makes its own socket there), your home and other private folders not at all, and the program's .flatpak-info at
+    /.flatpak-info. xdg-desktop-portal reads that file from the process that talks to it, which is the proxy, so it knows the program as an
+    app of its own and the file chooser hands out files through the document portal, not as real paths the sandbox can't see."""
+    a = ["bwrap", "--die-with-parent", "--new-session", "--clearenv", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try",
+         "--proc", "/proc", "--dev", "/dev"]
+    try: top = sorted(os.listdir("/"))
+    except OSError: top = []
+    for e in top:
+        p = "/" + e
+        if e in PROXY_ROOT_SKIP: continue
+        if os.path.islink(p): a += ["--symlink", os.readlink(p), p]
+        elif os.path.isdir(p): a += ["--ro-bind", p, p]
+    return a + ["--bind", rt, rt, "--ro-bind", info, "/.flatpak-info"]
+
+
+def write_app_info(path, app):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as f: f.write(f"[Application]\nname={app}\n")
+
+
+def start_proxy(sock, cfg=None, app=None):
+    """Start xdg-dbus-proxy with the portal and tray rules. Returns (process, pipe) or None (a warning says why).
+    With APP (an application id) the proxy runs in a small sandbox that tells the portals which app it is; if that fails it runs plainly."""
     px = shutil.which("xdg-dbus-proxy")
     if not px:
         warn(f"xdg-dbus-proxy missing, so portals and the tray are off: {install_hint('xdg-dbus-proxy')}")
         return None
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={runtime_dir()}/bus"
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
-    r, w = os.pipe()
-    try:
-        proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + bus_rules(cfg), pass_fds=[w],
-                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except OSError as e:
-        os.close(r); os.close(w)
-        warn(f"could not start xdg-dbus-proxy ({e}); running without portals or tray")
-        return None
-    os.close(w)
-    ok = False
-    try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
-    except OSError: pass
-    if ok: return proc, r
-    stop_proxy((proc, r), sock)
+    info = sock + ".info"
+    for wrapped in ((True, False) if app and shutil.which("bwrap") else (False,)):
+        cmd = [px, "--fd=%d", addr, sock, "--filter"] + bus_rules(cfg)
+        if wrapped:
+            try: write_app_info(info, app)
+            except OSError: continue
+        r, w = os.pipe()
+        cmd[1] = f"--fd={w}"
+        if wrapped: cmd = proxy_sandbox(info, runtime_dir()) + cmd
+        try:
+            proc = subprocess.Popen(cmd, pass_fds=[w], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            os.close(r); os.close(w)
+            stop_proxy(None, sock)
+            if wrapped: continue
+            warn(f"could not start xdg-dbus-proxy ({e}); running without portals or tray")
+            return None
+        os.close(w)
+        ok = False
+        try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
+        except OSError: pass
+        if ok: return proc, r
+        stop_proxy((proc, r), sock)
+        if wrapped: warn("the portal proxy could not start as an app of its own; the file chooser may give paths the program can't see")
+    stop_proxy(None, sock)
     warn("could not start xdg-dbus-proxy; running without portals or tray")
     return None
 
@@ -70,5 +107,6 @@ def stop_proxy(px, sock):
             try: px[0].wait(2)
             except subprocess.TimeoutExpired: px[0].kill(); px[0].wait(2)       # a stuck proxy must not outlive us
         except (OSError, subprocess.SubprocessError): pass
-    try: os.unlink(sock)
-    except OSError: pass
+    for p in (sock, sock + ".info"):
+        try: os.unlink(p)
+        except OSError: pass

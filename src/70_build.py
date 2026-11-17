@@ -167,7 +167,7 @@ def build(prog, args, live=False, o=None):
     if cfg["portals"] or cfg["tray"]:
         sock = state["bus"]
         if live:
-            state["proxy"] = start_proxy(sock, cfg)
+            state["proxy"] = start_proxy(sock, cfg, portal_app_id(name) if cfg["portals"] else None)
             if not state["proxy"]: sock = None
         if sock:
             a += ["--ro-bind", sock, f"{rt}/bus"]; env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"

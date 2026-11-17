@@ -282,6 +282,31 @@ class Units(unittest.TestCase):
         self.assertEqual(sorted(os.listdir("/proc/self/fd")), before)
         self.assertTrue(any("could not start xdg-dbus-proxy" in w for w in self.warned), self.warned)
 
+    def test_the_proxy_runs_as_an_app_of_its_own_and_falls_back_to_a_plain_proxy(self):
+        S = self.S; sock = f"{self.tmp}/run/proxy.sock"; cmds, seen = [], []
+        def boom(cmd, **k): cmds.append(cmd); seen.append(os.path.isfile(sock + ".info")); raise OSError(8, "Exec format error")
+        S["shutil"] = types.SimpleNamespace(which=lambda n: f"/fake/{n}")
+        S["subprocess"] = types.SimpleNamespace(Popen=boom, DEVNULL=-3)
+        before = sorted(os.listdir("/proc/self/fd"))
+        self.assertIsNone(S["start_proxy"](sock, {"portals": True}, "org.sbx.Run.tool"))
+        self.assertEqual(sorted(os.listdir("/proc/self/fd")), before, "no descriptor is left open")
+        self.assertEqual(len(cmds), 2, "a proxy of its own first, then a plain one")
+        self.assertEqual(cmds[0][0], "bwrap"); self.assertEqual(cmds[1][0], "/fake/xdg-dbus-proxy"); self.assertEqual(seen, [True, False])
+        self.assertFalse(os.path.exists(sock + ".info"), "the app file is removed")
+        cmds.clear(); self.assertIsNone(S["start_proxy"](sock, {"portals": True}))
+        self.assertEqual([c[0] for c in cmds], ["/fake/xdg-dbus-proxy"], "no app id, no app file")
+
+    def test_proxy_sandbox_has_the_app_file_and_no_home(self):
+        S = self.S; info = f"{self.tmp}/p.info"; rt = "/run/user/1000"
+        a = S["proxy_sandbox"](info, rt)
+        self.assertEqual(a[0], "bwrap")
+        self.assertIn(["--ro-bind", info, "/.flatpak-info"], [a[i:i + 3] for i in range(len(a) - 2)])
+        self.assertIn(["--bind", rt, rt], [a[i:i + 3] for i in range(len(a) - 2)])
+        for private in ("/home", "/root", "/proc/self", "/sys"): self.assertNotIn(private, a)
+        if os.path.isdir("/usr") and not os.path.islink("/usr"): self.assertIn(["--ro-bind", "/usr", "/usr"], [a[i:i + 3] for i in range(len(a) - 2)])
+        path = f"{self.tmp}/info"; S["write_app_info"](path, "org.sbx.Run.tool")
+        with open(path) as f: self.assertEqual(f.read(), "[Application]\nname=org.sbx.Run.tool\n")
+
     def test_wayland_message_shorter_than_its_header_is_an_error(self):
         S = self.S
         a, b = socket.socketpair()
