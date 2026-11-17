@@ -1792,6 +1792,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx open FILE                          run a downloaded program with sensible defaults (for \"Open with\")\n"
          "sbx desktop NAME | --remove NAME       make a launcher start the program through sbx (NAME = its id, or the program it starts)\n"
          "sbx desktop --install-opener           add \"Run in sbx\" to your file manager's Open With (--remove-opener undoes it)\n"
+         "sbx desktop --install-installer        add \"Install in sbx\" to your file manager's Open With for folders and archives (--remove-installer undoes it)\n"
          "sbx desktop --install-menu             add sbx-gui to your app menu (--remove-menu undoes it)\n"
          "options (before the program; most also exist as a setting, e.g. net=0, x11=1):\n"
          "  --net=none    no network                   --no-wayland   hide the Wayland socket\n"
@@ -2394,6 +2395,7 @@ def add_launcher(src, ident):
 def cmd_desktop(a):
     if a in (["--install-opener"], ["--remove-opener"]): return cmd_opener(a[0] == "--install-opener")
     if a in (["--install-menu"], ["--remove-menu"]): return cmd_menu(a[0] == "--install-menu")
+    if a in (["--install-installer"], ["--remove-installer"]): return cmd_installer(a[0] == "--install-installer")
     remove = "--remove" in a
     a = [x for x in a if x != "--remove"]
     if len(a) != 1 or a[0].startswith("-"): die("usage: sbx desktop NAME   |   sbx desktop --remove NAME   (NAME = the launcher's id, e.g. firefox or org.mozilla.firefox, or the program it starts, e.g. google-chrome-stable)")
@@ -2412,12 +2414,12 @@ def cmd_desktop(a):
 
 
 # ---------------------------------------------------------------- opening downloaded programs
-def notify(title, body=""):
+def notify(title, body="", icon="dialog-error"):
     """A desktop notification (there is no terminal to print to when started from a file manager). Also printed."""
     warn(f"{title}: {body}" if body else title)
     ns = shutil.which("notify-send")
     if ns:
-        try: subprocess.run([ns, "-a", "sbx", "-i", "dialog-error", title, body[:400]], timeout=5, stdin=subprocess.DEVNULL)
+        try: subprocess.run([ns, "-a", "sbx", "-i", icon, title, body[:400]], timeout=5, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired): pass
 
 
@@ -2520,6 +2522,36 @@ def cmd_opener(install):
     except OSError:
         pass
     print("removed the \"Run in sbx\" opener" if ours is not None else "nothing to remove")
+
+
+INSTALLER_ID = "sbx-install.desktop"
+INSTALLER_MIMES = ("inode/directory", "application/zip", "application/x-tar", "application/x-compressed-tar", "application/x-xz-compressed-tar",
+                   "application/x-bzip-compressed-tar", "application/x-zstd-compressed-tar", "application/gzip", "application/x-gzip")      # offered, never the default
+
+
+def cmd_installer(install):
+    """sbx desktop --install-installer: add "Install in sbx" to the file manager's Open With for folders and archives (it runs sbx install --notify)."""
+    dest = f"{HOME}/.local/share/applications/{INSTALLER_ID}"
+    if install:
+        me = shutil.which("sbx") or os.path.realpath(sys.argv[0])
+        q = f'"{me}"' if " " in me else me
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "w") as f:
+            f.write("[Desktop Entry]\nType=Application\nName=Install in sbx\nComment=Move a downloaded program to ~/Apps and start it only through sbx\n"
+                    f"Exec={q} install --notify %f\nMimeType={';'.join(INSTALLER_MIMES)};\nTerminal=false\nNoDisplay=true\nCategories=System;\n"
+                    "X-Sbx-Installer=true\n")
+        if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", os.path.dirname(dest)], stderr=subprocess.DEVNULL)
+        print(f"wrote {tilde(dest)}.\nRight-click a folder or archive, Open With Other Application, Install in sbx. It is never the default for them.\n"
+              "Undo with: sbx desktop --remove-installer")
+        return
+    try:
+        with open(dest) as f: ours = "X-Sbx-Installer=true" in f.read()
+    except OSError: ours = None
+    if ours is False: die(f"{tilde(dest)} was not made by sbx; not removing it")
+    if ours:
+        os.unlink(dest)
+        if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", os.path.dirname(dest)], stderr=subprocess.DEVNULL)
+    print("removed \"Install in sbx\"" if ours is not None else "nothing to remove")
 
 
 def doctor():
@@ -2663,20 +2695,37 @@ def unpack(src, into):
         die("tar couldn't unpack it: " + " ".join(why[-2:]) + (f"; for .zst files install zstd: {install_hint('zstd')}" if src.lower().endswith(".zst") else ""))
 
 
+def install_with_popup(args, src):
+    """sbx install --notify ...: what "Install in sbx" in the file manager runs. There is no terminal there, so the result is a notification."""
+    me = os.path.realpath(sys.argv[0]) if os.path.isfile(sys.argv[0]) else shutil.which("sbx")
+    if not me: notify("sbx not found"); sys.exit(1)
+    r = subprocess.run([sys.executable, me, "install", *args], capture_output=True, text=True, errors="replace")
+    sys.stderr.write(r.stderr)
+    if r.returncode == 0:
+        got = re.search(r"^program is in (\S+)", r.stdout, re.M)
+        what = os.path.basename(got[1]) if got else os.path.basename(src)
+        notify(f"Installed {what}", "Start it from the app menu. Undo with: sbx uninstall " + what, "dialog-information")
+        return
+    notify(f"Can't install {os.path.basename(src.rstrip('/'))}", failure_reason(r.stderr, r.returncode) + " (try it in a terminal: sbx install ...)")
+    sys.exit(r.returncode)
+
+
 def cmd_install(a):
     """sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]: ~/Apps/NAME holds the program; its launcher loses the execute bit (so running
     it by path outside the sandbox fails, and sbx sets the bit just for its own run); an app-menu entry starts it through sbx. --link also makes
     NAME start it in a terminal (a link in ~/.local/bin, as sbx link does); nothing is put in your PATH without it.
     The program's folder is shared read-only (a settings file, read_only=...). Data goes to its private home, as for any program."""
-    launcher, rest, i, want_link = None, [], 0, False
+    launcher, rest, i, want_link, popup = None, [], 0, False, False
     while i < len(a):
         if a[i] == "--link": want_link = True; i += 1
+        elif a[i] == "--notify": popup = True; i += 1
         elif a[i] == "--launcher":
             if i + 1 >= len(a): die("--launcher needs a path")
             launcher = a[i + 1]; i += 2
         elif a[i].startswith("-"): die(f"unknown option {a[i]}\nusage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]")
         else: rest.append(a[i]); i += 1
     if not 1 <= len(rest) <= 2: die("usage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]")
+    if popup: return install_with_popup([x for x in a if x != "--notify"], rest[0])
     if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
     if os.geteuid() == 0: die("refusing to run as root")
     src = os.path.abspath(rest[0])

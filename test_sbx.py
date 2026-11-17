@@ -1850,7 +1850,7 @@ class Units(unittest.TestCase):
 
     def test_man_page_documents_the_desktop_options(self):
         with open(f"{HERE}/sbx.1") as f: man = f.read().replace("\\-", "-")
-        for flag in ("--install-opener", "--remove-opener", "--install-menu", "--remove-menu", "--remove"): self.assertIn(flag, man)
+        for flag in ("--install-opener", "--remove-opener", "--install-installer", "--remove-installer", "--install-menu", "--remove-menu", "--remove"): self.assertIn(flag, man)
 
     def test_desktop_remove_finds_the_copy_kept_under_the_system_launcher_name(self):
         S, h = self.S, self.home
@@ -2189,6 +2189,43 @@ class Install(unittest.TestCase):
         self.assertIsNone(self.call("cmd_install", z)[0])
         self.assertEqual(os.stat(f"{self.home}/Apps/app/app").st_mode & 0o111, 0)
         self.assertNotEqual(os.stat(f"{self.home}/Apps/app/helper").st_mode & 0o100, 0)
+
+    def test_the_file_manager_entry_is_written_removed_and_never_replaces_a_file_that_is_not_ours(self):
+        h, S = self.home, self.S
+        dest = f"{h}/.local/share/applications/sbx-install.desktop"
+        with mock.patch.object(sys, "argv", [f"{self.inst}/sbx"]), mock.patch.object(S["shutil"], "which", lambda n: None), contextlib.redirect_stdout(io.StringIO()):
+            S["cmd_desktop"](["--install-installer"])
+        with open(dest) as f: d = f.read()
+        self.assertIn(f"Exec={self.inst}/sbx install --notify %f", d); self.assertIn("inode/directory", d); self.assertIn("application/zip", d)
+        self.assertNotIn("x-executable", d, "it only offers itself for folders and archives")
+        with contextlib.redirect_stdout(io.StringIO()), mock.patch.object(S["shutil"], "which", lambda n: None): S["cmd_desktop"](["--remove-installer"])
+        self.assertFalse(os.path.exists(dest))
+        with open(dest, "w") as f: f.write("[Desktop Entry]\nName=mine\n")
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["cmd_desktop"](["--remove-installer"])
+        self.assertTrue(os.path.exists(dest))
+
+    def test_install_with_notify_reports_the_result_as_a_notification(self):
+        h, S = self.home, self.S
+        _, tar = self.program()
+        sent = []
+        S["notify"] = lambda title, body="", icon="dialog-error": sent.append((title, body, icon))
+        shutil.copy(f"{HERE}/sbx", f"{self.inst}/sbx")                                                      # the real script, so the child process is real
+        os.chmod(f"{self.inst}/sbx", 0o755)
+        env = {"SBX_HOME": h, "PATH": os.environ.get("PATH", "")}
+        def run(*args):
+            sent.clear()
+            with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", [f"{self.inst}/sbx"]), contextlib.redirect_stderr(io.StringIO()):
+                try: S["cmd_install"](["--notify", *args]); return 0
+                except SystemExit as e: return e.code
+        real_run = subprocess.run
+        def child(cmd, **kw):                                                                          # the child must not be root-refused: run it as the test user
+            code = "import sys,os;os.geteuid=lambda:1000;sys.argv[0]=%r;ns={'__name__':'x'};exec(compile(open(%r).read(),'sbx','exec'),ns);ns['main'](sys.argv[1:])" % (cmd[1], cmd[1])
+            return real_run([cmd[0], "-c", code, *cmd[2:]], **kw)
+        with mock.patch.object(S["subprocess"], "run", child): self.assertEqual(run(tar), 0, sent)
+        self.assertEqual(len(sent), 1); self.assertEqual(sent[0][0], "Installed anki"); self.assertEqual(sent[0][2], "dialog-information")
+        self.assertTrue(os.path.isfile(f"{h}/Apps/anki/anki"))
+        with mock.patch.object(S["subprocess"], "run", child): self.assertEqual(run(tar), 1)                # again: refused, and it says why
+        self.assertEqual(sent[0][0], "Can't install anki-26.9.4-linux-x86_64.tar"); self.assertIn("already exists", sent[0][1]); self.assertEqual(sent[0][2], "dialog-error")
 
     def test_install_and_uninstall_are_documented_and_refuse_a_sandbox_and_bad_names(self):
         with open(f"{HERE}/sbx.1") as f: man = f.read()

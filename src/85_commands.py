@@ -528,6 +528,7 @@ def add_launcher(src, ident):
 def cmd_desktop(a):
     if a in (["--install-opener"], ["--remove-opener"]): return cmd_opener(a[0] == "--install-opener")
     if a in (["--install-menu"], ["--remove-menu"]): return cmd_menu(a[0] == "--install-menu")
+    if a in (["--install-installer"], ["--remove-installer"]): return cmd_installer(a[0] == "--install-installer")
     remove = "--remove" in a
     a = [x for x in a if x != "--remove"]
     if len(a) != 1 or a[0].startswith("-"): die("usage: sbx desktop NAME   |   sbx desktop --remove NAME   (NAME = the launcher's id, e.g. firefox or org.mozilla.firefox, or the program it starts, e.g. google-chrome-stable)")
@@ -546,12 +547,12 @@ def cmd_desktop(a):
 
 
 # ---------------------------------------------------------------- opening downloaded programs
-def notify(title, body=""):
+def notify(title, body="", icon="dialog-error"):
     """A desktop notification (there is no terminal to print to when started from a file manager). Also printed."""
     warn(f"{title}: {body}" if body else title)
     ns = shutil.which("notify-send")
     if ns:
-        try: subprocess.run([ns, "-a", "sbx", "-i", "dialog-error", title, body[:400]], timeout=5, stdin=subprocess.DEVNULL)
+        try: subprocess.run([ns, "-a", "sbx", "-i", icon, title, body[:400]], timeout=5, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired): pass
 
 
@@ -654,6 +655,36 @@ def cmd_opener(install):
     except OSError:
         pass
     print("removed the \"Run in sbx\" opener" if ours is not None else "nothing to remove")
+
+
+INSTALLER_ID = "sbx-install.desktop"
+INSTALLER_MIMES = ("inode/directory", "application/zip", "application/x-tar", "application/x-compressed-tar", "application/x-xz-compressed-tar",
+                   "application/x-bzip-compressed-tar", "application/x-zstd-compressed-tar", "application/gzip", "application/x-gzip")      # offered, never the default
+
+
+def cmd_installer(install):
+    """sbx desktop --install-installer: add "Install in sbx" to the file manager's Open With for folders and archives (it runs sbx install --notify)."""
+    dest = f"{HOME}/.local/share/applications/{INSTALLER_ID}"
+    if install:
+        me = shutil.which("sbx") or os.path.realpath(sys.argv[0])
+        q = f'"{me}"' if " " in me else me
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "w") as f:
+            f.write("[Desktop Entry]\nType=Application\nName=Install in sbx\nComment=Move a downloaded program to ~/Apps and start it only through sbx\n"
+                    f"Exec={q} install --notify %f\nMimeType={';'.join(INSTALLER_MIMES)};\nTerminal=false\nNoDisplay=true\nCategories=System;\n"
+                    "X-Sbx-Installer=true\n")
+        if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", os.path.dirname(dest)], stderr=subprocess.DEVNULL)
+        print(f"wrote {tilde(dest)}.\nRight-click a folder or archive, Open With Other Application, Install in sbx. It is never the default for them.\n"
+              "Undo with: sbx desktop --remove-installer")
+        return
+    try:
+        with open(dest) as f: ours = "X-Sbx-Installer=true" in f.read()
+    except OSError: ours = None
+    if ours is False: die(f"{tilde(dest)} was not made by sbx; not removing it")
+    if ours:
+        os.unlink(dest)
+        if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", os.path.dirname(dest)], stderr=subprocess.DEVNULL)
+    print("removed \"Install in sbx\"" if ours is not None else "nothing to remove")
 
 
 def doctor():

@@ -33,6 +33,8 @@ complete -c sbx -f -n "__fish_seen_subcommand_from install" -l link -d "Also a c
 complete -c sbx -f -n "__fish_seen_subcommand_from uninstall" -l yes -d "Don't ask"
 complete -c sbx -f -n "__fish_seen_subcommand_from uninstall" -a "(ls ~/.config/sbx/installed 2>/dev/null)"
 complete -c sbx -f -n "__fish_seen_subcommand_from stop" -a "(__sbx_homes)"
+complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l install-installer -d "Add \"Install in sbx\" to Open With"
+complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l remove-installer -d "Remove it again"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l install-opener -d "Add \"Run in sbx\" to Open With"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l install-menu -d "Add sbx-gui to the app menu"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l remove-menu -d "Remove it again"

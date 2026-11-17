@@ -43,7 +43,7 @@ sbx \- run a program in a bubblewrap sandbox
 .br
 .B sbx desktop
 \fINAME\fR | \fB\-\-remove\fR \fINAME\fR | \fB\-\-install\-opener\fR | \fB\-\-remove\-opener\fR |
-\fB\-\-install\-menu\fR | \fB\-\-remove\-menu\fR
+\fB\-\-install\-installer\fR | \fB\-\-remove\-installer\fR | \fB\-\-install\-menu\fR | \fB\-\-remove\-menu\fR
 .SH DESCRIPTION
 .B sbx
 starts a program inside a
@@ -193,6 +193,13 @@ undoes that.
 .B sbx desktop \-\-install\-opener
 Add "Run in sbx" to the file manager's Open With.
 .B \-\-remove\-opener
+undoes it.
+.TP
+.B sbx desktop \-\-install\-installer
+Add "Install in sbx" to the file manager's Open With for folders and archives (right\-click, Open With Other Application). It runs
+.B sbx install \-\-notify
+on the file, which reports the result as a notification instead of in a terminal. It is never the default for any file type.
+.B \-\-remove\-installer
 undoes it.
 .TP
 .B sbx desktop \-\-install\-menu

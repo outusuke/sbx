@@ -31,6 +31,7 @@ sudo install -Dm644 completions/sbx.bash /usr/local/share/bash-completion/comple
 sudo install -Dm644 completions/_sbx /usr/local/share/zsh/site-functions/_sbx
 sudo install -Dm644 completions/sbx.fish /usr/local/share/fish/vendor_completions.d/sbx.fish
 sbx desktop --install-menu          # sbx-gui in the app menu
+sbx desktop --install-installer     # right-click a folder or archive: Open With Other Application, Install in sbx
 ```
 
 Ubuntu 24.04+: AppArmor blocks user namespaces. `sbx doctor` shows the fix.

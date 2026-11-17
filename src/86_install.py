@@ -70,20 +70,37 @@ def unpack(src, into):
         die("tar couldn't unpack it: " + " ".join(why[-2:]) + (f"; for .zst files install zstd: {install_hint('zstd')}" if src.lower().endswith(".zst") else ""))
 
 
+def install_with_popup(args, src):
+    """sbx install --notify ...: what "Install in sbx" in the file manager runs. There is no terminal there, so the result is a notification."""
+    me = os.path.realpath(sys.argv[0]) if os.path.isfile(sys.argv[0]) else shutil.which("sbx")
+    if not me: notify("sbx not found"); sys.exit(1)
+    r = subprocess.run([sys.executable, me, "install", *args], capture_output=True, text=True, errors="replace")
+    sys.stderr.write(r.stderr)
+    if r.returncode == 0:
+        got = re.search(r"^program is in (\S+)", r.stdout, re.M)
+        what = os.path.basename(got[1]) if got else os.path.basename(src)
+        notify(f"Installed {what}", "Start it from the app menu. Undo with: sbx uninstall " + what, "dialog-information")
+        return
+    notify(f"Can't install {os.path.basename(src.rstrip('/'))}", failure_reason(r.stderr, r.returncode) + " (try it in a terminal: sbx install ...)")
+    sys.exit(r.returncode)
+
+
 def cmd_install(a):
     """sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]: ~/Apps/NAME holds the program; its launcher loses the execute bit (so running
     it by path outside the sandbox fails, and sbx sets the bit just for its own run); an app-menu entry starts it through sbx. --link also makes
     NAME start it in a terminal (a link in ~/.local/bin, as sbx link does); nothing is put in your PATH without it.
     The program's folder is shared read-only (a settings file, read_only=...). Data goes to its private home, as for any program."""
-    launcher, rest, i, want_link = None, [], 0, False
+    launcher, rest, i, want_link, popup = None, [], 0, False, False
     while i < len(a):
         if a[i] == "--link": want_link = True; i += 1
+        elif a[i] == "--notify": popup = True; i += 1
         elif a[i] == "--launcher":
             if i + 1 >= len(a): die("--launcher needs a path")
             launcher = a[i + 1]; i += 2
         elif a[i].startswith("-"): die(f"unknown option {a[i]}\nusage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]")
         else: rest.append(a[i]); i += 1
     if not 1 <= len(rest) <= 2: die("usage: sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link]")
+    if popup: return install_with_popup([x for x in a if x != "--notify"], rest[0])
     if os.environ.get("SBX_ACTIVE"): die("not from inside a sandbox")
     if os.geteuid() == 0: die("refusing to run as root")
     src = os.path.abspath(rest[0])
