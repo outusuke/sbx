@@ -217,6 +217,30 @@ def ask_about_conf(name, conf, dest):
     return "add"
 
 
+def ask_about_same_name(name, other):
+    """A different program called NAME (OTHER, in your PATH) is already on this computer; the installed one would share its private home and
+    settings. Ask whether to go on: True = install, False = don't. On a terminal it asks there; from the file manager it uses zenity, kdialog,
+    or a notification with an Install button (notify-send --action). With none of them there is no way to ask, so it doesn't install."""
+    q = (f"A program called {name} is already on this computer ({tilde(other)}). The one you install would share its private home "
+         f"({tilde(HOMES)}/{name}) and settings; two versions of one program can damage each other's profile.")
+    if sys.stdin.isatty() and sys.stderr.isatty():
+        return input(f"{q}\nInstall it anyway? [y/N] ").strip().lower() in ("y", "yes")
+    for cmd in (["zenity", "--question", "--title=sbx", "--text=" + q + "\nInstall it anyway?", "--ok-label=Install", "--cancel-label=Cancel"],
+                ["kdialog", "--yesno", q + "\nInstall it anyway?", "--title", "sbx", "--yes-label", "Install", "--no-label", "Cancel"]):
+        if shutil.which(cmd[0]):
+            try: return subprocess.run(cmd, stdin=subprocess.DEVNULL, timeout=300).returncode == 0
+            except (OSError, subprocess.TimeoutExpired): return False
+    ns = shutil.which("notify-send")
+    if ns:
+        try:
+            if "--action" in subprocess.run([ns, "--help"], capture_output=True, text=True, timeout=5).stdout:
+                r = subprocess.run([ns, "-u", "critical", "-a", "sbx", "--wait", "--action=install=Install anyway", "Install " + name + "?", q],
+                                   capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=300)
+                return r.stdout.strip() == "install"
+        except (OSError, subprocess.SubprocessError): pass
+    die(f"a program called {name} is already on this computer ({tilde(other)}), and there is no way to ask here. Install in a terminal (sbx install ...) or add --yes")
+
+
 def cmd_install(a):
     """sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link] [--yes]: ~/Apps/NAME holds the program; its launcher loses the execute bit (so running
     it by path outside the sandbox fails, and sbx sets the bit just for its own run); an app-menu entry starts it through sbx. --link also makes
@@ -249,6 +273,8 @@ def cmd_install(a):
     for p, what in ((dest, "a program folder"), (link, "a command"), (f"{INSTALLED}/{name}", "an install record"), (f"{user_launchers()}/{name}.desktop", "a menu entry")):
         if p == link and not want_link: continue
         if os.path.lexists(p): die(f"{tilde(p)} already exists ({what}). Pick another NAME, or remove the old one first: sbx uninstall {name}")
+    other = None if yes else find_in_path(name)                         # a program of that name that is not this one: they would share a home
+    if other and not ask_about_same_name(name, other): die("nothing installed", 0)
     conf = f"{CONF}/apps/{name}.conf"
     fix = None
     if os.path.exists(conf) and not conf_shares(conf, dest):

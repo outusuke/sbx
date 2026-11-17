@@ -2076,6 +2076,7 @@ class Install(unittest.TestCase):
                       INSTALLED=f"{self.home}/.config/sbx/installed")
         self.warned = []
         self.S["warn"] = self.warned.append
+        self.S["ask_about_same_name"] = lambda n, o: True                                              # (the real one may open a dialog)
         self.dl = f"{self.tmp}/dl"; os.makedirs(self.dl)
 
     def dynamic_elf(self):
@@ -2230,6 +2231,42 @@ class Install(unittest.TestCase):
         self.S["ask_about_conf"] = lambda *a: self.fail("--yes must not ask")
         self.assertIsNone(self.call("cmd_install", folder, "mytool", "--yes")[0])
         with open(conf) as fh: self.assertEqual(fh.read(), "net=0\nread_only=~/Apps/mytool\n")
+
+    def test_a_program_of_the_same_name_in_the_path_is_asked_about_first(self):
+        h = self.home; other = f"{h}/.local/bin/mytool"
+        with open(other, "w") as fh: fh.write("#!/bin/sh\n")
+        os.chmod(other, 0o755)
+        folder, _ = self.program(top="tool-1.0", files={"mytool": (self.dynamic_elf(), 0o755)})
+        asked = []
+        self.S["ask_about_same_name"] = lambda n, o: asked.append((n, o)) or False                     # "Cancel": nothing moves
+        code, out, err = self.call("cmd_install", folder, "mytool"); self.assertEqual(code, 0)
+        self.assertEqual(asked, [("mytool", other)])
+        self.assertTrue(os.path.isdir(folder)); self.assertFalse(os.path.exists(f"{h}/Apps/mytool"))
+        self.S["ask_about_same_name"] = lambda n, o: True                                              # "Install": goes ahead
+        self.assertIsNone(self.call("cmd_install", folder, "mytool")[0])
+        self.assertTrue(os.path.isdir(f"{h}/Apps/mytool"))
+        self.assertIsNone(self.call("cmd_uninstall", "--yes", "mytool")[0])
+        folder, _ = self.program(top="tool-1.0", files={"mytool": (self.dynamic_elf(), 0o755)})
+        self.S["ask_about_same_name"] = lambda *a: self.fail("--yes must not ask")
+        self.assertIsNone(self.call("cmd_install", folder, "mytool", "--yes")[0])
+
+    def test_the_question_about_a_same_name_program_on_a_terminal(self):
+        with mock.patch.object(sys.stdin, "isatty", return_value=True, create=True), mock.patch.object(sys.stderr, "isatty", return_value=True, create=True), \
+             mock.patch("builtins.input", side_effect=["y", "", "n"]):
+            f = load_sbx()["ask_about_same_name"]
+            self.assertTrue(f("mytool", "/usr/bin/mytool")); self.assertFalse(f("mytool", "/usr/bin/mytool")); self.assertFalse(f("mytool", "/usr/bin/mytool"))
+
+    def test_the_question_from_the_file_manager_uses_a_notification_button_or_refuses(self):
+        S = load_sbx(); f = S["ask_about_same_name"]
+        def run(out, have):
+            def fake(cmd, *a, **k):
+                if "--help" in cmd: return subprocess.CompletedProcess(cmd, 0, "  --action=ACTION", "")
+                return subprocess.CompletedProcess(cmd, 0, out, "")
+            S["shutil"] = mock.MagicMock(which=lambda n: f"/usr/bin/{n}" if n in have else None)
+            S["subprocess"] = mock.MagicMock(run=fake, SubprocessError=subprocess.SubprocessError, DEVNULL=subprocess.DEVNULL)
+            return f("mytool", "/usr/bin/mytool")
+        self.assertTrue(run("install\n", ["notify-send"])); self.assertFalse(run("\n", ["notify-send"]))             # clicked / closed
+        with self.assertRaises(SystemExit): run("", [])                                                              # nothing to ask with: not installed
 
     def test_a_failed_install_leaves_nothing_behind_and_gives_a_folder_back(self):
         h = self.home; folder, _ = self.program(top="tool-1.0")
