@@ -3041,22 +3041,55 @@ class Gui(unittest.TestCase):
         with mock.patch.object(G["subprocess"], "run", side_effect=OSError("no du")): self.assertEqual(G["dir_size"](d), "unknown")
         with mock.patch.object(G["subprocess"], "run", return_value=types.SimpleNamespace(stdout="", stderr="x")): self.assertEqual(G["dir_size"](d), "unknown")
 
-    def test_a_shared_folder_has_a_read_only_toggle_and_a_stop_sharing_button(self):
+    def test_a_shared_folder_has_a_button_that_says_its_mode_and_flips_it_in_place(self):
         G = self.G; gtk = G["Gtk"]; os.makedirs(G["APPS"], exist_ok=True)
-        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("whitelist=~/A\nread_only=~/B\n")
-        togs, btns = [], []
-        gtk.ToggleButton.side_effect = lambda **kw: togs.append(mock.MagicMock(kw=kw)) or togs[-1]
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("whitelist=~/A\nread_only=~/B\nread_only=~/C\n")
+        btns = []
         gtk.Button.side_effect = lambda **kw: btns.append(mock.MagicMock(kw=kw)) or btns[-1]
-        for attr in ("ToggleButton", "Button"): self.addCleanup(setattr, getattr(gtk, attr), "side_effect", None)
-        G["Win"].folders_group(mock.MagicMock(), "app")
-        self.assertEqual([b.kw["label"] for b in btns if "label" in b.kw], ["Add folder", "Add file"])
-        self.assertEqual([t.kw["active"] for t in togs], [False, True])                              # ~/A read and write, ~/B read only
-        trash = [b for b in btns if b.kw.get("icon_name") == "user-trash-symbolic"]; self.assertEqual(len(trash), 2)
-        on = mock.MagicMock(); on.get_active.return_value = True
-        togs[0].connect.call_args[0][1](on)                                                          # ~/A: Read-only switched on
-        self.assertEqual(G["parse"]("app")[1], {"whitelist": [], "read_only": ["~/B", "~/A"]})
-        trash[1].connect.call_args[0][1](None)                                                       # ~/B: stop sharing
-        self.assertEqual(G["parse"]("app")[1], {"whitelist": [], "read_only": ["~/A"]})
+        self.addCleanup(setattr, gtk.Button, "side_effect", None)
+        win = mock.MagicMock()
+        G["Win"].folders_group(win, "app")
+        self.assertEqual([b.kw["label"] for b in btns if "label" in b.kw and "Add" in b.kw["label"]], ["Add folder", "Add file"])
+        modes = [b for b in btns if b.kw.get("label") in ("Read only", "Read and write")]
+        self.assertEqual([b.kw["label"] for b in modes], ["Read and write", "Read only", "Read only"])     # the label is the state, in the file's order
+        trash = [b for b in btns if b.kw.get("icon_name") == "user-trash-symbolic"]; self.assertEqual(len(trash), 3)
+        modes[0].connect.call_args[0][1](None)                                                        # ~/A: to read only
+        self.assertEqual(G["read_lines"]("app"), ["read_only=~/A", "read_only=~/B", "read_only=~/C"])    # it kept its place
+        self.assertIn("~/A", str(win.toasts.add_toast.call_args_list[-1]) + str(G["Adw"].Toast.call_args_list[-1]))
+        modes[1].connect.call_args[0][1](None)                                                        # ~/B: to read and write
+        self.assertEqual(G["read_lines"]("app"), ["read_only=~/A", "whitelist=~/B", "read_only=~/C"])
+        trash[2].connect.call_args[0][1](None)                                                        # ~/C: stop sharing
+        self.assertEqual(G["parse"]("app")[1], {"whitelist": ["~/B"], "read_only": ["~/A"]})
+        self.assertEqual([k for k, _ in G["shared_items"]("app")], ["read_only", "whitelist"])
+
+    def test_moving_an_item_between_modes_merges_with_a_copy_and_keeps_comments(self):
+        G = self.G; os.makedirs(G["APPS"], exist_ok=True)
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("# mine\nread_only=~/A  # keep\nnet=1\nwhitelist=~/A\nread_only=~/Z\n")
+        G["move_item"]("app", "read_only", "~/A", "whitelist")                                        # already shared read and write: one line is left
+        self.assertEqual(G["read_lines"]("app"), ["# mine", "net=1", "whitelist=~/A", "read_only=~/Z"])
+        self.assertEqual(G["shared_items"]("app"), [("whitelist", "~/A"), ("read_only", "~/Z")])
+
+    def test_the_folder_sbx_install_shared_has_a_note_and_a_warning_when_removed_but_is_not_locked(self):
+        G = self.G; gtk = G["Gtk"]; adw = G["Adw"]; os.makedirs(G["APPS"], exist_ok=True); os.makedirs(G["INSTALLED"], exist_ok=True)
+        with open(f"{G['INSTALLED']}/app", "w") as f: f.write(f"{G['HOME']}/Apps/app/run\n")
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write(f"read_only=~/Apps/app\nwhitelist=~/Apps/other\nread_only={G['HOME']}/Apps/app/\nread_only=~/Apps/application\n")
+        btns = []
+        gtk.Button.side_effect = lambda **kw: btns.append(mock.MagicMock(kw=kw)) or btns[-1]
+        self.addCleanup(setattr, gtk.Button, "side_effect", None)
+        adw.ActionRow.reset_mock(); win = mock.MagicMock()
+        G["Win"].folders_group(win, "app")
+        subs = [(c.kwargs["title"], c.kwargs.get("subtitle")) for c in adw.ActionRow.call_args_list]
+        note = "Added by sbx install: the program’s own files. Remove only if it still starts."
+        self.assertEqual(subs, [("~/Apps/app", note), ("~/Apps/other", None), (f"{G['HOME']}/Apps/app/", note), ("~/Apps/application", None)])
+        trash = [b for b in btns if b.kw.get("icon_name") == "user-trash-symbolic"]
+        self.assertEqual(len(trash), 4)                                                              # nothing is locked: every row can be removed
+        trash[1].connect.call_args[0][1](None); win.toasts.add_toast.assert_not_called()               # another folder: no warning
+        trash[0].connect.call_args[0][1](None)
+        self.assertNotIn("~/Apps/app", G["parse"]("app")[1]["read_only"]); win.toasts.add_toast.assert_called_once()
+        os.unlink(f"{G['INSTALLED']}/app")                                                           # not made by sbx install: no note
+        adw.ActionRow.reset_mock(); G["Win"].folders_group(win, "app")
+        self.assertTrue(all(c.kwargs.get("subtitle") is None for c in adw.ActionRow.call_args_list))
+        self.assertFalse(G["is_installed_folder"](None, "~/Apps/app")); self.assertFalse(G["is_installed_folder"]("../x", "~/Apps/x"))
 
     def test_resetting_the_private_home_moves_it_to_the_trash_and_shows_the_new_size(self):
         G = self.G; win = mock.MagicMock(); refresh = mock.MagicMock(); G["program_running"] = lambda n: False

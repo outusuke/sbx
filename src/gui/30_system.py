@@ -340,6 +340,16 @@ def installed_launcher(name):
     return p if p.startswith("/") and os.path.isfile(p) else None
 
 
+INSTALLED_NOTE = "Added by sbx install: the program’s own files. Remove only if it still starts."
+
+
+def is_installed_folder(name, path):
+    """True if PATH is ~/Apps/NAME of a program made by `sbx install` (installed/NAME exists): the folder `sbx install` shares so the program finds its own files."""
+    if not name or not NAME_RE.match(name) or not os.path.isfile(f"{INSTALLED}/{name}"): return False
+    p = HOME + path[1:] if path.startswith("~/") else path
+    return os.path.normpath(p) == f"{HOME}/Apps/{name}"
+
+
 def start_command(name):
     """(the sbx command that starts NAME from the window, or None, and why not). A program made by sbx install starts from the launcher it recorded. A program in your PATH starts by its name. One that is not (a
     downloaded game) starts from the file sbx recorded for it, as `sbx open` does when you use Open With; a name that was given with --name

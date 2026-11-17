@@ -144,6 +144,25 @@ def remove_item(scope, key, v):
     save(scope, [l for l in read_lines(scope) if not (key_of(l) == key and strip(l).partition("=")[2].strip() == v)])
 
 
+def move_item(scope, key, v, new_key):
+    """Change the line KEY=V into NEW_KEY=V where it stands, so a row keeps its place in the list. If NEW_KEY=V is already there, the old line just goes."""
+    done, lines = v in raw_list(scope, new_key), []
+    for l in read_lines(scope):
+        if key_of(l) == key and strip(l).partition("=")[2].strip() == v:
+            if not done: lines.append(f"{new_key}={v}"); done = True
+        else: lines.append(l)
+    save(scope, lines)
+
+
+def shared_items(scope):
+    """[(whitelist or read_only, path)] of a settings file in the order of its lines, each once."""
+    out = []
+    for l in read_lines(scope):
+        k, v = key_of(l), strip(l).partition("=")[2].strip()
+        if k in ("whitelist", "read_only") and v and (k, v) not in out: out.append((k, v))
+    return out
+
+
 def env_problem(name, value=None):
     """Why this variable can't go into the settings file, or None. VALUE is None for a variable that is passed through (env=NAME)."""
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name): return "A variable name has letters, digits and _, and doesn't start with a digit."

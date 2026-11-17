@@ -718,7 +718,7 @@ class Win(Adw.ApplicationWindow):
         return row
 
     def folders_group(self, scope, on_change=None):
-        """One list of shared folders and files. Each row has a Read-only toggle (off: read and write) and a button to stop sharing it."""
+        """One list of shared folders and files, in the order of the settings file. Each row has a button that says Read only or Read and write and flips it, and a button to stop sharing it."""
         g = Adw.PreferencesGroup(title="Shared folders and files",
                                  description="Everything not listed here is read-only or hidden from the program.")
         inherited = Adw.PreferencesGroup(title="Shared with all programs",
@@ -741,24 +741,28 @@ class Win(Adw.ApplicationWindow):
                         r.connect("activated", lambda *_: self.open_defaults())
                         inherited.add(r); inh_rows.append(r)
                 inherited.set_visible(bool(inh_rows))
-            for key, _label in MODES:
-                for v in parse(scope)[1][key]:
-                    r = Adw.ActionRow(title=v, use_markup=False)
-                    tog = Gtk.ToggleButton(label="Read-only", active=key == "read_only", valign=Gtk.Align.CENTER)
-                    rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Stop sharing")
+            size = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)                  # the two labels are not equally wide; the buttons are
+            for key, v in shared_items(scope):
+                mine = is_installed_folder(scope, v)
+                r = Adw.ActionRow(title=v, use_markup=False, **({"subtitle": INSTALLED_NOTE} if mine else {}))
+                ro = key == "read_only"
+                mode = Gtk.Button(label="Read only" if ro else "Read and write", valign=Gtk.Align.CENTER,       # the label says how it is now; a click flips it
+                                  tooltip_text="Read only. Click to let the program change it." if ro else "Read and write. Click to make it read only.")
+                rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Stop sharing")
+                size.add_widget(mode)
 
-                    def toggled(b, v=v, key=key):
-                        want = "read_only" if b.get_active() else "whitelist"
-                        if want == key: return
-                        remove_item(scope, key, v); add_item(scope, want, v)
-                        GLib.idle_add(refill)                                    # not while the button is still handling its own signal
+                def flip(_b, v=v, ro=ro):
+                    move_item(scope, "read_only" if ro else "whitelist", v, "whitelist" if ro else "read_only")
+                    self.toasts.add_toast(Adw.Toast(title=f"{v} is now " + ("read and write" if ro else "read only")))
+                    GLib.idle_add(refill)                                        # not while the button is still handling its own signal
 
-                    def stop_sharing(_b, v=v, key=key):
-                        remove_item(scope, key, v)
-                        GLib.idle_add(refill)
-                    tog.connect("toggled", toggled)
-                    rm.connect("clicked", stop_sharing)
-                    r.add_suffix(tog); r.add_suffix(rm); g.add(r); rows.append(r)
+                def stop_sharing(_b, v=v, key=key, mine=mine):
+                    remove_item(scope, key, v)
+                    if mine: self.toasts.add_toast(Adw.Toast(title=f"{scope} may not start without it. Add the folder again if it doesn't."))
+                    GLib.idle_add(refill)
+                mode.connect("clicked", flip)
+                rm.connect("clicked", stop_sharing)
+                r.add_suffix(mode); r.add_suffix(rm); g.add(r); rows.append(r)
             if not rows:
                 r = Adw.ActionRow(title="None"); g.add(r); rows.append(r)
             if on_change: on_change()
