@@ -398,6 +398,7 @@ class Win(Adw.ApplicationWindow):
             body = "Its settings are deleted and its private home is moved to the Trash, where you can restore it from. "
             if installed: body += f"It was made by sbx install, so its folder ~/Apps/{scope} is moved to the Trash too, with its terminal link and app menu launcher."
             elif link_is_ours(scope) or launcher_is_ours(scope): body += "Its terminal link and app menu launcher stay: turn those off first if you don't want them."
+            if len(start_variants(scope)) > 1: body += f" Another program also starts under the name {scope}: it is not removed, but it loses the saved data and settings it shares with this one."
             body = body.rstrip()
             xg = Adw.PreferencesGroup(description=body)
             col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -466,6 +467,14 @@ class Win(Adw.ApplicationWindow):
             launch.set_tooltip_text(f"Starts this one with the settings of {scope}")
             launch.connect("clicked", lambda _b, argv=argv: self.run_program(scope, argv))
             row.add_suffix(launch)
+            if kind == "Installed":                                               # remove just this copy; the other one keeps the shared home and settings
+                un = Gtk.Button(label="Uninstall…", valign=Gtk.Align.CENTER, css_classes=["destructive-action"])
+                un.set_tooltip_text(f"Removes only this copy. The other program, the private home and the settings of {scope} stay")
+                un.connect("clicked", lambda *_: self.ask(f"Uninstall {tilde(path)}?",
+                                                          f"Its folder ~/Apps/{scope} is moved to the Trash, with its terminal link and app menu launcher. "
+                                                          f"The other program stays, and so do the private home and settings of {scope}.",
+                                                          "Uninstall", lambda: self.uninstall_only(scope)))
+                row.add_suffix(un)
             g.add(row)
         return g
 
@@ -968,6 +977,15 @@ class Win(Adw.ApplicationWindow):
         CURRENT[:] = []
         self.nav.replace([self.main]); self.fill_apps()
         self.toasts.add_toast(Adw.Toast(title=f"Removed {name} from the list"))
+
+    def uninstall_only(self, name):
+        """The shared group's Uninstall…: the copy made by sbx install goes (to the Trash), the private home and settings stay for the other program."""
+        if program_running(name):
+            return self.alert("It is running", f"Stop it first (sbx stop {name}), then uninstall it.")
+        err = self.run_uninstall(name)
+        if err: return self.alert("Couldn't uninstall", err)
+        self.refresh_program_page(name); self.fill_apps()
+        self.toasts.add_toast(Adw.Toast(title=f"Uninstalled {name}. Its home and settings stay"))
 
     def run_uninstall(self, name):
         """`sbx uninstall --yes --trash NAME`. Returns None on success, else the reason."""

@@ -3063,6 +3063,19 @@ class Gui(unittest.TestCase):
             self.assertEqual(len(G["start_variants"]("firefox")), 1)                                                 # an sbx link is not a second program
         self.assertEqual(G["start_variants"]("../x"), [])
 
+    def test_uninstalling_one_of_two_programs_keeps_the_shared_home_and_settings(self):
+        G = self.G; h = G["HOME"]; launcher = f"{h}/Apps/firefox/firefox"; os.makedirs(os.path.dirname(launcher)); os.makedirs(G["INSTALLED"])
+        with open(launcher, "wb") as f: f.write(b"\x7fELF")
+        with open(f"{G['INSTALLED']}/firefox", "w") as f: f.write(launcher + "\n")
+        os.makedirs(f"{G['HOMES']}/firefox"); os.makedirs(G["APPS"])
+        with open(f"{G['APPS']}/firefox.conf", "w") as f: f.write("net=1\n")
+        win = mock.MagicMock(); win.run_uninstall.return_value = None
+        with mock.patch.dict(os.environ, {"PATH": f"{h}/bin"}), mock.patch.dict(G["Win"].uninstall_only.__globals__, {"program_running": lambda n: False}):
+            G["Win"].uninstall_only(win, "firefox")
+        win.run_uninstall.assert_called_once_with("firefox"); win.alert.assert_not_called()
+        self.assertTrue(os.path.isdir(f"{G['HOMES']}/firefox")); self.assertTrue(os.path.isfile(f"{G['APPS']}/firefox.conf"))       # forget_program was not called
+        win.refresh_program_page.assert_called_once_with("firefox")
+
     def test_run_hands_the_recorded_file_to_sbx(self):
         G = self.G; game = f"{G['HOME']}/Games/Crash"; self._gui_origin("Crash", game); win = mock.MagicMock()
         with mock.patch.dict(os.environ, {"PATH": f"{G['HOME']}/nowhere"}), mock.patch.object(G["subprocess"], "Popen") as popen:
