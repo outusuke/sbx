@@ -2423,6 +2423,19 @@ class Ported(unittest.TestCase):
         self.assertIs(S["SCALARS"]["ssh_agent"], False)
         self.assertEqual(S["parse_options"](["--ssh-agent", "x"])[0], {"ssh_agent": True})
 
+    def test_portals_give_the_program_its_own_document_folder(self):
+        S = load_sbx(); rt = S["runtime_dir"]()
+        self.assertEqual(S["portal_app_id"]("firefox"), "org.sbx.Run.firefox")
+        self.assertEqual(S["portal_app_id"]("my-app.1"), "org.sbx.Run.my_app_1")
+        self.assertEqual(S["portal_app_id"]("7zip"), "org.sbx.Run.p7zip")
+        def mount(o):
+            args = S["build"]("/bin/true", [], False, dict(o, ignore_config=True))[1]
+            return [i for i in range(len(args) - 2) if args[i:i + 3] == ["--bind-try", f"{rt}/doc/by-app/org.sbx.Run.tool", f"{rt}/doc"]]
+        self.assertEqual(len(mount({"portals": True, "name": "tool"})), 1)
+        self.assertEqual(mount({"portals": False, "name": "tool"}), [], "no portals, no document folder")
+        self.assertEqual(mount({"portals": False, "tray": True, "name": "tool"}), [], "the tray alone does not open it")
+        self.assertEqual(mount({"portals": True, "name": "other"}), [], "each program gets its own folder")
+
     def test_tray_rules_are_narrow_and_work_without_portals(self):
         S = load_sbx()
         r = S["tray_rules"]()

@@ -15,6 +15,14 @@ def portal_rules(cfg=None):
     return rules
 
 
+def portal_app_id(name):
+    """The application id the desktop portals know this program by: org.sbx.Run.NAME, with anything outside letters, digits and _
+    turned into _ and a p put in front of a digit (an id part may not start with one). The Documents portal keeps the files you picked
+    for it under doc/by-app/ID."""
+    part = re.sub(r"[^A-Za-z0-9_]", "_", name) or "_"
+    return "org.sbx.Run." + ("p" + part if part[0].isdigit() else part)
+
+
 def tray_rules():
     """Show a tray icon (StatusNotifierItem) and answer media keys (MPRIS). Nothing else on the bus."""
     return ["--talk=org.kde.StatusNotifierWatcher"] + [

@@ -89,6 +89,7 @@ bwrap
 --perms 0700
 --dir /run/user/1000
 --ro-bind /run/user/1000/sbx/PID.bus /run/user/1000/bus
+--bind-try /run/user/1000/doc/by-app/org.sbx.Run.firefox /run/user/1000/doc
 --tmpfs /home
 --tmpfs /root
 --tmpfs /mnt

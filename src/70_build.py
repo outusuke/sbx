@@ -171,6 +171,8 @@ def build(prog, args, live=False, o=None):
             if not state["proxy"]: sock = None
         if sock:
             a += ["--ro-bind", sock, f"{rt}/bus"]; env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
+    if cfg["portals"]:      # the files you pick in a chooser appear here, only this program's own (bind-try: nothing when there is no document portal)
+        a += ["--bind-try", f"{runtime_dir()}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
     if live and not cfg["portals"] and any(cfg[k] for k in PORTAL_EXTRA):
         warn("portal_* settings need portals=1; ignored")
     # Hide the real home and other users: empty the folder that holds your home, then put the private home in its place.
