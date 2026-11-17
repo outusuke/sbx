@@ -890,10 +890,13 @@ def share_path(p, cli, allow_sensitive=False):
 
 def order_shares(rw, ro, here=None, program=None):
     """[(path, 'rw' | 'ro')] in mount order. A folder is mounted before the paths inside it, so a more specific share
-    keeps its own mode whatever order the settings were written in. At the very same path read-only wins."""
+    keeps its own mode whatever order the settings were written in. At the very same path read-only wins, except that the
+    program's own app folder (program), which sbx adds by itself and shares read-only, gives way to a read-and-write
+    share you asked for (whitelist= / --whitelist) at that path."""
     modes = {}
     for p in ([here] if here else []) + rw: modes.setdefault(p, "rw")
-    for p in ro + ([program] if program else []): modes[p] = "ro"
+    for p in ro: modes[p] = "ro"
+    if program and program not in rw: modes[program] = "ro"
     return sorted(modes.items(), key=lambda kv: (kv[0].count("/"), kv[0]))
 
 

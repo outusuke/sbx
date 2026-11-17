@@ -396,7 +396,10 @@ class Units(unittest.TestCase):
         self.assertEqual(o(["/t/a/b", "/t/c"], ["/t/a"]), [("/t/a", "ro"), ("/t/c", "rw"), ("/t/a/b", "rw")])
         self.assertEqual(o(["/t/a"], ["/t/a"]), [("/t/a", "ro")])
         self.assertEqual(o([], [], here="/t/h", program="/t/h/p"), [("/t/h", "rw"), ("/t/h/p", "ro")])
-        self.assertEqual(o(["/t/p"], [], program="/t/p"), [("/t/p", "ro")])
+        self.assertEqual(o([], [], program="/t/p"), [("/t/p", "ro")])                          # on its own, the program's folder is read-only
+        self.assertEqual(o(["/t/p"], [], program="/t/p"), [("/t/p", "rw")])                    # a read-and-write share you asked for wins over it
+        self.assertEqual(o(["/t/p"], ["/t/p"], program="/t/p"), [("/t/p", "ro")])              # unless you also listed it read-only
+        self.assertEqual(o([], [], here="/t/p", program="/t/p"), [("/t/p", "ro")])             # the folder you started in is not "asked for"
 
     def test_hint_args(self):
         os.makedirs(f"{self.home}/work"); self.write("work/script.py")
