@@ -3060,7 +3060,11 @@ class Gui(unittest.TestCase):
         self.assertEqual(G["read_lines"]("app"), ["read_only=~/A", "whitelist=~/B", "read_only=~/C"])
         trash[2].connect.call_args[0][1](None)                                                        # ~/C: stop sharing
         self.assertEqual(G["parse"]("app")[1], {"whitelist": ["~/B"], "read_only": ["~/A"]})
-        self.assertEqual([k for k, _ in G["shared_items"]("app")], ["read_only", "whitelist"])
+        win.ask.assert_not_called()                                                                   # an ordinary row is removed at once
+        toast = G["Adw"].Toast.return_value; self.assertEqual(G["Adw"].Toast.call_args.kwargs["button_label"], "Undo")
+        toast.connect.call_args[0][1]()                                                               # Undo on the toast
+        self.assertEqual(G["read_lines"]("app"), ["read_only=~/A", "whitelist=~/B", "read_only=~/C"])   # back where it was
+        self.assertEqual([k for k, _ in G["shared_items"]("app")], ["read_only", "whitelist", "read_only"])
 
     def test_moving_an_item_between_modes_merges_with_a_copy_and_keeps_comments(self):
         G = self.G; os.makedirs(G["APPS"], exist_ok=True)
@@ -3069,7 +3073,7 @@ class Gui(unittest.TestCase):
         self.assertEqual(G["read_lines"]("app"), ["# mine", "net=1", "whitelist=~/A", "read_only=~/Z"])
         self.assertEqual(G["shared_items"]("app"), [("whitelist", "~/A"), ("read_only", "~/Z")])
 
-    def test_the_folder_sbx_install_shared_has_a_note_and_a_warning_when_removed_but_is_not_locked(self):
+    def test_the_folder_sbx_install_shared_has_a_note_and_asks_before_it_is_removed_but_is_not_locked(self):
         G = self.G; gtk = G["Gtk"]; adw = G["Adw"]; os.makedirs(G["APPS"], exist_ok=True); os.makedirs(G["INSTALLED"], exist_ok=True)
         with open(f"{G['INSTALLED']}/app", "w") as f: f.write(f"{G['HOME']}/Apps/app/run\n")
         with open(f"{G['APPS']}/app.conf", "w") as f: f.write(f"read_only=~/Apps/app\nwhitelist=~/Apps/other\nread_only={G['HOME']}/Apps/app/\nread_only=~/Apps/application\n")
@@ -3083,9 +3087,15 @@ class Gui(unittest.TestCase):
         self.assertEqual(subs, [("~/Apps/app", note), ("~/Apps/other", None), (f"{G['HOME']}/Apps/app/", note), ("~/Apps/application", None)])
         trash = [b for b in btns if b.kw.get("icon_name") == "user-trash-symbolic"]
         self.assertEqual(len(trash), 4)                                                              # nothing is locked: every row can be removed
-        trash[1].connect.call_args[0][1](None); win.toasts.add_toast.assert_not_called()               # another folder: no warning
-        trash[0].connect.call_args[0][1](None)
-        self.assertNotIn("~/Apps/app", G["parse"]("app")[1]["read_only"]); win.toasts.add_toast.assert_called_once()
+        trash[1].connect.call_args[0][1](None); win.ask.assert_not_called()                           # another folder: removed at once
+        self.assertEqual(G["parse"]("app")[1]["whitelist"], [])
+        trash[0].connect.call_args[0][1](None)                                                        # its own folder: asks first, nothing is removed yet
+        win.ask.assert_called_once(); self.assertIn("may not start", win.ask.call_args[0][1])
+        self.assertIn("~/Apps/app", G["parse"]("app")[1]["read_only"])
+        win.ask.call_args[0][3]()                                                                     # confirmed
+        self.assertNotIn("~/Apps/app", G["parse"]("app")[1]["read_only"])
+        G["Adw"].Toast.return_value.connect.call_args[0][1]()                                         # Undo
+        self.assertEqual(G["parse"]("app")[1]["read_only"][0], "~/Apps/app")
         os.unlink(f"{G['INSTALLED']}/app")                                                           # not made by sbx install: no note
         adw.ActionRow.reset_mock(); G["Win"].folders_group(win, "app")
         self.assertTrue(all(c.kwargs.get("subtitle") is None for c in adw.ActionRow.call_args_list))

@@ -757,9 +757,15 @@ class Win(Adw.ApplicationWindow):
                     GLib.idle_add(refill)                                        # not while the button is still handling its own signal
 
                 def stop_sharing(_b, v=v, key=key, mine=mine):
-                    remove_item(scope, key, v)
-                    if mine: self.toasts.add_toast(Adw.Toast(title=f"{scope} may not start without it. Add the folder again if it doesn't."))
-                    GLib.idle_add(refill)
+                    def go():
+                        gone = take_item(scope, key, v)
+                        t = Adw.Toast(title=f"Stopped sharing {v}", button_label="Undo")          # the toast's own time is the time to undo
+                        t.connect("button-clicked", lambda *_: (restore_item(scope, key, v, gone), GLib.idle_add(refill)))
+                        self.toasts.add_toast(t)
+                        GLib.idle_add(refill)
+                    if mine: self.ask("Stop sharing the program’s own folder?",
+                                      f"{scope} may not start without {v}. You can undo this right afterwards, or add the folder again with Add folder.", "Stop sharing", go)
+                    else: go()
                 mode.connect("clicked", flip)
                 rm.connect("clicked", stop_sharing)
                 r.add_suffix(mode); r.add_suffix(rm); g.add(r); rows.append(r)

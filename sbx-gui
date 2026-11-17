@@ -297,6 +297,22 @@ def remove_item(scope, key, v):
     save(scope, [l for l in read_lines(scope) if not (key_of(l) == key and strip(l).partition("=")[2].strip() == v)])
 
 
+def take_item(scope, key, v):
+    """remove_item that says what it took out, [(line number, line)], so restore_item can put it back where it was."""
+    lines = read_lines(scope)
+    gone = [(i, l) for i, l in enumerate(lines) if key_of(l) == key and strip(l).partition("=")[2].strip() == v]
+    save(scope, [l for l in lines if (key_of(l) != key or strip(l).partition("=")[2].strip() != v)])
+    return gone
+
+
+def restore_item(scope, key, v, gone):
+    """Undo take_item (unless KEY=V was added again meanwhile)."""
+    if v in raw_list(scope, key): return
+    lines = read_lines(scope)
+    for i, l in gone: lines.insert(min(i, len(lines)), l)
+    save(scope, lines)
+
+
 def move_item(scope, key, v, new_key):
     """Change the line KEY=V into NEW_KEY=V where it stands, so a row keeps its place in the list. If NEW_KEY=V is already there, the old line just goes."""
     done, lines = v in raw_list(scope, new_key), []
@@ -1697,9 +1713,15 @@ class Win(Adw.ApplicationWindow):
                     GLib.idle_add(refill)                                        # not while the button is still handling its own signal
 
                 def stop_sharing(_b, v=v, key=key, mine=mine):
-                    remove_item(scope, key, v)
-                    if mine: self.toasts.add_toast(Adw.Toast(title=f"{scope} may not start without it. Add the folder again if it doesn't."))
-                    GLib.idle_add(refill)
+                    def go():
+                        gone = take_item(scope, key, v)
+                        t = Adw.Toast(title=f"Stopped sharing {v}", button_label="Undo")          # the toast's own time is the time to undo
+                        t.connect("button-clicked", lambda *_: (restore_item(scope, key, v, gone), GLib.idle_add(refill)))
+                        self.toasts.add_toast(t)
+                        GLib.idle_add(refill)
+                    if mine: self.ask("Stop sharing the program’s own folder?",
+                                      f"{scope} may not start without {v}. You can undo this right afterwards, or add the folder again with Add folder.", "Stop sharing", go)
+                    else: go()
                 mode.connect("clicked", flip)
                 rm.connect("clicked", stop_sharing)
                 r.add_suffix(mode); r.add_suffix(rm); g.add(r); rows.append(r)

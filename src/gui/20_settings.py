@@ -144,6 +144,22 @@ def remove_item(scope, key, v):
     save(scope, [l for l in read_lines(scope) if not (key_of(l) == key and strip(l).partition("=")[2].strip() == v)])
 
 
+def take_item(scope, key, v):
+    """remove_item that says what it took out, [(line number, line)], so restore_item can put it back where it was."""
+    lines = read_lines(scope)
+    gone = [(i, l) for i, l in enumerate(lines) if key_of(l) == key and strip(l).partition("=")[2].strip() == v]
+    save(scope, [l for l in lines if (key_of(l) != key or strip(l).partition("=")[2].strip() != v)])
+    return gone
+
+
+def restore_item(scope, key, v, gone):
+    """Undo take_item (unless KEY=V was added again meanwhile)."""
+    if v in raw_list(scope, key): return
+    lines = read_lines(scope)
+    for i, l in gone: lines.insert(min(i, len(lines)), l)
+    save(scope, lines)
+
+
 def move_item(scope, key, v, new_key):
     """Change the line KEY=V into NEW_KEY=V where it stands, so a row keeps its place in the list. If NEW_KEY=V is already there, the old line just goes."""
     done, lines = v in raw_list(scope, new_key), []
