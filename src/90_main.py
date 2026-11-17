@@ -20,6 +20,8 @@ def main(argv=None):
     if cmd == "show": return cmd_show(a)
     if cmd == "export": return cmd_export(a)
     if cmd == "import": return cmd_import(a)
+    if cmd == "install": return cmd_install(a)
+    if cmd == "uninstall": return cmd_uninstall(a)
     opts, a = parse_options(a)
     if not a: die("usage: sbx [preview] [options] PROGRAM [args]")
     if cmd == "preview":

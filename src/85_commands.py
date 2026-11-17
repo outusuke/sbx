@@ -316,8 +316,8 @@ def cmd_link(a):
         elif our_launchers(name, by_program=True): print(f"An app-menu launcher still starts it through sbx. Undo with: sbx link --remove {name} --desktop")
         if not did: die(f"{tilde(dest)} doesn't exist" + (f", and no launcher made by sbx starts {name}" if both else ""))
         return
-    real = find_in_path(name)
-    if not real: die(f"'{name}' is not installed (no program of that name in your PATH)")
+    real = installed_launcher(name) or find_in_path(name)          # a program from `sbx install` has no execute bit, so PATH can't find it
+    if not real: die(f"'{name}' is not installed (no program of that name in your PATH, and none from sbx install)")
     if os.path.lexists(dest) and not is_sbx_link(dest): die(f"{tilde(dest)} already exists and was not made by sbx; not touching it")
     me = shutil.which("sbx") or os.path.realpath(sys.argv[0])
     if os.path.basename(me) != "sbx": die("can't tell where sbx is installed; start this command by the name sbx")
@@ -349,6 +349,12 @@ def linked_name(argv0):
 def run_linked(argv0, args):
     """Started through a link: run the real program of that name, sandboxed. Its arguments are its own, never sbx options."""
     name = os.path.basename(argv0)
+    made = installed_launcher(name)
+    if made:                                                     # from `sbx install`: a file without the execute bit, named by its link
+        if os.environ.get("SBX_ACTIVE"):
+            loader = elf_interpreter(made)
+            return os.execv(loader, [loader, made] + args) if loader else die(f"'{name}' can't be started from inside a sandbox")
+        run(made, args, {"name": name})
     real = find_in_path(name)
     if not real: die(f"'{name}' not found in your PATH, apart from this link. Remove it with: sbx link --remove {name}")
     if os.environ.get("SBX_ACTIVE"): return os.execv(real, [name] + args)          # already in a sandbox (one program starting another)

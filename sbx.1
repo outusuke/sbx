@@ -145,6 +145,36 @@ does for every app\-menu launcher whose Exec line starts NAME; with
 .B \-\-remove
 it takes those out again. Without it, sbx only says when such a launcher exists.
 .TP
+.B sbx install FOLDER|ARCHIVE [NAME] [\-\-launcher PATH]
+Install a downloaded program (an extracted folder, or a tar or zip archive) so that it only starts through sbx. The program goes to
+.I ~/Apps/NAME
+(a folder moves, an archive is unpacked; NAME defaults to the file name up to its first \-DIGIT). Its launcher, the one program at the top of
+the folder or in bin/ (or the file named by
+.BR \-\-launcher ),
+loses its execute bit if it is a dynamically linked ELF file, so starting it by its path outside sbx fails and sbx sets the bit just for its own
+run. sbx writes
+.I ~/.config/sbx/apps/NAME.conf
+with
+.B read_only=~/Apps/NAME
+(unless the file exists), a link
+.I ~/.local/bin/NAME
+as
+.B sbx link
+does, and an app\-menu entry. Nothing in the program is run. What the program saves goes to its private home, as for any program. Refuses an archive that holds a link
+pointing outside its folder, and any NAME already in use. Not from inside a sandbox.
+.TP
+.B sbx uninstall [\-\-yes] NAME
+Delete a program made by
+.BR "sbx install" :
+its folder in
+.IR ~/Apps ,
+its link, its menu entry and its install record, after asking unless
+.B \-\-yes
+is given. Its private home and settings file stay; remove them with
+.B sbx clean
+and
+.BR "sbx reset" .
+.TP
 .B sbx open FILE
 Run a downloaded program with sensible defaults. This is what "Open with" calls; see
 .BR "DOWNLOADED PROGRAMS" .

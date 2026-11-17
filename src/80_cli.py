@@ -13,7 +13,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
                "--loader": "loader"}
-COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind", "export", "import")
+COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind", "export", "import", "install", "uninstall")
 
 USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx preview [options] PROGRAM [args]   print the command instead of running it\n"
@@ -27,6 +27,8 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "sbx export [NAME|--default|--all] [-o FILE] [--force]  write settings (default: all) as one text file, to stdout or FILE\n"
          "sbx import FILE [--force]               load an export back; --force replaces settings that differ\n"
          "sbx link NAME [--desktop] | --remove NAME [--desktop]  make typing NAME in a terminal start it through sbx (a link in ~/.local/bin); --desktop covers its app-menu launchers too\n"
+         "sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH]  move a downloaded program to ~/Apps/NAME, take the execute bit off its launcher, and make NAME (terminal and app menu) start it through sbx\n"
+         "sbx uninstall [--yes] NAME             delete a program made by sbx install, with its link and menu entry (its private home stays; see sbx clean)\n"
          "sbx open FILE                          run a downloaded program with sensible defaults (for \"Open with\")\n"
          "sbx desktop NAME | --remove NAME       make a launcher start the program through sbx (NAME = its id, or the program it starts)\n"
          "sbx desktop --install-opener           add \"Run in sbx\" to your file manager's Open With (--remove-opener undoes it)\n"

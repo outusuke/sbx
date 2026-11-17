@@ -61,9 +61,21 @@ sbx export [NAME]   settings as one text file (-o FILE)
 sbx import FILE     load an export back
 sbx link NAME       typing NAME starts it through sbx
 sbx open FILE       run a downloaded program ("Open with")
+sbx install SRC     move a program (folder or archive) to ~/Apps/NAME, start it only through sbx
+sbx uninstall NAME  remove a program made by sbx install
 ```
 
 Options go before the program name.
+
+### Installing a downloaded program
+
+```
+sbx install ~/Downloads/anki-26.9.4-linux-x86_64.tar.zst      # or the extracted folder; NAME is guessed (anki), or give one
+anki                                                           # starts it through sbx; so does the app-menu entry
+sbx uninstall anki
+```
+
+The program goes to `~/Apps/NAME` and is shared with it read-only. Its launcher loses the execute bit, so `./launcher` outside sbx fails with "Permission denied" and only sbx can start it (sbx sets the bit for its own run; this works for dynamically linked programs, and static ones keep the bit with a warning). Files the program saves go to its private home. The other files in the folder keep their execute bit, because the program starts them itself inside the sandbox. A folder you install is moved, not copied; an archive is unpacked and left where it is. Nothing in it is run.
 
 | Option | Effect |
 |---|---|

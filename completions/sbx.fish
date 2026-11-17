@@ -9,7 +9,7 @@ end
 function __sbx_homes
     ls ~/.sbx-homes 2>/dev/null
 end
-set -l cmds preview show doctor clean reset link desktop open schema list stop rebind export import
+set -l cmds preview show doctor clean reset link desktop open schema list stop rebind export import install uninstall
 set -l c "not __fish_seen_subcommand_from $cmds"
 complete -c sbx -f -n $c -a "$cmds"
 complete -c sbx -n $c -F
@@ -28,6 +28,9 @@ complete -c sbx -f -n "__fish_seen_subcommand_from reset" -l yes -d "Don't ask"
 complete -c sbx -f -n "__fish_seen_subcommand_from link" -l remove -d "Remove a link made by sbx"
 complete -c sbx -f -n "__fish_seen_subcommand_from link" -l desktop -d "Also the app-menu launchers that start it"
 complete -c sbx -f -n "__fish_seen_subcommand_from link" -a "(__fish_complete_command)"
+complete -c sbx -n "__fish_seen_subcommand_from install" -l launcher -r -d "The file that starts the program"
+complete -c sbx -f -n "__fish_seen_subcommand_from uninstall" -l yes -d "Don't ask"
+complete -c sbx -f -n "__fish_seen_subcommand_from uninstall" -a "(ls ~/.config/sbx/installed 2>/dev/null)"
 complete -c sbx -f -n "__fish_seen_subcommand_from stop" -a "(__sbx_homes)"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l install-opener -d "Add \"Run in sbx\" to Open With"
 complete -c sbx -f -n "__fish_seen_subcommand_from desktop" -l install-menu -d "Add sbx-gui to the app menu"

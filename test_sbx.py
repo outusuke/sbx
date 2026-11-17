@@ -2059,6 +2059,149 @@ class Units(unittest.TestCase):
         self.assertIn(".ssh", sch["sensitive"])
 
 
+class Install(unittest.TestCase):
+    """sbx install / uninstall: a downloaded program goes to ~/Apps/NAME and only starts through sbx."""
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="sbx-inst-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home = f"{self.tmp}/home"; self.inst = f"{self.tmp}/inst"
+        os.makedirs(f"{self.home}/.local/bin"); os.makedirs(self.inst)
+        with open(f"{self.inst}/sbx", "w") as f: f.write("#!/bin/sh\n")
+        os.chmod(f"{self.inst}/sbx", 0o755)
+        self.S = load_sbx()
+        self.S.update(HOME=self.home, CONF=f"{self.home}/.config/sbx", HOMES=f"{self.home}/.sbx-homes", APPS=f"{self.home}/Apps",
+                      INSTALLED=f"{self.home}/.config/sbx/installed")
+        self.warned = []
+        self.S["warn"] = self.warned.append
+        self.dl = f"{self.tmp}/dl"; os.makedirs(self.dl)
+
+    def dynamic_elf(self):
+        with open("/bin/true", "rb") as f: return f.read()
+
+    def program(self, top="anki-26.9.4-linux-x86_64", files=None):
+        """A program folder under dl/ and the .tar of it."""
+        files = files or {"anki": (self.dynamic_elf(), 0o755), "lib/helper": (self.dynamic_elf(), 0o755), "lib/a.so": (b"x", 0o644)}
+        for rel, (data, mode) in files.items():
+            p = f"{self.dl}/{top}/{rel}"; os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f: f.write(data)
+            os.chmod(p, mode)
+        subprocess.run(["tar", "-cf", f"{self.dl}/{top}.tar", "-C", self.dl, top], check=True)
+        return f"{self.dl}/{top}", f"{self.dl}/{top}.tar"
+
+    def call(self, fn, *args, tty_answer=None):
+        out, err, code = io.StringIO(), io.StringIO(), None
+        env = {"PATH": f"{self.home}/.local/bin:/usr/bin:/bin", "SBX_ACTIVE": ""}
+        os.environ.pop("SBX_ACTIVE", None)
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", [f"{self.inst}/sbx"]), mock.patch.object(os, "geteuid", return_value=1000), \
+             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), mock.patch.object(sys, "stdin", io.StringIO(tty_answer or "")):
+            try: self.S[fn](list(args))
+            except SystemExit as e: code = e.code if e.code is not None else 0
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_name_is_guessed_from_the_file_name(self):
+        g = self.S["guess_name"]
+        self.assertEqual(g("/x/anki-26.9.4-linux-x86_64.tar.zst"), "anki")
+        self.assertEqual(g("/x/G-Diffuser-v1.2.3-linux-x64/"), "g-diffuser")
+        self.assertEqual(g("/x/tool.zip"), "tool"); self.assertEqual(g("/x/2048.tar.gz"), "2048"); self.assertEqual(g("/x/.zip"), "")
+
+    def test_install_from_an_archive_then_uninstall(self):
+        h, S = self.home, self.S
+        _, tar = self.program()
+        code, out, err = self.call("cmd_install", tar)
+        self.assertIsNone(code, err)
+        app = f"{h}/Apps/anki"
+        self.assertEqual(os.stat(f"{app}/anki").st_mode & 0o111, 0, "the launcher loses its execute bit")
+        self.assertNotEqual(os.stat(f"{app}/lib/helper").st_mode & 0o100, 0, "the program's own helpers keep theirs")
+        with open(f"{h}/.config/sbx/installed/anki") as f: self.assertEqual(f.read(), f"{app}/anki\n")
+        with open(f"{h}/.config/sbx/apps/anki.conf") as f: self.assertEqual(f.read(), "read_only=~/Apps/anki\n")
+        self.assertTrue(S["is_sbx_link"](f"{h}/.local/bin/anki"))
+        with open(f"{h}/.local/share/applications/anki.desktop") as f: d = f.read()
+        self.assertIn("X-Sbx-Sandboxed=true", d); self.assertIn(f"Exec={h}/.local/bin/anki %U", d)
+        self.assertEqual(S["launcher_program"](f"{h}/.local/share/applications/anki.desktop"), "anki")
+        self.assertTrue(os.path.exists(tar), "an archive is left where it is")
+        self.assertEqual([n for n in os.listdir(f"{h}/Apps") if n.startswith(".")], [], "no temporary folder left")
+        started = []
+        S["run"] = lambda prog, args, opts: started.append((prog, args, opts)) or sys.exit(0)          # typing `anki` runs the file recorded, under its name
+        with self.assertRaises(SystemExit): S["run_linked"](f"{h}/.local/bin/anki", ["--x"])
+        self.assertEqual(started, [(f"{app}/anki", ["--x"], {"name": "anki"})])
+        code, _, err = self.call("cmd_install", tar)                                                  # the same name again: refused, nothing changed
+        self.assertEqual(code, 1); self.assertIn("already exists", err)
+        code, out, err = self.call("cmd_uninstall", "--yes", "anki")
+        self.assertIsNone(code, err)
+        for p in (app, f"{h}/.local/bin/anki", f"{h}/.local/share/applications/anki.desktop", f"{h}/.config/sbx/installed/anki"): self.assertFalse(os.path.lexists(p), p)
+        self.assertTrue(os.path.exists(f"{h}/.config/sbx/apps/anki.conf"), "settings stay")
+        self.assertEqual(self.call("cmd_uninstall", "--yes", "anki")[0], 1)
+
+    def test_a_folder_is_moved_and_uninstall_refuses_what_it_did_not_install(self):
+        h = self.home
+        folder, _ = self.program(top="tool-1.0")
+        code, out, err = self.call("cmd_install", folder, "mytool")
+        self.assertIsNone(code, err)
+        self.assertFalse(os.path.exists(folder)); self.assertTrue(os.path.isfile(f"{h}/Apps/mytool/anki"))
+        os.makedirs(f"{h}/Apps/other"); 
+        code, _, err = self.call("cmd_uninstall", "--yes", "other"); self.assertEqual(code, 1); self.assertIn("not installed by sbx install", err)
+        self.assertTrue(os.path.isdir(f"{h}/Apps/other"))
+        with open(f"{h}/.local/bin/taken", "w") as f: f.write("mine\n")                             # a command of that name that is not ours
+        folder, _ = self.program(top="taken-1.0")
+        code, _, err = self.call("cmd_install", folder); self.assertEqual(code, 1); self.assertTrue(os.path.isdir(folder), "nothing moved")
+        with open(f"{h}/.local/bin/taken") as f: self.assertEqual(f.read(), "mine\n")
+
+    def test_an_archive_with_a_link_out_of_its_folder_is_refused_and_leaves_nothing(self):
+        h = self.home
+        _, tar = self.program(top="evil-1.0")
+        os.symlink("/etc/passwd", f"{self.dl}/evil-1.0/anki2")
+        subprocess.run(["tar", "-cf", tar, "-C", self.dl, "evil-1.0"], check=True)
+        code, _, err = self.call("cmd_install", tar)
+        self.assertEqual(code, 1); self.assertIn("points outside", err)
+        self.assertEqual(os.listdir(f"{h}/Apps"), [])
+        self.assertFalse(os.path.exists(f"{h}/.config/sbx/installed"))
+
+    def test_the_launcher_is_picked_or_asked_for(self):
+        h = self.home
+        elf = (self.dynamic_elf(), 0o755)
+        _, tar = self.program(top="two-1.0", files={"one": elf, "other": elf})
+        code, _, err = self.call("cmd_install", tar)
+        self.assertEqual(code, 1); self.assertIn("one", err); self.assertIn("other", err); self.assertIn("--launcher", err)
+        self.assertEqual(os.listdir(f"{h}/Apps"), [], "refused before anything was moved")
+        code, _, err = self.call("cmd_install", tar, "--launcher", "other"); self.assertIsNone(code, err)
+        self.assertEqual(os.stat(f"{h}/Apps/two/other").st_mode & 0o111, 0); self.assertNotEqual(os.stat(f"{h}/Apps/two/one").st_mode & 0o111, 0)
+        code, _, err = self.call("cmd_install", tar, "x", "--launcher", "../../etc/passwd"); self.assertEqual(code, 1)
+        _, tar = self.program(top="named-1.0", files={"named": elf, "helper": elf})                   # one is named like the program
+        self.assertIsNone(self.call("cmd_install", tar)[0])
+        self.assertEqual(os.stat(f"{h}/Apps/named/named").st_mode & 0o111, 0)
+
+    def test_a_program_sbx_could_not_start_without_the_bit_keeps_it(self):
+        static = b"\x7fELF\x02\x01" + bytes(100)
+        _, tar = self.program(top="stat-1.0", files={"stat": (static, 0o755)})
+        code, out, err = self.call("cmd_install", tar)
+        self.assertIsNone(code, err)
+        self.assertNotEqual(os.stat(f"{self.home}/Apps/stat/stat").st_mode & 0o111, 0)
+        self.assertTrue(any("keeps its execute bit" in w for w in self.warned), self.warned)
+
+    def test_zip_archives_keep_the_execute_bit_of_helpers(self):
+        import zipfile as zf
+        z = f"{self.dl}/app-1.0.zip"
+        with zf.ZipFile(z, "w") as f:
+            for n, data in (("app-1.0/app", self.dynamic_elf()), ("app-1.0/helper", self.dynamic_elf())):
+                i = zf.ZipInfo(n); i.external_attr = 0o755 << 16; f.writestr(i, data)
+        self.assertIsNone(self.call("cmd_install", z)[0])
+        self.assertEqual(os.stat(f"{self.home}/Apps/app/app").st_mode & 0o111, 0)
+        self.assertNotEqual(os.stat(f"{self.home}/Apps/app/helper").st_mode & 0o100, 0)
+
+    def test_install_and_uninstall_are_documented_and_refuse_a_sandbox_and_bad_names(self):
+        with open(f"{HERE}/sbx.1") as f: man = f.read()
+        with open(f"{HERE}/README.md") as f: readme = f.read()
+        for c in ("install", "uninstall"):
+            self.assertIn(f"sbx {c}", man); self.assertIn(f"sbx {c}", readme); self.assertIn(f"sbx {c}", self.S["USAGE"]); self.assertIn(c, self.S["COMMANDS"])
+            for f in ("sbx.bash", "_sbx", "sbx.fish"):
+                with open(f"{HERE}/completions/{f}") as fh: self.assertIn(c, fh.read(), f)
+        _, tar = self.program()
+        for bad in ("../x", "sbx-x", "link", ".x", "a b"):
+            self.assertEqual(self.call("cmd_install", tar, bad)[0], 1, bad)
+        with mock.patch.dict(os.environ, {"SBX_ACTIVE": "1"}), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): self.S["cmd_install"]([tar])
+        self.assertFalse(os.path.exists(f"{self.home}/Apps/anki"))
+
+
 class Ported(unittest.TestCase):
     """Ideas taken from ajail: portal sessions, camera portal, ssh_agent."""
     def test_portal_rules_and_ssh_agent(self):

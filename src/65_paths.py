@@ -122,3 +122,17 @@ def opener_folder(real):
     """The folder a program brings along when you open it with sbx (its game data, saves...): the folder it sits in,
     unless that is your home, a hidden folder or a general-purpose one like Downloads. None then."""
     return own_folder(real)[0]
+
+
+APPS = f"{HOME}/Apps"                # where `sbx install` puts programs: one folder each, named after the program
+INSTALLED = f"{CONF}/installed"      # one file per installed program (installed/NAME): the full path of its launcher, on the first line
+
+
+def installed_launcher(name):
+    """The launcher file that `sbx install` recorded for NAME, or None. It has no execute bit; sbx sets it for the run."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name): return None
+    try:
+        with open(f"{INSTALLED}/{name}") as f: p = f.readline().strip()
+    except OSError:
+        return None
+    return p if p.startswith("/") and os.path.isfile(p) else None
