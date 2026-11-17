@@ -2461,6 +2461,18 @@ class Ported(unittest.TestCase):
         self.assertEqual(mount({"portals": False, "tray": True, "name": "tool"}), [], "the tray alone does not open it")
         self.assertEqual(mount({"portals": True, "name": "other"}), [], "each program gets its own folder")
 
+    def test_portals_tell_toolkits_to_use_the_file_chooser_portal(self):
+        S = load_sbx()
+        def env(o):
+            a = S["build"]("/bin/true", [], False, dict(o, ignore_config=True))[1]
+            return {a[i + 1]: a[i + 2] for i in range(len(a) - 2) if a[i] == "--setenv"}
+        e = env({"portals": True}); self.assertEqual((e["GTK_USE_PORTAL"], e["QT_QPA_PLATFORMTHEME"]), ("1", "xdgdesktopportal"))
+        e = env({"portals": False}); self.assertNotIn("GTK_USE_PORTAL", e); self.assertNotIn("QT_QPA_PLATFORMTHEME", e)
+        e = env({"portals": False, "tray": True}); self.assertNotIn("GTK_USE_PORTAL", e)
+        with mock.patch.dict(os.environ, {"QT_QPA_PLATFORMTHEME": "qt6ct"}):
+            self.assertEqual(env({"portals": True, "compat": True})["QT_QPA_PLATFORMTHEME"], "qt6ct", "a theme you pass through is kept")
+        self.assertEqual(env({"portals": True, "setenv": ["QT_QPA_PLATFORMTHEME=kde"]})["QT_QPA_PLATFORMTHEME"], "kde", "so is one you set")
+
     def test_tray_rules_are_narrow_and_work_without_portals(self):
         S = load_sbx()
         r = S["tray_rules"]()

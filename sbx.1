@@ -300,6 +300,8 @@ stay out.
 .B \-\-portals
 Allow notifications and the basic desktop portals (open links, file chooser, print, settings, trash, e\-mail and a
 few more) through xdg\-dbus\-proxy.
+GTK and Qt programs are told to use the file chooser portal (GTK_USE_PORTAL=1, QT_QPA_PLATFORMTHEME=xdgdesktopportal)
+unless you set or pass through those variables yourself.
 .TP
 .BR \-\-portal\- \fIWHAT\fR
 One more desktop portal each, WHAT being screenshot, screencast, location, shortcuts, wallpaper, launcher,
