@@ -84,11 +84,11 @@ class Parser(Base):
     def test_a_symlink_to_a_place_that_holds_secrets_or_starts_programs_is_marked_on_the_link(self):
         H = self.home
         t = self.tr([f"4242\tl\t1\t0\t-1\t{H}/.ssh", f"4242\ts\t1\t0\t-1\t{H}/Projects/x",
-                     f"4242\tl\t1\t0\t-1\t/etc/cron.d", f"4242\ts\t1\t0\t-1\t/tmp/y",
-                     f"4242\tl\t1\t0\t-1\t../.ssh", f"4242\ts\t1\t0\t-1\t{H}/Projects/z",          # relative: read from the folder of the link
-                     f"4242\tl\t1\t0\t-1\t/usr/share/doc", f"4242\ts\t1\t0\t-1\t/tmp/ok",
-                     f"4242\tl\t1\t0\t-1\t{H}", f"4242\ts\t1\t-17\t-1\t/tmp/home",
-                     f"4242\ts\t1\t0\t-1\t/tmp/no-target"])
+                     "4242\tl\t1\t0\t-1\t/etc/cron.d", "4242\ts\t1\t0\t-1\t/tmp/y",
+                     "4242\tl\t1\t0\t-1\t../.ssh", f"4242\ts\t1\t0\t-1\t{H}/Projects/z",          # relative: read from the folder of the link
+                     "4242\tl\t1\t0\t-1\t/usr/share/doc", "4242\ts\t1\t0\t-1\t/tmp/ok",
+                     f"4242\tl\t1\t0\t-1\t{H}", "4242\ts\t1\t-17\t-1\t/tmp/home",
+                     "4242\ts\t1\t0\t-1\t/tmp/no-target"])
         p = t.paths
         self.assertEqual(p[f"{H}/Projects/x"], {"w": 1, "l": 1}); self.assertEqual(p["/tmp/y"], {"w": 1, "l": 1}); self.assertEqual(p[f"{H}/Projects/z"], {"w": 1, "l": 1})
         self.assertEqual(p["/tmp/ok"], {"w": 1}); self.assertEqual(p["/tmp/home"], {"w": 1, "l": 1})                  # all of your home; the name was there already: not an error
@@ -647,8 +647,7 @@ class Live(Base):
         self.assertFalse(os.path.exists(T.live_path("foo")))
 
     def test_the_loop_skips_a_snapshot_when_nothing_new_was_seen_and_backs_off_when_one_is_slow(self):
-        import threading
-        done, t, n = threading.Event(), self.tr(), []
+        t, n = self.tr(), []
         waits = []
         class D:
             def wait(self, delay):
