@@ -54,7 +54,9 @@ def build(prog, args, live=False, o=None):
     shares = order_shares(rw, ro, cwd, program_share(real) if real.startswith(HOME + "/") else None)
     rt = runtime_dir()
     tag = f"{rt}/sbx/{os.getpid() if live else 'PID'}"
+    inst = f"{rt}/.flatpak/{os.getpid() if live else 'PID'}"      # the portal looks the program up here, by the pid in bwrapinfo.json (as it does for a flatpak)
     state = {"proxy": None, "bus": tag + ".bus", "files": [], "fds": [], "keep": [], "wl": None, "cleanup": [], "prefix": [], "wrap": []}
+    wrapfiles = []          # files the shell in front of bwrap opens as descriptors when pasta is used, which closes inherited ones: (descriptor, "<" or ">", path)
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": sandbox_path(), "XDG_RUNTIME_DIR": rt, "SBX_ACTIVE": "1"}
     for k in ENV_KEEP:
         if k in os.environ: env[k] = os.environ[k]
@@ -78,7 +80,7 @@ def build(prog, args, live=False, o=None):
     if machine in ARCHES and priv:              # inside pasta: bwrap reads the filter from descriptor 9, which a shell opens from this file
         put(f"{tag}.seccomp", seccomp_program(machine, allow))
         a += ["--seccomp", str(SEC_FD)]
-        state["wrap"] = net_wrap(f"{tag}.seccomp")
+        wrapfiles.append((SEC_FD, "<", f"{tag}.seccomp"))
     elif machine in ARCHES:
         if live:
             sec = seccomp_file(allow)
@@ -87,8 +89,6 @@ def build(prog, args, live=False, o=None):
             a += ["--seccomp", str(sec.fileno())]
         else:
             a += ["--seccomp", "FD"]
-    elif priv:
-        state["wrap"] = net_wrap()
 
     def data(dest, text, ext):                  # a read-only file made from text
         put(f"{tag}.{ext}", text.encode())
@@ -171,8 +171,15 @@ def build(prog, args, live=False, o=None):
             if not state["proxy"]: sock = None
         if sock:
             a += ["--ro-bind", sock, f"{rt}/bus"]; env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
-            if cfg["portals"]:      # a toolkit uses the file chooser portal only when told to (a flatpak is told by /.flatpak-info); your own setting wins
-                env.setdefault("GTK_USE_PORTAL", "1"); env.setdefault("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
+            if cfg["portals"]:      # a toolkit uses the file chooser portal only when told to; a theme that compat passes through from your session (gtk3, qt6ct) would open Qt's own dialog, so it is replaced; env= and setenv= still win (no /.flatpak-info for the program: glycin would then run its image loaders through flatpak-spawn, which fails, and GTK aborts)
+                env["GTK_USE_PORTAL"] = "1"; env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
+                info = f"{inst}/bwrapinfo.json"      # bwrap writes {"child-pid": N} here once the sandbox exists; the portal refuses every call without it
+                put(info, b""); state["cleanup"].append(inst)
+                if priv: a += ["--info-fd", str(INFO_FD)]; wrapfiles.append((INFO_FD, ">", info))
+                elif live:
+                    f = os.fdopen(os.open(info, os.O_WRONLY | os.O_NOFOLLOW), "wb"); os.set_inheritable(f.fileno(), True)
+                    state["keep"].append(f); state["fds"].append(f.fileno()); a += ["--info-fd", str(f.fileno())]
+                else: a += ["--info-fd", "FD"]
     if cfg["portals"]:      # the files you pick in a chooser appear here, only this program's own (bind-try: nothing when there is no document portal)
         a += ["--bind-try", f"{runtime_dir()}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
     if live and not cfg["portals"] and any(cfg[k] for k in PORTAL_EXTRA):
@@ -222,4 +229,5 @@ def build(prog, args, live=False, o=None):
     if live: hint_args(args, cwd, [p for p, _ in shares])
     limits = [f"-p{p}={cfg[k]}" for k, p in (("memory", "MemoryMax"), ("tasks", "TasksMax"), ("cpu", "CPUQuota")) if cfg[k]]
     if limits: state["prefix"] = ["systemd-run", "--user", "--scope", "--quiet"] + limits + ["--"]
+    if priv: state["wrap"] = net_wrap(wrapfiles)
     return name, a + ["--chdir", cwd or HOME, "--"] + ([loader] if loader else []) + [exe] + args, state

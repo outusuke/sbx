@@ -8,7 +8,7 @@
 #     the Wayland client (against a fake compositor), launcher rewriting and more. Nothing here needs bubblewrap.
 #   * Isolation: runs sbx-selftest and small programs inside real sandboxes against canary files planted in a temporary
 #     "home". Needs bubblewrap; skipped without it. Nothing touches your real home.
-import contextlib, difflib, hashlib, io, os, re, select, shutil, socket, struct, subprocess, sys, tempfile, threading, types, unittest
+import contextlib, difflib, hashlib, io, json, os, re, select, shutil, socket, struct, subprocess, sys, tempfile, threading, time, types, unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -63,6 +63,7 @@ SCENARIOS = [                                   # (title, program, flags, overri
     ("desktop settings the program can't read", "firefox", [],
      {"gsettings_keyfile_text": lambda: "[org/gnome/desktop/wm/preferences]\nbutton-layout=':minimize,maximize,close'\n"}),
     ("private network (pasta)", "firefox", ["--net-private"], {}),
+    ("portals and a private network", "firefox", ["--portals", "--net-private"], {}),
     ("compositor without security context", "firefox", [], NO_SECURITY_CONTEXT),
     ("wayland strict, no security context", "firefox", ["--wayland-strict"], NO_SECURITY_CONTEXT),
 ]
@@ -179,7 +180,7 @@ class Snapshot(unittest.TestCase):
         wrap, a = fake_preview("firefox", ["--net-private"])
         self.assertEqual(wrap, ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", "169.254.1.1",
                                 "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--",
-                                "/bin/sh", "-c", 'exec 9<"$1"; shift; exec "$@"', "sh", "/run/user/1000/sbx/PID.seccomp"])
+                                "/bin/sh", "-c", 'exec 9<"$1"; shift 1; exec "$@"', "sh", "/run/user/1000/sbx/PID.seccomp"])
         self.assertEqual(a[a.index("--seccomp") + 1], "9")                                  # the shell opens the file as descriptor 9
         self.assertNotIn("FD", a)
         self.assertEqual(a[a.index("--uid"):a.index("--uid") + 4], ["--uid", "1000", "--gid", "1000"])     # pasta's namespace maps you to root
@@ -305,7 +306,68 @@ class Units(unittest.TestCase):
         for private in ("/home", "/root", "/proc/self", "/sys"): self.assertNotIn(private, a)
         if os.path.isdir("/usr") and not os.path.islink("/usr"): self.assertIn(["--ro-bind", "/usr", "/usr"], [a[i:i + 3] for i in range(len(a) - 2)])
         path = f"{self.tmp}/info"; S["write_app_info"](path, "org.sbx.Run.tool")
-        with open(path) as f: self.assertEqual(f.read(), "[Application]\nname=org.sbx.Run.tool\n")
+        with open(path) as f: self.assertEqual(f.read(), f"[Application]\nname=org.sbx.Run.tool\n\n[Instance]\ninstance-id={os.getpid()}\n")
+
+    def test_net_wrap_opens_its_files_as_descriptors_for_bwrap(self):
+        S = self.S; pasta = S["PASTA"]
+        self.assertEqual(S["net_wrap"](), pasta)
+        w = S["net_wrap"]([(9, "<", "/a"), (8, ">", "/b")])
+        self.assertEqual(w[:len(pasta)], pasta)
+        self.assertEqual(w[len(pasta):], ["/bin/sh", "-c", 'exec 9<"$1"; exec 8>"$2"; shift 2; exec "$@"', "sh", "/a", "/b"])
+        self.assertLess(S["INFO_FD"], 10, "dash can't open a two-digit descriptor: exec 10>file runs a program called 10")
+        self.assertNotEqual(S["INFO_FD"], S["SEC_FD"])
+        src, dst = f"{self.tmp}/in", f"{self.tmp}/out"                                  # the shell part for real, without pasta
+        with open(src, "w") as f: f.write("filter\n")
+        r = subprocess.run(S["net_wrap"]([(S["SEC_FD"], "<", src), (S["INFO_FD"], ">", dst)])[len(pasta):] +
+                           ["/bin/sh", "-c", f"cat <&{S['SEC_FD']}; echo info >&{S['INFO_FD']}"], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout), (0, "filter\n"), r.stderr)
+        with open(dst) as f: self.assertEqual(f.read(), "info\n")
+
+    def live_portals_build(self, extra=None):
+        S = self.S; S["runtime_dir"] = lambda: f"{self.tmp}/run"
+        S["start_proxy"] = lambda *a, **k: ("proxy", -1)
+        with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}), mock.patch.object(shutil, "which", lambda x: f"/usr/bin/{x}"):
+            _, a, st = S["build"]("/bin/true", [], True, {"portals": True, "name": "tool", "ignore_config": True, **(extra or {})})
+        st["proxy"] = None
+        self.addCleanup(lambda: [f.close() for f in st["keep"]])
+        inst = f"{self.tmp}/run/.flatpak/{os.getpid()}"
+        return a, st, inst, f"{inst}/bwrapinfo.json"
+
+    def test_portals_have_bwrap_write_its_info_to_the_file_the_portal_reads(self):
+        S = self.S
+        a, st, inst, info = self.live_portals_build()
+        n = int(a[a.index("--info-fd") + 1])
+        self.assertIn(n, st["fds"]); self.assertTrue(os.get_inheritable(n)); self.assertEqual(st["wrap"], [], "no pasta: a plain inherited descriptor")
+        self.assertTrue(os.path.samestat(os.fstat(n), os.stat(info)), "the descriptor is that file")
+        self.assertEqual(os.stat(info).st_mode & 0o777, 0o600); self.assertEqual(os.stat(inst).st_mode & 0o777, 0o700)
+        self.assertIn(info, st["files"]); self.assertIn(inst, st["cleanup"])
+        os.write(n, b'{"child-pid": 1234}')                                          # what bwrap does
+        with open(info) as f: self.assertEqual(json.load(f), {"child-pid": 1234})
+        S["teardown"](st); self.assertFalse(os.path.exists(inst), "the file and the folder are removed")
+        self.assertTrue(os.path.isdir(f"{self.tmp}/run/.flatpak"), "only our own folder goes")
+        for k in ("info", "inst"): self.assertNotIn(k, st)
+
+    def test_portals_with_a_private_network_have_the_shell_open_the_info_file_as_descriptor_8(self):
+        S = self.S
+        a, st, inst, info = self.live_portals_build({"net_private": True})
+        sec = f"{self.tmp}/run/sbx/{os.getpid()}.seccomp"
+        self.assertEqual(a[a.index("--info-fd") + 1], "8"); self.assertEqual(a[a.index("--seccomp") + 1], "9")
+        self.assertEqual(st["wrap"][len(S["PASTA"]):], ["/bin/sh", "-c", 'exec 9<"$1"; exec 8>"$2"; shift 2; exec "$@"', "sh", sec, info])
+        self.assertEqual((st["fds"], st["keep"]), ([], []), "pasta would close anything inherited")
+        self.assertEqual(os.stat(info).st_mode & 0o777, 0o600); self.assertIn(info, st["files"]); self.assertIn(inst, st["cleanup"])
+        S["teardown"](st); self.assertFalse(os.path.exists(inst)); self.assertFalse(os.path.exists(sec))
+
+    def test_no_info_file_without_portals_or_in_a_preview(self):
+        S = self.S; S["runtime_dir"] = lambda: f"{self.tmp}/run"
+        a, st = S["build"]("/bin/true", [], False, {"portals": True, "name": "tool", "ignore_config": True})[1:]
+        self.assertEqual(a[a.index("--info-fd") + 1], "FD"); self.assertEqual(st["fds"], [])
+        self.assertFalse(os.path.exists(f"{self.tmp}/run/.flatpak"), "a preview writes nothing")
+        for o in ({"portals": False}, {"portals": False, "tray": True}):
+            a = S["build"]("/bin/true", [], False, dict(o, name="tool", ignore_config=True))[1]
+            self.assertNotIn("--info-fd", a, o)
+        S["start_proxy"] = lambda *a, **k: None                                       # no proxy, no portals: no file either
+        a, st = S["build"]("/bin/true", [], True, {"portals": True, "name": "tool", "ignore_config": True})[1:]
+        self.assertNotIn("--info-fd", a); self.assertFalse(os.path.exists(f"{self.tmp}/run/.flatpak"))
 
     def test_wayland_message_shorter_than_its_header_is_an_error(self):
         S = self.S
@@ -2470,8 +2532,23 @@ class Ported(unittest.TestCase):
         e = env({"portals": False}); self.assertNotIn("GTK_USE_PORTAL", e); self.assertNotIn("QT_QPA_PLATFORMTHEME", e)
         e = env({"portals": False, "tray": True}); self.assertNotIn("GTK_USE_PORTAL", e)
         with mock.patch.dict(os.environ, {"QT_QPA_PLATFORMTHEME": "qt6ct"}):
-            self.assertEqual(env({"portals": True, "compat": True})["QT_QPA_PLATFORMTHEME"], "qt6ct", "a theme you pass through is kept")
+            self.assertEqual(env({"portals": True, "compat": True})["QT_QPA_PLATFORMTHEME"], "xdgdesktopportal", "a theme compat passes through would open Qt's own dialog, not the portal")
+            self.assertEqual(env({"portals": True, "env": ["QT_QPA_PLATFORMTHEME"]})["QT_QPA_PLATFORMTHEME"], "qt6ct", "one you name in env= is kept")
         self.assertEqual(env({"portals": True, "setenv": ["QT_QPA_PLATFORMTHEME=kde"]})["QT_QPA_PLATFORMTHEME"], "kde", "so is one you set")
+
+    def test_the_program_is_not_shown_a_flatpak_info_file_but_the_proxy_gets_one_with_an_instance(self):
+        S = load_sbx()
+        triples = lambda a: [a[i:i + 3] for i in range(len(a) - 2)]
+        for o in ({"portals": True}, {"portals": False}, {"portals": False, "tray": True}):
+            a = S["build"]("/bin/true", [], False, dict(o, name="tool", ignore_config=True))[1]
+            self.assertIn(["--ro-bind", "/", "/"], triples(a), "one bind for /, as without portals")
+            self.assertNotIn("/.flatpak-info", a, "glycin would run its loaders through flatpak-spawn, which fails, and GTK aborts")
+            self.assertNotIn("--remount-ro", a)
+        self.assertNotIn("/usr", [x for t in triples(S["top_binds"](("usr",))) for x in t[1:2]])
+        self.assertEqual(S["app_info_text"]("org.sbx.Run.tool", 42), "[Application]\nname=org.sbx.Run.tool\n\n[Instance]\ninstance-id=42\n")
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d); path = f"{d}/info"; S["write_app_info"](path, "org.sbx.Run.tool")
+        with open(path) as f: text = f.read()
+        self.assertIn("[Instance]\ninstance-id=", text); self.assertTrue(text.startswith("[Application]\nname=org.sbx.Run.tool\n"))
 
     def test_tray_rules_are_narrow_and_work_without_portals(self):
         S = load_sbx()
@@ -3995,6 +4072,48 @@ class Isolation(unittest.TestCase):
         if self.has_disable_userns: self.assertRegex(r.stdout, r"PASS  user namespaces are blocked")
         r = self.sbx_run(self.script, "--expect=userns0")                       # negative control: without --no-userns they work
         if self.has_disable_userns and r.returncode == 0: self.fail("user namespaces were blocked without asking")
+
+    def portals_leave_bwrapinfo(self, name, *flags):
+        """Run a program that waits, with a stand-in xdg-dbus-proxy (answers ready, makes the socket file), and check that bwrap
+        wrote the file the portal reads while the program ran, and that it is gone after."""
+        fake = f"{self.T}/bin-{name}"; os.makedirs(fake, exist_ok=True)
+        with open(f"{fake}/xdg-dbus-proxy", "w") as f: f.write('#!/bin/sh\n: > "$3"; echo 1 >&"${1#--fd=}"\n')
+        os.chmod(f"{fake}/xdg-dbus-proxy", 0o755)
+        run = f"{self.T}/run-{name}"
+        p = subprocess.Popen([sys.executable, self.sbx, "--ignore-config", "--portals", *flags, "sleep", "60"], cwd=self.home,
+                             env={**self.env, "PATH": f"{fake}:{self.env['PATH']}", "XDG_RUNTIME_DIR": run, "SBX_NO_POPUP": "1"},
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        inst = f"{run}/.flatpak/{p.pid}"                                  # the proxy's /.flatpak-info says instance-id = sbx's pid
+        info = None
+        try:
+            for _ in range(200):
+                try:
+                    with open(f"{inst}/bwrapinfo.json") as f: info = json.load(f)
+                    break
+                except (OSError, ValueError):
+                    if p.poll() is not None: break
+                    time.sleep(0.1)
+            self.assertIsInstance(info, dict, "no bwrapinfo.json from bwrap")
+            self.assertIsInstance(info["child-pid"], int)
+            self.assertTrue(os.path.isdir(f"/proc/{info['child-pid']}"), "child-pid is a live process")
+            self.assertEqual(os.stat(f"{inst}/bwrapinfo.json").st_mode & 0o777, 0o600)
+        finally:
+            p.terminate()
+            try: err = p.communicate(timeout=20)[1]
+            except subprocess.TimeoutExpired: p.kill(); err = p.communicate()[1]
+        self.assertNotIn("Traceback", err, err)
+        self.assertFalse(os.path.exists(inst), "removed when the program ends")
+        return err
+
+    def test_portals_bwrap_leaves_the_info_file_for_the_portal(self):
+        self.portals_leave_bwrapinfo("plain")
+
+    def test_portals_with_a_private_network_leave_the_info_file_too(self):
+        if not shutil.which("pasta"): self.skipTest("pasta is not installed")
+        if subprocess.run(["pasta", "--quiet", "--config-net", "--", "true"], capture_output=True, timeout=30).returncode != 0:
+            self.skipTest("pasta cannot start here")
+        err = self.portals_leave_bwrapinfo("pasta", "--net-private")
+        self.assertNotIn("info_fd", err)                                  # "Write to info_fd: Invalid argument" when pasta closed it
 
     def test_net_private_reaches_the_internet_stack_but_not_this_computer(self):
         if not shutil.which("pasta"): self.skipTest("pasta is not installed")

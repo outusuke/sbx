@@ -101,12 +101,15 @@ DNS_FWD = "169.254.1.1"
 PASTA = ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", DNS_FWD,
          "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--"]
 SEC_FD = 9      # pasta closes inherited descriptors, so bwrap's seccomp filter is re-opened from a file inside it
+INFO_FD = 8     # and the file bwrap writes its --info-fd to likewise (one digit: dash, the usual /bin/sh, can't open "10>file")
 
 
-def net_wrap(secpath=None):
-    """The words that go in front of bwrap to run it inside pasta. With secpath, a shell first opens that file as descriptor 9."""
-    if secpath: return PASTA + ["/bin/sh", "-c", f'exec {SEC_FD}<"$1"; shift; exec "$@"', "sh", secpath]
-    return PASTA
+def net_wrap(files=()):
+    """The words that go in front of bwrap to run it inside pasta. FILES is a list of (descriptor, "<" to read or ">" to write, path):
+    a shell first opens each file as that descriptor, which bwrap then inherits."""
+    if not files: return PASTA
+    opens = "; ".join(f'exec {fd}{op}"${i}"' for i, (fd, op, _) in enumerate(files, 1))
+    return PASTA + ["/bin/sh", "-c", f'{opens}; shift {len(files)}; exec "$@"', "sh"] + [path for _, _, path in files]
 
 
 def scoped_xauth(src, disp, dst):

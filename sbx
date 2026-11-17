@@ -422,12 +422,15 @@ DNS_FWD = "169.254.1.1"
 PASTA = ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", DNS_FWD,
          "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--"]
 SEC_FD = 9      # pasta closes inherited descriptors, so bwrap's seccomp filter is re-opened from a file inside it
+INFO_FD = 8     # and the file bwrap writes its --info-fd to likewise (one digit: dash, the usual /bin/sh, can't open "10>file")
 
 
-def net_wrap(secpath=None):
-    """The words that go in front of bwrap to run it inside pasta. With secpath, a shell first opens that file as descriptor 9."""
-    if secpath: return PASTA + ["/bin/sh", "-c", f'exec {SEC_FD}<"$1"; shift; exec "$@"', "sh", secpath]
-    return PASTA
+def net_wrap(files=()):
+    """The words that go in front of bwrap to run it inside pasta. FILES is a list of (descriptor, "<" to read or ">" to write, path):
+    a shell first opens each file as that descriptor, which bwrap then inherits."""
+    if not files: return PASTA
+    opens = "; ".join(f'exec {fd}{op}"${i}"' for i, (fd, op, _) in enumerate(files, 1))
+    return PASTA + ["/bin/sh", "-c", f'{opens}; shift {len(files)}; exec "$@"', "sh"] + [path for _, _, path in files]
 
 
 def scoped_xauth(src, disp, dst):
@@ -758,6 +761,25 @@ def bus_rules(cfg=None):
 PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")
 
 
+def top_binds(skip=()):
+    """One read-only bind for each top-level folder of this computer (links stay links), for the proxy's small root.
+    The new root is then a filesystem a file can be added to, such as /.flatpak-info: bwrap can't make a file on a read-only /."""
+    a = []
+    try: top = sorted(os.listdir("/"))
+    except OSError: top = []
+    for e in top:
+        p = "/" + e
+        if e in skip: continue
+        if os.path.islink(p): a += ["--symlink", os.readlink(p), p]
+        elif os.path.isdir(p): a += ["--ro-bind", p, p]
+    return a
+
+
+def app_info_text(app, instance=0):
+    """The .flatpak-info the portal reads from the proxy. It wants an [Instance] group too, or it refuses every call."""
+    return f"[Application]\nname={app}\n\n[Instance]\ninstance-id={instance}\n"
+
+
 def proxy_sandbox(info, rt):
     """bwrap arguments for a small root to run xdg-dbus-proxy in: the system read-only, your runtime folder read-write (the bus is there,
     and the proxy makes its own socket there), your home and other private folders not at all, and the program's .flatpak-info at
@@ -765,19 +787,12 @@ def proxy_sandbox(info, rt):
     app of its own and the file chooser hands out files through the document portal, not as real paths the sandbox can't see."""
     a = ["bwrap", "--die-with-parent", "--new-session", "--clearenv", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try",
          "--proc", "/proc", "--dev", "/dev"]
-    try: top = sorted(os.listdir("/"))
-    except OSError: top = []
-    for e in top:
-        p = "/" + e
-        if e in PROXY_ROOT_SKIP: continue
-        if os.path.islink(p): a += ["--symlink", os.readlink(p), p]
-        elif os.path.isdir(p): a += ["--ro-bind", p, p]
-    return a + ["--bind", rt, rt, "--ro-bind", info, "/.flatpak-info"]
+    return a + top_binds(PROXY_ROOT_SKIP) + ["--bind", rt, rt, "--ro-bind", info, "/.flatpak-info"]
 
 
 def write_app_info(path, app):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w") as f: f.write(f"[Application]\nname={app}\n")
+    with os.fdopen(fd, "w") as f: f.write(app_info_text(app, os.getpid()))
 
 
 def start_proxy(sock, cfg=None, app=None):
@@ -1433,7 +1448,9 @@ def build(prog, args, live=False, o=None):
     shares = order_shares(rw, ro, cwd, program_share(real) if real.startswith(HOME + "/") else None)
     rt = runtime_dir()
     tag = f"{rt}/sbx/{os.getpid() if live else 'PID'}"
+    inst = f"{rt}/.flatpak/{os.getpid() if live else 'PID'}"      # the portal looks the program up here, by the pid in bwrapinfo.json (as it does for a flatpak)
     state = {"proxy": None, "bus": tag + ".bus", "files": [], "fds": [], "keep": [], "wl": None, "cleanup": [], "prefix": [], "wrap": []}
+    wrapfiles = []          # files the shell in front of bwrap opens as descriptors when pasta is used, which closes inherited ones: (descriptor, "<" or ">", path)
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": sandbox_path(), "XDG_RUNTIME_DIR": rt, "SBX_ACTIVE": "1"}
     for k in ENV_KEEP:
         if k in os.environ: env[k] = os.environ[k]
@@ -1457,7 +1474,7 @@ def build(prog, args, live=False, o=None):
     if machine in ARCHES and priv:              # inside pasta: bwrap reads the filter from descriptor 9, which a shell opens from this file
         put(f"{tag}.seccomp", seccomp_program(machine, allow))
         a += ["--seccomp", str(SEC_FD)]
-        state["wrap"] = net_wrap(f"{tag}.seccomp")
+        wrapfiles.append((SEC_FD, "<", f"{tag}.seccomp"))
     elif machine in ARCHES:
         if live:
             sec = seccomp_file(allow)
@@ -1466,8 +1483,6 @@ def build(prog, args, live=False, o=None):
             a += ["--seccomp", str(sec.fileno())]
         else:
             a += ["--seccomp", "FD"]
-    elif priv:
-        state["wrap"] = net_wrap()
 
     def data(dest, text, ext):                  # a read-only file made from text
         put(f"{tag}.{ext}", text.encode())
@@ -1550,8 +1565,15 @@ def build(prog, args, live=False, o=None):
             if not state["proxy"]: sock = None
         if sock:
             a += ["--ro-bind", sock, f"{rt}/bus"]; env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
-            if cfg["portals"]:      # a toolkit uses the file chooser portal only when told to (a flatpak is told by /.flatpak-info); your own setting wins
-                env.setdefault("GTK_USE_PORTAL", "1"); env.setdefault("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
+            if cfg["portals"]:      # a toolkit uses the file chooser portal only when told to; a theme that compat passes through from your session (gtk3, qt6ct) would open Qt's own dialog, so it is replaced; env= and setenv= still win (no /.flatpak-info for the program: glycin would then run its image loaders through flatpak-spawn, which fails, and GTK aborts)
+                env["GTK_USE_PORTAL"] = "1"; env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
+                info = f"{inst}/bwrapinfo.json"      # bwrap writes {"child-pid": N} here once the sandbox exists; the portal refuses every call without it
+                put(info, b""); state["cleanup"].append(inst)
+                if priv: a += ["--info-fd", str(INFO_FD)]; wrapfiles.append((INFO_FD, ">", info))
+                elif live:
+                    f = os.fdopen(os.open(info, os.O_WRONLY | os.O_NOFOLLOW), "wb"); os.set_inheritable(f.fileno(), True)
+                    state["keep"].append(f); state["fds"].append(f.fileno()); a += ["--info-fd", str(f.fileno())]
+                else: a += ["--info-fd", "FD"]
     if cfg["portals"]:      # the files you pick in a chooser appear here, only this program's own (bind-try: nothing when there is no document portal)
         a += ["--bind-try", f"{runtime_dir()}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
     if live and not cfg["portals"] and any(cfg[k] for k in PORTAL_EXTRA):
@@ -1601,6 +1623,7 @@ def build(prog, args, live=False, o=None):
     if live: hint_args(args, cwd, [p for p, _ in shares])
     limits = [f"-p{p}={cfg[k]}" for k, p in (("memory", "MemoryMax"), ("tasks", "TasksMax"), ("cpu", "CPUQuota")) if cfg[k]]
     if limits: state["prefix"] = ["systemd-run", "--user", "--scope", "--quiet"] + limits + ["--"]
+    if priv: state["wrap"] = net_wrap(wrapfiles)
     return name, a + ["--chdir", cwd or HOME, "--"] + ([loader] if loader else []) + [exe] + args, state
 
 

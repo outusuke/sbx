@@ -38,6 +38,25 @@ def bus_rules(cfg=None):
 PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")
 
 
+def top_binds(skip=()):
+    """One read-only bind for each top-level folder of this computer (links stay links), for the proxy's small root.
+    The new root is then a filesystem a file can be added to, such as /.flatpak-info: bwrap can't make a file on a read-only /."""
+    a = []
+    try: top = sorted(os.listdir("/"))
+    except OSError: top = []
+    for e in top:
+        p = "/" + e
+        if e in skip: continue
+        if os.path.islink(p): a += ["--symlink", os.readlink(p), p]
+        elif os.path.isdir(p): a += ["--ro-bind", p, p]
+    return a
+
+
+def app_info_text(app, instance=0):
+    """The .flatpak-info the portal reads from the proxy. It wants an [Instance] group too, or it refuses every call."""
+    return f"[Application]\nname={app}\n\n[Instance]\ninstance-id={instance}\n"
+
+
 def proxy_sandbox(info, rt):
     """bwrap arguments for a small root to run xdg-dbus-proxy in: the system read-only, your runtime folder read-write (the bus is there,
     and the proxy makes its own socket there), your home and other private folders not at all, and the program's .flatpak-info at
@@ -45,19 +64,12 @@ def proxy_sandbox(info, rt):
     app of its own and the file chooser hands out files through the document portal, not as real paths the sandbox can't see."""
     a = ["bwrap", "--die-with-parent", "--new-session", "--clearenv", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try",
          "--proc", "/proc", "--dev", "/dev"]
-    try: top = sorted(os.listdir("/"))
-    except OSError: top = []
-    for e in top:
-        p = "/" + e
-        if e in PROXY_ROOT_SKIP: continue
-        if os.path.islink(p): a += ["--symlink", os.readlink(p), p]
-        elif os.path.isdir(p): a += ["--ro-bind", p, p]
-    return a + ["--bind", rt, rt, "--ro-bind", info, "/.flatpak-info"]
+    return a + top_binds(PROXY_ROOT_SKIP) + ["--bind", rt, rt, "--ro-bind", info, "/.flatpak-info"]
 
 
 def write_app_info(path, app):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w") as f: f.write(f"[Application]\nname={app}\n")
+    with os.fdopen(fd, "w") as f: f.write(app_info_text(app, os.getpid()))
 
 
 def start_proxy(sock, cfg=None, app=None):
