@@ -314,7 +314,8 @@ def row_subtitle(name, waiting=False, linked=None, menu=None, show_running=True)
     """The second line of a program's row: running (unless the row shows that itself), waiting for a decision, where it comes from, how else it starts, then its settings."""
     s = origin_source(name)
     parts = (["Running now"] if show_running and program_running(name) else []) + (["Waiting for your decision"] if waiting else [])
-    return " · ".join(parts + (source_parts(s) if s else []) + source_tags(name, linked, menu) + [summary(name)])
+    shared = len(start_variants(name))
+    return " · ".join(parts + (source_parts(s) if s else []) + source_tags(name, linked, menu) + ([f"{shared} programs share this home"] if shared > 1 else []) + [summary(name)])
 
 
 def unused_programs(others):
@@ -322,12 +323,17 @@ def unused_programs(others):
     return [n for n in others if os.path.isdir(f"{HOMES}/{n}") and home_is_small(n)]
 
 
-def in_path(name):
-    """True if PATH holds a program of that name, not counting the links `sbx link` makes (they are how sbx starts, not the program)."""
+def which_program(name):
+    """The first program of that name in PATH, not counting the links `sbx link` makes (they are how sbx starts, not the program), or None."""
     for d in os.environ.get("PATH", "").split(":"):
         p = os.path.join(d, name) if d else ""
-        if p and os.path.isfile(p) and os.access(p, os.X_OK) and not (os.path.islink(p) and os.path.basename(os.readlink(p)) == "sbx"): return True
-    return False
+        if p and os.path.isfile(p) and os.access(p, os.X_OK) and not (os.path.islink(p) and os.path.basename(os.readlink(p)) == "sbx"): return p
+    return None
+
+
+def in_path(name):
+    """True if PATH holds a program of that name (see which_program)."""
+    return which_program(name) is not None
 
 
 def installed_launcher(name):
@@ -378,6 +384,21 @@ def preview_command(name):
     if argv[1] != "open": return [argv[0], "preview"] + argv[1:], None                          # [sbx, NAME] or [sbx, --name=NAME, FILE]
     flags = [] if os.path.exists(f"{APPS}/{name}.conf") else ["--input"]                        # `sbx open` gives a program with no settings of its own game controllers
     return [argv[0], "preview", *flags, argv[2]], None
+
+
+def start_variants(name):
+    """[(kind, path, argv)]: every different program that starts under NAME. They all use the private home ~/.sbx-homes/NAME and the settings of NAME,
+    so two or more means one program shares another's data. The one made by sbx install comes first (it is what start_command starts), then the
+    one in your PATH (a system Firefox next to a Firefox you installed). The same file found twice counts once."""
+    out, seen = [], set()
+    def add(kind, path, argv):
+        real = os.path.realpath(path)
+        if real not in seen: seen.add(real); out.append((kind, path, argv))
+    made = installed_launcher(name)
+    if made: add("Installed", made, [sbx_cmd(), f"--name={name}", made])
+    found = which_program(name) if NAME_RE.match(name) else None
+    if found: add(source_kind(found), found, [sbx_cmd(), name])
+    return out
 
 
 def sbx_cmd():

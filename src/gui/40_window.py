@@ -336,6 +336,8 @@ class Win(Adw.ApplicationWindow):
             pg = self.pending_group(scope)                                        # a decision that blocks it comes before everything
             if pg: page.add(pg)
             page.add(self.program_group(scope))
+            sg = self.shared_group(scope)                                         # a second program under the same name: say so, start either
+            if sg: page.add(sg)
         tech, refresh_tech = self.tech_group(scope)
         page_rows.append(refresh_tech)
         found = []                                                                # (group, [(row, words searched)]) for the search
@@ -448,6 +450,23 @@ class Win(Adw.ApplicationWindow):
         g.add(row)
         g.add(self.app_menu_row(scope))
         g.add(self.link_row(scope))
+        return g
+
+    def shared_group(self, scope):
+        """When two different programs start under one name (a system Firefox you linked and a Firefox from sbx install), they share one private
+        home and one settings file. Say so, and give each its own Launch, so either can be started from this window. None when only one exists."""
+        found = start_variants(scope)
+        if len(found) < 2: return None
+        g = Adw.PreferencesGroup(title="Shared by more than one program",
+                                 description=f"These start under the name {scope}, so they use the same private home ({tilde(HOMES)}/{scope}) and the same settings. "
+                                             "Two versions of one program can damage each other's profile; start one at a time. --name=OTHER gives one of them a home of its own.")
+        for kind, path, argv in found:
+            row = Adw.ActionRow(title=kind, subtitle=tilde(path), use_markup=False)
+            launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER)
+            launch.set_tooltip_text(f"Starts this one with the settings of {scope}")
+            launch.connect("clicked", lambda _b, argv=argv: self.run_program(scope, argv))
+            row.add_suffix(launch)
+            g.add(row)
         return g
 
     def tech_group(self, scope):
@@ -839,10 +858,12 @@ class Win(Adw.ApplicationWindow):
         return g
 
     # -- actions --
-    def run_program(self, name):
+    def run_program(self, name, argv=None):
         # bwrap --die-with-parent kills the program when its parent exits, so a child of this window would die with it.
         # A transient user service has the systemd user manager as parent instead (its output goes to the journal).
-        argv, problem = start_command(name)
+        # ARGV: start exactly this one (when several programs share the name, see shared_group); otherwise the default one.
+        problem = None
+        if argv is None: argv, problem = start_command(name)
         if problem: return self.alert(f"Can't start {name}", problem)
         sr = shutil.which("systemd-run")
         if sr:

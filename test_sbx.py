@@ -3042,6 +3042,27 @@ class Gui(unittest.TestCase):
             self.assertIn("not in your PATH", G["start_command"]("g-diffuser")[1])                                 # file gone: nothing to start
         self.assertIsNone(G["installed_launcher"]("../x"))
 
+    def test_the_window_shows_two_programs_that_share_a_name_and_starts_either(self):
+        G = self.G; h = G["HOME"]; cli = G["sbx_cmd"]()
+        launcher = f"{h}/Apps/firefox/firefox"; os.makedirs(os.path.dirname(launcher)); os.makedirs(G["INSTALLED"])
+        with open(launcher, "wb") as f: f.write(b"\x7fELF")                                                          # sbx install: no execute bit
+        with open(f"{G['INSTALLED']}/firefox", "w") as f: f.write(launcher + "\n")
+        bindir = f"{h}/bin"; os.makedirs(bindir)
+        with mock.patch.dict(os.environ, {"PATH": bindir}):
+            self.assertEqual([v[0] for v in G["start_variants"]("firefox")], ["Installed"])                          # only one program: nothing shared
+            self.assertNotIn("share this home", G["row_subtitle"]("firefox"))
+            prog = f"{bindir}/firefox"
+            with open(prog, "w") as f: f.write("#!/bin/sh\n")
+            os.chmod(prog, 0o755)                                                                                    # the one you linked: in PATH
+            got = G["start_variants"]("firefox")
+            self.assertEqual([(k, p) for k, p, _a in got], [("Installed", launcher), ("Home", prog)])
+            self.assertEqual([a for _k, _p, a in got], [[cli, "--name=firefox", launcher], [cli, "firefox"]])         # both under the one name
+            self.assertEqual(G["start_command"]("firefox"), ([cli, "--name=firefox", launcher], None))               # the default did not change
+            self.assertIn("2 programs share this home", G["row_subtitle"]("firefox"))
+            os.unlink(prog); os.symlink(cli, prog)
+            self.assertEqual(len(G["start_variants"]("firefox")), 1)                                                 # an sbx link is not a second program
+        self.assertEqual(G["start_variants"]("../x"), [])
+
     def test_run_hands_the_recorded_file_to_sbx(self):
         G = self.G; game = f"{G['HOME']}/Games/Crash"; self._gui_origin("Crash", game); win = mock.MagicMock()
         with mock.patch.dict(os.environ, {"PATH": f"{G['HOME']}/nowhere"}), mock.patch.object(G["subprocess"], "Popen") as popen:

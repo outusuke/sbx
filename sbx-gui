@@ -852,7 +852,8 @@ def row_subtitle(name, waiting=False, linked=None, menu=None, show_running=True)
     """The second line of a program's row: running (unless the row shows that itself), waiting for a decision, where it comes from, how else it starts, then its settings."""
     s = origin_source(name)
     parts = (["Running now"] if show_running and program_running(name) else []) + (["Waiting for your decision"] if waiting else [])
-    return " · ".join(parts + (source_parts(s) if s else []) + source_tags(name, linked, menu) + [summary(name)])
+    shared = len(start_variants(name))
+    return " · ".join(parts + (source_parts(s) if s else []) + source_tags(name, linked, menu) + ([f"{shared} programs share this home"] if shared > 1 else []) + [summary(name)])
 
 
 def unused_programs(others):
@@ -860,12 +861,17 @@ def unused_programs(others):
     return [n for n in others if os.path.isdir(f"{HOMES}/{n}") and home_is_small(n)]
 
 
-def in_path(name):
-    """True if PATH holds a program of that name, not counting the links `sbx link` makes (they are how sbx starts, not the program)."""
+def which_program(name):
+    """The first program of that name in PATH, not counting the links `sbx link` makes (they are how sbx starts, not the program), or None."""
     for d in os.environ.get("PATH", "").split(":"):
         p = os.path.join(d, name) if d else ""
-        if p and os.path.isfile(p) and os.access(p, os.X_OK) and not (os.path.islink(p) and os.path.basename(os.readlink(p)) == "sbx"): return True
-    return False
+        if p and os.path.isfile(p) and os.access(p, os.X_OK) and not (os.path.islink(p) and os.path.basename(os.readlink(p)) == "sbx"): return p
+    return None
+
+
+def in_path(name):
+    """True if PATH holds a program of that name (see which_program)."""
+    return which_program(name) is not None
 
 
 def installed_launcher(name):
@@ -916,6 +922,21 @@ def preview_command(name):
     if argv[1] != "open": return [argv[0], "preview"] + argv[1:], None                          # [sbx, NAME] or [sbx, --name=NAME, FILE]
     flags = [] if os.path.exists(f"{APPS}/{name}.conf") else ["--input"]                        # `sbx open` gives a program with no settings of its own game controllers
     return [argv[0], "preview", *flags, argv[2]], None
+
+
+def start_variants(name):
+    """[(kind, path, argv)]: every different program that starts under NAME. They all use the private home ~/.sbx-homes/NAME and the settings of NAME,
+    so two or more means one program shares another's data. The one made by sbx install comes first (it is what start_command starts), then the
+    one in your PATH (a system Firefox next to a Firefox you installed). The same file found twice counts once."""
+    out, seen = [], set()
+    def add(kind, path, argv):
+        real = os.path.realpath(path)
+        if real not in seen: seen.add(real); out.append((kind, path, argv))
+    made = installed_launcher(name)
+    if made: add("Installed", made, [sbx_cmd(), f"--name={name}", made])
+    found = which_program(name) if NAME_RE.match(name) else None
+    if found: add(source_kind(found), found, [sbx_cmd(), name])
+    return out
 
 
 def sbx_cmd():
@@ -1297,6 +1318,8 @@ class Win(Adw.ApplicationWindow):
             pg = self.pending_group(scope)                                        # a decision that blocks it comes before everything
             if pg: page.add(pg)
             page.add(self.program_group(scope))
+            sg = self.shared_group(scope)                                         # a second program under the same name: say so, start either
+            if sg: page.add(sg)
         tech, refresh_tech = self.tech_group(scope)
         page_rows.append(refresh_tech)
         found = []                                                                # (group, [(row, words searched)]) for the search
@@ -1409,6 +1432,23 @@ class Win(Adw.ApplicationWindow):
         g.add(row)
         g.add(self.app_menu_row(scope))
         g.add(self.link_row(scope))
+        return g
+
+    def shared_group(self, scope):
+        """When two different programs start under one name (a system Firefox you linked and a Firefox from sbx install), they share one private
+        home and one settings file. Say so, and give each its own Launch, so either can be started from this window. None when only one exists."""
+        found = start_variants(scope)
+        if len(found) < 2: return None
+        g = Adw.PreferencesGroup(title="Shared by more than one program",
+                                 description=f"These start under the name {scope}, so they use the same private home ({tilde(HOMES)}/{scope}) and the same settings. "
+                                             "Two versions of one program can damage each other's profile; start one at a time. --name=OTHER gives one of them a home of its own.")
+        for kind, path, argv in found:
+            row = Adw.ActionRow(title=kind, subtitle=tilde(path), use_markup=False)
+            launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER)
+            launch.set_tooltip_text(f"Starts this one with the settings of {scope}")
+            launch.connect("clicked", lambda _b, argv=argv: self.run_program(scope, argv))
+            row.add_suffix(launch)
+            g.add(row)
         return g
 
     def tech_group(self, scope):
@@ -1800,10 +1840,12 @@ class Win(Adw.ApplicationWindow):
         return g
 
     # -- actions --
-    def run_program(self, name):
+    def run_program(self, name, argv=None):
         # bwrap --die-with-parent kills the program when its parent exits, so a child of this window would die with it.
         # A transient user service has the systemd user manager as parent instead (its output goes to the journal).
-        argv, problem = start_command(name)
+        # ARGV: start exactly this one (when several programs share the name, see shared_group); otherwise the default one.
+        problem = None
+        if argv is None: argv, problem = start_command(name)
         if problem: return self.alert(f"Can't start {name}", problem)
         sr = shutil.which("systemd-run")
         if sr:
