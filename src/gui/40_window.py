@@ -717,6 +717,7 @@ class Win(Adw.ApplicationWindow):
         def toggled(*_):
             if busy[0]: return
             want = row.get_active()
+            if not want and not launcher_is_ours(scope): return        # already gone (removed elsewhere): nothing to undo, no error
             try: r = subprocess.run([sbx_cmd(), "desktop"] + ([] if want else ["--remove"]) + [scope], capture_output=True, text=True, timeout=15)
             except (OSError, subprocess.TimeoutExpired) as e:
                 set_active(not want); return self.alert("Couldn't run sbx", str(e))
