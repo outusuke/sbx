@@ -99,6 +99,12 @@ PORTAL_NAME = "org.freedesktop.portal.Desktop"
 PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Account",
                 "Email", "Trash", "NetworkMonitor", "ProxyResolver", "GameMode", "MemoryMonitor",
                 "PowerProfileMonitor", "Realtime")
+# Basic portals that can be switched off one by one (all on, and only used when portals=1): setting -> portal interfaces. The file chooser
+# and Settings (dark mode) stay in the base; the rest of PORTAL_BASIC (Account follows privacy, Game/Memory/Power/Realtime) stays as is.
+PORTAL_TOGGLES = {"portal_notification": ("Notification",), "portal_openuri": ("OpenURI",), "portal_print": ("Print",),
+                  "portal_trash": ("Trash",), "portal_email": ("Email",), "portal_inhibit": ("Inhibit",),
+                  "portal_network": ("NetworkMonitor", "ProxyResolver")}
+SCALARS.update({k: True for k in PORTAL_TOGGLES})
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # a program name run from here may move between them
 NIX_LINKS = ("/run/current-system", "/run/booted-system", "/run/opengl-driver", "/run/opengl-driver-32")   # NixOS and Guix
 
@@ -775,10 +781,12 @@ def wayland_context(display, sock_path, app_id, instance):
 
 # ---------------------------------------------------------------- portals
 def portal_rules(cfg=None):
-    rules = ["--talk=org.freedesktop.Notifications", f"--see={PORTAL_NAME}"]
+    on = lambda k: not cfg or cfg.get(k, True)          # a switch in PORTAL_TOGGLES: on unless the settings say 0
+    rules = (["--talk=org.freedesktop.Notifications"] if on("portal_notification") else []) + [f"--see={PORTAL_NAME}"]
     extra = [i for k, i in PORTAL_EXTRA.items() if cfg and cfg.get(k)]
     if cfg and cfg.get("camera"): extra.append("Camera")          # the Camera portal follows the camera switch
-    basic = [i for i in PORTAL_BASIC if not (i == "Account" and cfg and cfg.get("privacy"))]     # Account hands out the real name
+    off = {i for k, v in PORTAL_TOGGLES.items() if not on(k) for i in v}
+    basic = [i for i in PORTAL_BASIC if i not in off and not (i == "Account" and cfg and cfg.get("privacy"))]     # Account hands out the real name
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in basic + extra]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
               f"--call={PORTAL_NAME}=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*",   # screencast etc. sessions
@@ -1905,7 +1913,8 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
-         **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA}}
+         **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA},
+         **{"--no-" + k.replace("_", "-"): (k, False) for k in PORTAL_TOGGLES}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
                "--loader": "loader"}
@@ -1945,6 +1954,8 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
          "  --portal-screenshot --portal-screencast --portal-location --portal-shortcuts --portal-remote-desktop\n"
          "  --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret --portal-background    one more desktop portal each (needs --portals)\n"
+         "  --no-portal-notification --no-portal-openuri --no-portal-print --no-portal-trash --no-portal-email --no-portal-inhibit --no-portal-network\n"
+         "                switch one basic portal off (with --portals): notifications, links and files, print dialog, trash, email, keep-awake, network state\n"
          "  --compat      pass graphics/toolkit variables (WGPU_*, MESA_*, SDL_*, QT_QPA_*...) that are set; nothing else\n"
          "  --wayland-strict       no Wayland at all if the compositor can't restrict it\n"
          "  --whitelist=PATH       share a file or folder (read-write); can be repeated\n"

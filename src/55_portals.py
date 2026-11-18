@@ -3,10 +3,12 @@
 
 # ---------------------------------------------------------------- portals
 def portal_rules(cfg=None):
-    rules = ["--talk=org.freedesktop.Notifications", f"--see={PORTAL_NAME}"]
+    on = lambda k: not cfg or cfg.get(k, True)          # a switch in PORTAL_TOGGLES: on unless the settings say 0
+    rules = (["--talk=org.freedesktop.Notifications"] if on("portal_notification") else []) + [f"--see={PORTAL_NAME}"]
     extra = [i for k, i in PORTAL_EXTRA.items() if cfg and cfg.get(k)]
     if cfg and cfg.get("camera"): extra.append("Camera")          # the Camera portal follows the camera switch
-    basic = [i for i in PORTAL_BASIC if not (i == "Account" and cfg and cfg.get("privacy"))]     # Account hands out the real name
+    off = {i for k, v in PORTAL_TOGGLES.items() if not on(k) for i in v}
+    basic = [i for i in PORTAL_BASIC if i not in off and not (i == "Account" and cfg and cfg.get("privacy"))]     # Account hands out the real name
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in basic + extra]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
               f"--call={PORTAL_NAME}=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*",   # screencast etc. sessions

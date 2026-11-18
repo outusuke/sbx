@@ -2533,6 +2533,23 @@ class Ported(unittest.TestCase):
         self.assertEqual(mount({"portals": False, "tray": True, "name": "tool"}), [], "the tray alone does not open it")
         self.assertEqual(mount({"portals": True, "name": "other"}), [], "each program gets its own folder")
 
+    def test_basic_portals_can_be_switched_off_one_by_one(self):
+        S = load_sbx()
+        def rules(**o):
+            return "\n".join(S["portal_rules"](dict(S["SCALARS"], portals=True, **o)))
+        base = rules()
+        for k, ifaces in S["PORTAL_TOGGLES"].items():
+            self.assertIs(S["SCALARS"][k], True, k)                      # on by default, so portals=1 keeps working as before
+            for i in ifaces: self.assertIn(f"portal.{i}.*", base)
+            off = rules(**{k: False})
+            for i in ifaces: self.assertNotIn(f"portal.{i}.*", off, k)
+            self.assertIn("portal.FileChooser.*", off, k)                # the file chooser and Settings stay
+            self.assertIn("portal.Settings.*", off, k)
+        self.assertIn("--talk=org.freedesktop.Notifications", base)
+        self.assertNotIn("--talk=org.freedesktop.Notifications", rules(portal_notification=False))
+        self.assertEqual(S["parse_options"](["--no-portal-openuri", "x"])[0], {"portal_openuri": False})
+        self.assertEqual(S["portal_rules"](), S["portal_rules"](dict(S["SCALARS"], portals=True)))      # no settings: everything on
+
     def test_gtk_portal_auto_skips_gtk_use_portal_only_for_cursor_size_zero(self):
         S = load_sbx()
         def env(o, cursor0, warned=None):

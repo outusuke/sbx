@@ -87,5 +87,11 @@ PORTAL_NAME = "org.freedesktop.portal.Desktop"
 PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Account",
                 "Email", "Trash", "NetworkMonitor", "ProxyResolver", "GameMode", "MemoryMonitor",
                 "PowerProfileMonitor", "Realtime")
+# Basic portals that can be switched off one by one (all on, and only used when portals=1): setting -> portal interfaces. The file chooser
+# and Settings (dark mode) stay in the base; the rest of PORTAL_BASIC (Account follows privacy, Game/Memory/Power/Realtime) stays as is.
+PORTAL_TOGGLES = {"portal_notification": ("Notification",), "portal_openuri": ("OpenURI",), "portal_print": ("Print",),
+                  "portal_trash": ("Trash",), "portal_email": ("Email",), "portal_inhibit": ("Inhibit",),
+                  "portal_network": ("NetworkMonitor", "ProxyResolver")}
+SCALARS.update({k: True for k in PORTAL_TOGGLES})
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # a program name run from here may move between them
 NIX_LINKS = ("/run/current-system", "/run/booted-system", "/run/opengl-driver", "/run/opengl-driver-32")   # NixOS and Guix

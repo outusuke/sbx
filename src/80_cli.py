@@ -9,7 +9,8 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
-         **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA}}
+         **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA},
+         **{"--no-" + k.replace("_", "-"): (k, False) for k in PORTAL_TOGGLES}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
                "--loader": "loader"}
@@ -49,6 +50,8 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
          "  --portal-screenshot --portal-screencast --portal-location --portal-shortcuts --portal-remote-desktop\n"
          "  --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret --portal-background    one more desktop portal each (needs --portals)\n"
+         "  --no-portal-notification --no-portal-openuri --no-portal-print --no-portal-trash --no-portal-email --no-portal-inhibit --no-portal-network\n"
+         "                switch one basic portal off (with --portals): notifications, links and files, print dialog, trash, email, keep-awake, network state\n"
          "  --compat      pass graphics/toolkit variables (WGPU_*, MESA_*, SDL_*, QT_QPA_*...) that are set; nothing else\n"
          "  --wayland-strict       no Wayland at all if the compositor can't restrict it\n"
          "  --whitelist=PATH       share a file or folder (read-write); can be repeated\n"
