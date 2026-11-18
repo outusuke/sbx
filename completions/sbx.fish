@@ -63,6 +63,7 @@ for d in camera alsa input kvm rocm printing ssh-agent
 end
 complete -c sbx -n $c -l allow-sensitive -d "Allow sharing ~/.ssh, ~/.gnupg and similar"
 complete -c sbx -n $c -l compat -d "Pass graphics and toolkit variables"
+complete -c sbx -n $c -l single-instance -d "Second launch hands files to the running one"
 complete -c sbx -n $c -l ignore-config -d "Ignore the settings files for this run"
 complete -c sbx -n $c -l rebind -d "This file is the same program, just moved"
 for p in screenshot screencast location shortcuts remote-desktop input-capture wallpaper launcher secret background

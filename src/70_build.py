@@ -112,6 +112,12 @@ def build(prog, args, live=False, o=None):
     for d in resolv_dirs():
         if os.path.isdir(d): a += ["--ro-bind", d, d]
     a += ["--perms", "0700", "--dir", rt]
+    if cfg["single_instance"]:      # a second launch of the same program finds the first one's lock/socket files (Chrome keeps its singleton socket in $TMPDIR)
+        si = f"{rt}/sbx/single/{name}"
+        if live:
+            for d in (f"{rt}/sbx", f"{rt}/sbx/single", si): os.makedirs(d, mode=0o700, exist_ok=True)
+        a += ["--bind", si, si]
+        env["TMPDIR"] = si          # set before setenv=, so a setenv=TMPDIR=... of yours still wins
     # Desktop access (each one a setting): Wayland, X11, GPU, sound, portals.
     gui, late = False, []          # late: mounts that may sit inside the home, so they go after the home is replaced
     wp = wayland_path() if cfg["wayland"] else None

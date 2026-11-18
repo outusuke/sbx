@@ -64,7 +64,7 @@ TRAY_IDS = range(1, 4)
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, "tray": False, "folder": False, **{k: False for k in PORTAL_EXTRA}}
+           "compat": False, "tray": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
@@ -1514,6 +1514,12 @@ def build(prog, args, live=False, o=None):
     for d in resolv_dirs():
         if os.path.isdir(d): a += ["--ro-bind", d, d]
     a += ["--perms", "0700", "--dir", rt]
+    if cfg["single_instance"]:      # a second launch of the same program finds the first one's lock/socket files (Chrome keeps its singleton socket in $TMPDIR)
+        si = f"{rt}/sbx/single/{name}"
+        if live:
+            for d in (f"{rt}/sbx", f"{rt}/sbx/single", si): os.makedirs(d, mode=0o700, exist_ok=True)
+        a += ["--bind", si, si]
+        env["TMPDIR"] = si          # set before setenv=, so a setenv=TMPDIR=... of yours still wins
     # Desktop access (each one a setting): Wayland, X11, GPU, sound, portals.
     gui, late = False, []          # late: mounts that may sit inside the home, so they go after the home is replaced
     wp = wayland_path() if cfg["wayland"] else None
@@ -1857,7 +1863,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          "--tray": ("tray", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
-         "--compat": ("compat", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
+         "--compat": ("compat", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
          **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
@@ -1893,6 +1899,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --hostname    hostname 'sbx' inside        --no-userns    the program can't create user namespaces\n"
          "  --privacy     /etc/passwd without your real name or the other accounts; the Account portal is blocked too\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
+         "  --single-instance     a second launch hands its files to the running one (shares a private $TMPDIR per program)\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
          "  --portal-screenshot --portal-screencast --portal-location --portal-shortcuts --portal-remote-desktop\n"
