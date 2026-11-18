@@ -287,9 +287,9 @@ only the tray and media\-key names are allowed on the bus.
 Share your SSH agent socket. The program can sign as you while it runs.
 .TP
 .B \-\-no\-theme
-Do not show your fonts, icons and GTK and fontconfig settings, and do not pass on your title\-bar button layout
+Do not show your fonts, icons and GTK, KDE and fontconfig settings, and do not pass on your title\-bar button layout
 and cursor theme and size. Without this option sbx reads those from your desktop settings (dconf, which the
-sandbox cannot reach) and gives the program only them, as a small GSettings key file, so that for example
+sandbox cannot reach; on KDE, kwinrc and kcminputrc) and gives the program only them, as a small GSettings key file, so that for example
 GNOME's minimize and maximize buttons appear.
 .TP
 .B \-\-compat

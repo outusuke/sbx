@@ -2706,6 +2706,29 @@ class DesktopSettings(unittest.TestCase):
         with open(f"{self.tmp}/.config/gtk-3.0/settings.ini", "w") as f: f.write("[Settings]\ngtk-decoration-layout=:minimize,maximize,close\n")
         self.assertEqual(self.text(), "[org/gnome/desktop/wm/preferences]\nbutton-layout=':minimize,maximize,close'\n")
 
+    def kde(self, files, desktop="KDE"):
+        """Pretend this is a KDE session with these ~/.config files (name -> text)."""
+        os.makedirs(f"{self.tmp}/.config", exist_ok=True)
+        for name, text in files.items():
+            with open(f"{self.tmp}/.config/{name}", "w") as f: f.write(text)
+        p = mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": desktop}); p.start(); self.addCleanup(p.stop)
+
+    def test_kde_layout_and_cursor_come_from_kwin_and_plasma_not_gnomes_defaults(self):
+        self.host({("org.gnome.desktop.wm.preferences", "button-layout"): "'appmenu:close'",       # what gsettings answers on KDE
+                   ("org.gnome.desktop.interface", "cursor-theme"): "'Adwaita'", ("org.gnome.desktop.interface", "cursor-size"): "24"})
+        self.kde({"kwinrc": "[Windows]\nFoo=1\n\n[org.kde.kdecoration2]\nButtonsOnLeft=MS\nButtonsOnRight=HIAX\n",
+                  "kcminputrc": "[Mouse]\ncursorTheme=breeze_cursors\ncursorSize=36\n"})
+        self.assertEqual(self.text(), "[org/gnome/desktop/wm/preferences]\nbutton-layout='menu:minimize,maximize,close'\n\n"
+                                      "[org/gnome/desktop/interface]\ncursor-theme='breeze_cursors'\ncursor-size=36\n")
+
+    def test_kde_missing_or_hostile_values_fall_back_and_other_desktops_ignore_kwin(self):
+        self.host({("org.gnome.desktop.wm.preferences", "button-layout"): "'appmenu:close'"})
+        self.kde({"kwinrc": "[org.kde.kdecoration2]\nButtonsOnRight=X\n", "kcminputrc": "[Mouse]\ncursorTheme=../../etc\ncursorSize=9999\n"})
+        self.assertEqual(self.text(), "[org/gnome/desktop/wm/preferences]\nbutton-layout='menu:close'\n")      # KWin's default left side is kept
+        self.kde({"kwinrc": "[Windows]\nFoo=1\n"}); self.assertEqual(self.text(), "[org/gnome/desktop/wm/preferences]\nbutton-layout='appmenu:close'\n")
+        self.kde({"kwinrc": "[org.kde.kdecoration2]\nButtonsOnLeft=IAX\nButtonsOnRight=\n"}, desktop="GNOME")      # not KDE: kwinrc is not read
+        self.assertEqual(self.text(), "[org/gnome/desktop/wm/preferences]\nbutton-layout='appmenu:close'\n")
+
     def test_only_the_wanted_keys_are_ever_asked_for(self):
         asked = []
         self.S["gsettings_get"] = lambda schema, key: asked.append((schema, key))

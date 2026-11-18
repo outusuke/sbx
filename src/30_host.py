@@ -190,8 +190,43 @@ def gtk_ini_layout():
     return None
 
 
+KDE_BUTTONS = {"M": "menu", "I": "minimize", "A": "maximize", "X": "close"}      # KDE's other buttons (help, pin, ...) have no GTK name
+
+
+def host_is_kde():
+    return "KDE" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":")
+
+
+def kde_config_get(file, group, key):
+    """One value from ~/.config/FILE (KDE's ini format: [Group], then key=value), or None."""
+    try:
+        with open(f"{HOME}/.config/{file}", encoding="utf-8") as f:
+            inside = False
+            for ln in f:
+                ln = ln.strip()
+                if ln.startswith("["): inside = ln == f"[{group}]"; continue
+                k, eq, v = ln.partition("=")
+                if inside and eq and k.strip() == key: return v.strip()
+    except (OSError, UnicodeDecodeError):
+        pass
+    return None
+
+
+def kde_button_layout():
+    """The title-bar buttons KWin draws (kwinrc), as a GTK layout like 'menu:minimize,maximize,close', or None."""
+    left = kde_config_get("kwinrc", "org.kde.kdecoration2", "ButtonsOnLeft")
+    right = kde_config_get("kwinrc", "org.kde.kdecoration2", "ButtonsOnRight")
+    if left is None and right is None: return None
+    left, right = "MS" if left is None else left, "HIAX" if right is None else right      # KWin's defaults
+    layout = ",".join(KDE_BUTTONS[c] for c in left if c in KDE_BUTTONS) + ":" + ",".join(KDE_BUTTONS[c] for c in right if c in KDE_BUTTONS)
+    return layout if LAYOUT_RE.fullmatch(layout) else None
+
+
 def host_button_layout():
-    """The button layout from the desktop settings (gsettings/dconf), else from your own GTK settings.ini, else None."""
+    """The button layout from the desktop settings (KWin on KDE, else gsettings/dconf), else from your own GTK settings.ini, else None."""
+    if host_is_kde():          # gsettings would answer with GNOME's default here, not what KWin draws
+        v = kde_button_layout()
+        if v is not None: return v
     for schema, key in LAYOUT_KEYS:
         v = gsettings_get(schema, key)
         v = v.strip("'\"") if v is not None else None
@@ -213,6 +248,11 @@ def host_cursor():
     size = gsettings_get(CURSOR_SCHEMA, "cursor-size")
     if size is not None and CURSOR_SIZE_RE.fullmatch(size) and 0 < int(size) <= CURSOR_SIZE_MAX: size = int(size)
     else: size = None
+    if host_is_kde():          # what Plasma's cursor settings say wins over gsettings' defaults
+        kt = kde_config_get("kcminputrc", "Mouse", "cursorTheme")
+        ks = kde_config_get("kcminputrc", "Mouse", "cursorSize")
+        if kt is not None and CURSOR_THEME_RE.fullmatch(kt): theme = kt
+        if ks is not None and CURSOR_SIZE_RE.fullmatch(ks) and 0 < int(ks) <= CURSOR_SIZE_MAX: size = int(ks)
     return theme, size
 
 

@@ -45,6 +45,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
@@ -175,6 +178,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
@@ -245,6 +251,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /home/user/apps/foo /home/user/apps/foo
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
@@ -314,6 +323,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /tmp/sbx-snapshot-fixture/a /tmp/sbx-snapshot-fixture/a
 --bind /tmp/sbx-snapshot-fixture/c /tmp/sbx-snapshot-fixture/c
 --bind /tmp/sbx-snapshot-fixture/a/b /tmp/sbx-snapshot-fixture/a/b
@@ -386,6 +398,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
@@ -461,6 +476,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
@@ -530,6 +548,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
@@ -602,6 +623,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
@@ -726,6 +750,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /run/user/1000/sbx/PID.gsettings /home/user/.config/glib-2.0/settings/keyfile
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
@@ -800,6 +827,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
@@ -876,6 +906,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
@@ -948,6 +981,9 @@ bwrap
 --ro-bind-try /home/user/.config/gtk-4.0/gtk.css /home/user/.config/gtk-4.0/gtk.css
 --ro-bind-try /home/user/.config/fontconfig /home/user/.config/fontconfig
 --ro-bind-try /home/user/.cache/fontconfig /home/user/.cache/fontconfig
+--ro-bind-try /home/user/.config/kdeglobals /home/user/.config/kdeglobals
+--ro-bind-try /home/user/.config/kdedefaults /home/user/.config/kdedefaults
+--ro-bind-try /home/user/.local/share/color-schemes /home/user/.local/share/color-schemes
 --ro-bind /dev/null /etc/shadow
 --ro-bind /dev/null /etc/shadow-
 --ro-bind /dev/null /etc/gshadow
