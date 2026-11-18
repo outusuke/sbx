@@ -26,7 +26,6 @@ Man page and completions:
 
 ```
 sudo install -Dm644 sbx.1 /usr/local/share/man/man1/sbx.1
-sudo install -Dm644 tools/sbx-trace.1 /usr/local/share/man/man1/sbx-trace.1
 sudo install -Dm644 completions/sbx.bash /usr/local/share/bash-completion/completions/sbx
 sudo install -Dm644 completions/_sbx /usr/local/share/zsh/site-functions/_sbx
 sudo install -Dm644 completions/sbx.fish /usr/local/share/fish/vendor_completions.d/sbx.fish
@@ -117,24 +116,12 @@ Back up or move settings with `sbx export -o FILE` and `sbx import FILE` (`--for
 
 ## Trace
 
-`sbx-trace` runs a program under [bpftrace](https://bpftrace.org) and reports which files it opened, looked for or changed, and which attempts failed (refused, read-only, or hidden by the sandbox). Use it to see what a setting would let through. It needs `bpftrace`, a kernel with BTF and root (it asks through `sudo` or `pkexec`).
-
-```
-sbx-trace -- sbx firefox       # run it and print the report
-sbx-trace --last               # show the last report again
-sbx-trace --suggest            # read_only= / whitelist= lines for what was refused (read them first)
-sbx-trace --diff               # compare with the run before: did a setting help?
-sbx-trace --html -o report.html   # one page to open or send: a map of the folders, and what needs attention
-```
-
-`sbx-trace-gui` is a window for the same: while the program runs it shows the files touched so far, refreshed every second, and its save button writes the report as the web page. Install: `sudo install -m755 tools/sbx-trace tools/sbx-trace-gui /usr/local/bin/`. Reports are kept in `~/.local/state/sbx-trace`.
+`sbx-trace` is a separate program, not part of this repository. It runs a program under bpftrace and reports which files it opened, looked for or changed, and which attempts failed (refused, read-only, or hidden by the sandbox). It works with sbx: `sbx-trace sbx firefox` traces a program in the sandbox, and `sbx-trace --suggest` prints `read_only=` / `whitelist=` lines for what was refused.
 
 ## Test
 
 ```
 python3 test_sbx.py              # all tests (isolation tests need bubblewrap)
-python3 tools/test_sbx_trace.py  # sbx-trace and its window (no root or bpftrace needed)
-python3 tools/test_sbx_trace_gui.py
 sbx ./sbx-selftest               # inside the sandbox: every row should say PASS
 sbx ./sbx-report                 # what the program can reach
 ```
