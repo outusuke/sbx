@@ -2157,6 +2157,16 @@ class Units(unittest.TestCase):
         new, _ = self.S["rewrite_desktop"]("[Desktop Entry]\nExec=app\n", "/opt/my tools/sbx")
         self.assertIn('Exec="/opt/my tools/sbx" app', new)
 
+    def test_launcher_window_class_follows_the_executable_for_suffixed_programs(self):
+        rw = lambda t: self.S["rewrite_desktop"](t, "/usr/local/bin/sbx")[0].splitlines()
+        chrome = "[Desktop Entry]\nExec=/usr/bin/google-chrome-stable %U\nStartupWMClass=google-chrome\n\n[Desktop Action w]\nExec=/usr/bin/google-chrome-stable\n"
+        self.assertIn("StartupWMClass=google-chrome-stable", rw(chrome)); self.assertNotIn("StartupWMClass=google-chrome", rw(chrome))
+        for same in ("Exec=firefox %u\nStartupWMClass=firefox", "Exec=firefox %u\nStartupWMClass=Navigator", "Exec=code\nStartupWMClass=Code",
+                     "Exec=google-chrome-stable\nStartupWMClass=Google-chrome", "Exec=app\n"):      # left alone: same name, unrelated, other case, none
+            lines = rw("[Desktop Entry]\n" + same + "\n")
+            self.assertEqual([l for l in lines if l.startswith("StartupWMClass=")], [l for l in same.splitlines() if l.startswith("StartupWMClass=")], same)
+        self.assertEqual([l for l in rw("[Desktop Entry]\nExec=a\n\n[Desktop Action x]\nStartupWMClass=g\nExec=g-stable\n") if l.startswith("StartupWMClass")], ["StartupWMClass=g"])
+
     def test_schema_lists_every_setting(self):
         sch = self.S["schema"]()
         self.assertEqual(sch["switches"], self.S["SCALARS"])

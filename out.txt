@@ -8,27 +8,27 @@ test_other_desktops_and_the_gtk_ini_are_used_but_written_under_gnomes_schema (__
 test_the_file_is_private_written_only_when_live_and_swept_when_stale (__main__.DesktopSettings.test_the_file_is_private_written_only_when_live_and_swept_when_stale) ... ok
 test_the_program_gets_the_file_and_the_backend_only_with_a_window_and_theme (__main__.DesktopSettings.test_the_program_gets_the_file_and_the_backend_only_with_a_window_and_theme) ... ok
 test_a_blocked_switch_row_stays_usable_for_its_undo_button_but_cannot_be_turned_on (__main__.Gui.test_a_blocked_switch_row_stays_usable_for_its_undo_button_but_cannot_be_turned_on)
-set_sensitive(False) on a row greys the undo button inside it too, so an overridden row must stay usable. ... /home/tecno/Downloads/github/sbx/test_sbx.py:3651: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-x3e2lr4j/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
+set_sensitive(False) on a row greys the undo button inside it too, so an overridden row must stay usable. ... /home/tecno/Downloads/github/sbx/test_sbx.py:3661: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-s0vwzy3q/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
   self.assertEqual(open(conf).read(), "net=0\n"); win.toasts.add_toast.assert_called_once()
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
 test_a_hint_applied_on_the_log_page_rebuilds_the_program_page_below_it (__main__.Gui.test_a_hint_applied_on_the_log_page_rebuilds_the_program_page_below_it) ... ok
-test_a_limit_row_writes_only_when_changed_and_undo_gives_back_the_default (__main__.Gui.test_a_limit_row_writes_only_when_changed_and_undo_gives_back_the_default) ... /home/tecno/Downloads/github/sbx/test_sbx.py:3573: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-nbrpznoi/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
+test_a_limit_row_writes_only_when_changed_and_undo_gives_back_the_default (__main__.Gui.test_a_limit_row_writes_only_when_changed_and_undo_gives_back_the_default) ... /home/tecno/Downloads/github/sbx/test_sbx.py:3583: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-73j62lt9/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "memory=50%\ncpu=50%\n")      # showing never writes
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:3580: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-nbrpznoi/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:3590: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-73j62lt9/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "cpu=50%\nmemory=3G\n"); changed.assert_called_once()
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:3582: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-nbrpznoi/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:3592: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-73j62lt9/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "cpu=50%\n")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:3584: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-nbrpznoi/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:3594: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-73j62lt9/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
 test_a_line_break_in_a_shared_path_cannot_start_a_new_setting (__main__.Gui.test_a_line_break_in_a_shared_path_cannot_start_a_new_setting) ... ok
 test_a_panic_on_a_missing_file_offers_to_start_in_the_programs_own_folder (__main__.Gui.test_a_panic_on_a_missing_file_offers_to_start_in_the_programs_own_folder) ... ok
-test_a_program_limit_overrides_the_default_and_an_empty_one_means_none_on_purpose (__main__.Gui.test_a_program_limit_overrides_the_default_and_an_empty_one_means_none_on_purpose) ... /home/tecno/Downloads/github/sbx/test_sbx.py:3559: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-jp4lo77h/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
+test_a_program_limit_overrides_the_default_and_an_empty_one_means_none_on_purpose (__main__.Gui.test_a_program_limit_overrides_the_default_and_an_empty_one_means_none_on_purpose) ... /home/tecno/Downloads/github/sbx/test_sbx.py:3569: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-bps2f0zp/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{G['APPS']}/app.conf").read(), "net=0\ngpu=0\ncpu=200%\n")                # other lines stay
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
@@ -75,7 +75,7 @@ test_removing_the_unused_ones_trashes_only_those_homes (__main__.Gui.test_removi
 test_reset_deletes_the_settings_file_instead_of_emptying_it (__main__.Gui.test_reset_deletes_the_settings_file_instead_of_emptying_it) ... ok
 test_resetting_the_private_home_moves_it_to_the_trash_and_shows_the_new_size (__main__.Gui.test_resetting_the_private_home_moves_it_to_the_trash_and_shows_the_new_size) ... ok
 test_run_hands_the_recorded_file_to_sbx (__main__.Gui.test_run_hands_the_recorded_file_to_sbx) ... ok
-test_run_shows_why_instead_of_starting_a_missing_file (__main__.Gui.test_run_shows_why_instead_of_starting_a_missing_file) ... /home/tecno/Downloads/github/sbx/test_sbx.py:2924: ResourceWarning: unclosed file <_io.BufferedRandom name=3>
+test_run_shows_why_instead_of_starting_a_missing_file (__main__.Gui.test_run_shows_why_instead_of_starting_a_missing_file) ... /home/tecno/Downloads/github/sbx/test_sbx.py:2934: ResourceWarning: unclosed file <_io.BufferedRandom name=3>
   exec(compile(src, "sbx-gui", "exec"), ns)
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
@@ -103,7 +103,7 @@ test_the_window_shows_two_programs_that_share_a_name_and_starts_either (__main__
 test_the_window_starts_a_program_made_by_sbx_install (__main__.Gui.test_the_window_starts_a_program_made_by_sbx_install) ... ok
 test_the_window_starts_a_program_that_is_not_in_path_from_its_recorded_file (__main__.Gui.test_the_window_starts_a_program_that_is_not_in_path_from_its_recorded_file) ... ok
 test_the_window_will_not_trash_the_home_of_a_running_program (__main__.Gui.test_the_window_will_not_trash_the_home_of_a_running_program) ... ok
-test_toggling_a_switch_back_to_the_default_clears_its_override (__main__.Gui.test_toggling_a_switch_back_to_the_default_clears_its_override) ... /home/tecno/Downloads/github/sbx/test_sbx.py:3663: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-sorxlqay/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
+test_toggling_a_switch_back_to_the_default_clears_its_override (__main__.Gui.test_toggling_a_switch_back_to_the_default_clears_its_override) ... /home/tecno/Downloads/github/sbx/test_sbx.py:3673: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-gui-12wyiyrz/.config/sbx/apps/app.conf' mode='r' encoding='utf-8'>
   return open(conf).read()
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
@@ -184,7 +184,7 @@ test_one_run_cannot_fill_the_log (__main__.Logging.test_one_run_cannot_fill_the_
 test_stderr_goes_to_the_log_and_to_stderr_without_control_characters (__main__.Logging.test_stderr_goes_to_the_log_and_to_stderr_without_control_characters) ... ok
 test_warnings_and_errors_are_logged_only_during_a_run (__main__.Logging.test_warnings_and_errors_are_logged_only_during_a_run) ... ok
 test_gtk_portal_auto_skips_gtk_use_portal_only_for_cursor_size_zero (__main__.Ported.test_gtk_portal_auto_skips_gtk_use_portal_only_for_cursor_size_zero) ... ok
-test_gtk_portal_setting_and_flag_take_auto_1_or_0 (__main__.Ported.test_gtk_portal_setting_and_flag_take_auto_1_or_0) ... /home/tecno/Downloads/github/sbx/test_sbx.py:2546: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/tmp1fzz_cco/x.conf' mode='w' encoding='utf-8'>
+test_gtk_portal_setting_and_flag_take_auto_1_or_0 (__main__.Ported.test_gtk_portal_setting_and_flag_take_auto_1_or_0) ... /home/tecno/Downloads/github/sbx/test_sbx.py:2556: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/tmp9slmtxn9/x.conf' mode='w' encoding='utf-8'>
   p = f"{d}/x.conf"; open(p, "w").write("gtk_portal = auto  # default\ngtk_portal=yes\n")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
@@ -204,7 +204,7 @@ test_shares_keep_their_modes (__main__.Snapshot.test_shares_keep_their_modes) ..
 test_the_caller_cannot_change_core_variables (__main__.Snapshot.test_the_caller_cannot_change_core_variables) ... sbx: setenv: HOME can't be changed
 ok
 test_wayland_goes_through_a_security_context_when_there_is_one (__main__.Snapshot.test_wayland_goes_through_a_security_context_when_there_is_one) ... ok
-test_a_comment_that_looks_like_a_marker_stays_a_comment (__main__.Units.test_a_comment_that_looks_like_a_marker_stays_a_comment) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1734: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-z5csyiyw/home/.config/sbx/apps/a.conf' mode='r' encoding='utf-8'>
+test_a_comment_that_looks_like_a_marker_stays_a_comment (__main__.Units.test_a_comment_that_looks_like_a_marker_stays_a_comment) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1734: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-06atvxfl/home/.config/sbx/apps/a.conf' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{conf}/apps/a.conf").read(), "gpu=0\n## [default.conf]\n")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
@@ -259,13 +259,13 @@ test_an_old_file_that_is_gone_and_a_new_name_without_a_terminal_is_left_pending 
 test_an_origin_file_from_an_older_version_keeps_working (__main__.Units.test_an_origin_file_from_an_older_version_keeps_working) ... ok
 test_an_unusable_xauthority_is_not_handed_over_whole (__main__.Units.test_an_unusable_xauthority_is_not_handed_over_whole) ... ok
 test_background_portal_is_opt_in (__main__.Units.test_background_portal_is_opt_in) ... ok
-test_carrying_stays_inside_the_private_home_and_inside_your_home (__main__.Units.test_carrying_stays_inside_the_private_home_and_inside_your_home) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-lqkvn534/home/.sbx-homes/game/Downloads/settings.json' mode='w' encoding='utf-8'>
+test_carrying_stays_inside_the_private_home_and_inside_your_home (__main__.Units.test_carrying_stays_inside_the_private_home_and_inside_your_home) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-_05kbqlf/home/.sbx-homes/game/Downloads/settings.json' mode='w' encoding='utf-8'>
   os.makedirs(os.path.dirname(f"{h}/{rel}"), exist_ok=True); open(f"{h}/{rel}", "w").write(text)
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-lqkvn534/home/.sbx-homes/game/Downloads/save/carda.sav' mode='w' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-_05kbqlf/home/.sbx-homes/game/Downloads/save/carda.sav' mode='w' encoding='utf-8'>
   os.makedirs(os.path.dirname(f"{h}/{rel}"), exist_ok=True); open(f"{h}/{rel}", "w").write(text)
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-lqkvn534/home/.sbx-homes/game/Downloads/game/x/main.cs' mode='w' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-_05kbqlf/home/.sbx-homes/game/Downloads/game/x/main.cs' mode='w' encoding='utf-8'>
   os.makedirs(os.path.dirname(f"{h}/{rel}"), exist_ok=True); open(f"{h}/{rel}", "w").write(text)
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
@@ -299,21 +299,22 @@ test_friendly_messages (__main__.Units.test_friendly_messages) ... ok
 test_hint_args (__main__.Units.test_hint_args) ... ok
 test_import_is_refused_inside_a_sandbox (__main__.Units.test_import_is_refused_inside_a_sandbox) ... ok
 test_import_names_the_settings_that_open_a_program_up (__main__.Units.test_import_names_the_settings_that_open_a_program_up) ... ok
-test_import_overwrites_files_without_settings_without_asking (__main__.Units.test_import_overwrites_files_without_settings_without_asking) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1704: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-7reshmnj/home/.config/sbx/default.conf' mode='r' encoding='utf-8'>
+test_import_overwrites_files_without_settings_without_asking (__main__.Units.test_import_overwrites_files_without_settings_without_asking) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1704: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-l9dk1egb/home/.config/sbx/default.conf' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{conf}/default.conf").read(), "net=0\nwhitelist=~/Projects\n")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
 test_import_rejects_anything_that_is_not_an_sbx_export (__main__.Units.test_import_rejects_anything_that_is_not_an_sbx_export) ... ok
-test_import_replaces_differing_settings_only_with_force_and_otherwise_writes_nothing (__main__.Units.test_import_replaces_differing_settings_only_with_force_and_otherwise_writes_nothing) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1679: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-lwv2iit2/home/.config/sbx/default.conf' mode='r' encoding='utf-8'>
+test_import_replaces_differing_settings_only_with_force_and_otherwise_writes_nothing (__main__.Units.test_import_replaces_differing_settings_only_with_force_and_otherwise_writes_nothing) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1679: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-hom6bue3/home/.config/sbx/default.conf' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{conf}/default.conf").read(), "net=1\n"); self.assertFalse(os.path.exists(f"{conf}/apps/a.conf"))
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1681: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-lwv2iit2/home/.config/sbx/default.conf' mode='r' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1681: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-hom6bue3/home/.config/sbx/default.conf' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{conf}/default.conf").read(), "net=0\nwhitelist=~/Projects\n"); self.assertTrue(os.path.exists(f"{conf}/apps/a.conf"))
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
 test_import_round_trips_and_leaves_other_files_alone (__main__.Units.test_import_round_trips_and_leaves_other_files_alone) ... ok
 test_install_hint (__main__.Units.test_install_hint) ... ok
 test_launcher_rewriting (__main__.Units.test_launcher_rewriting) ... ok
+test_launcher_window_class_follows_the_executable_for_suffixed_programs (__main__.Units.test_launcher_window_class_follows_the_executable_for_suffixed_programs) ... ok
 test_link_desktop_covers_the_launchers_and_remove_desktop_undoes_both (__main__.Units.test_link_desktop_covers_the_launchers_and_remove_desktop_undoes_both) ... ok
 test_link_makes_typing_the_name_start_the_program_through_sbx (__main__.Units.test_link_makes_typing_the_name_start_the_program_through_sbx) ... ok
 test_link_says_when_an_app_menu_launcher_still_skips_sbx (__main__.Units.test_link_says_when_an_app_menu_launcher_still_skips_sbx) ... ok
@@ -336,22 +337,22 @@ test_no_info_file_without_portals_or_in_a_preview (__main__.Units.test_no_info_f
   result = method()
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
-test_nothing_is_carried_over_a_copy_or_over_what_is_already_there (__main__.Units.test_nothing_is_carried_over_a_copy_or_over_what_is_already_there) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-9vif56vz/home/.sbx-homes/game/Downloads/settings.json' mode='w' encoding='utf-8'>
+test_nothing_is_carried_over_a_copy_or_over_what_is_already_there (__main__.Units.test_nothing_is_carried_over_a_copy_or_over_what_is_already_there) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-3z6a7d0v/home/.sbx-homes/game/Downloads/settings.json' mode='w' encoding='utf-8'>
   os.makedirs(os.path.dirname(f"{h}/{rel}"), exist_ok=True); open(f"{h}/{rel}", "w").write(text)
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-9vif56vz/home/.sbx-homes/game/Downloads/save/carda.sav' mode='w' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-3z6a7d0v/home/.sbx-homes/game/Downloads/save/carda.sav' mode='w' encoding='utf-8'>
   os.makedirs(os.path.dirname(f"{h}/{rel}"), exist_ok=True); open(f"{h}/{rel}", "w").write(text)
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-9vif56vz/home/.sbx-homes/game/Downloads/game/x/main.cs' mode='w' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-3z6a7d0v/home/.sbx-homes/game/Downloads/game/x/main.cs' mode='w' encoding='utf-8'>
   os.makedirs(os.path.dirname(f"{h}/{rel}"), exist_ok=True); open(f"{h}/{rel}", "w").write(text)
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1153: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-9vif56vz/home/.sbx-homes/game/Moved/settings.json' mode='w' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1153: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-3z6a7d0v/home/.sbx-homes/game/Moved/settings.json' mode='w' encoding='utf-8'>
   os.makedirs(f"{S['HOMES']}/game/Moved"); open(f"{S['HOMES']}/game/Moved/settings.json", "w").write("fresh")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1155: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-9vif56vz/home/.sbx-homes/game/Moved/settings.json' mode='r' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1155: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-3z6a7d0v/home/.sbx-homes/game/Moved/settings.json' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{S['HOMES']}/game/Moved/settings.json").read(), "fresh", "never over something that is there")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1156: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-9vif56vz/home/.sbx-homes/game/Downloads/settings.json' mode='r' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1156: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-3z6a7d0v/home/.sbx-homes/game/Downloads/settings.json' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{h}/settings.json").read(), "disc=a.chd", "and it stays where it was")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
@@ -386,10 +387,10 @@ ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
 test_sbx_rebind_accepts_the_pending_decision (__main__.Units.test_sbx_rebind_accepts_the_pending_decision) ... ok
-test_sbx_rebind_carries_it_too (__main__.Units.test_sbx_rebind_carries_it_too) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1174: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-0w63zsmk/home/.sbx-homes/game/Downloads/settings.json' mode='w' encoding='utf-8'>
+test_sbx_rebind_carries_it_too (__main__.Units.test_sbx_rebind_carries_it_too) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1174: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-4lshc33g/home/.sbx-homes/game/Downloads/settings.json' mode='w' encoding='utf-8'>
   h = f"{S['HOMES']}/game/Downloads"; os.makedirs(h); open(f"{h}/settings.json", "w").write("s")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1177: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-0w63zsmk/home/.sbx-homes/game/Games/settings.json' mode='r' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1177: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-4lshc33g/home/.sbx-homes/game/Games/settings.json' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{S['HOMES']}/game/Games/settings.json").read(), "s")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
@@ -422,22 +423,22 @@ test_wayland_client_copes_with_no_support_and_with_errors (__main__.Units.test_w
 test_wayland_message_shorter_than_its_header_is_an_error (__main__.Units.test_wayland_message_shorter_than_its_header_is_an_error) ... ok
 test_wayland_request_numbers_match_the_protocol (__main__.Units.test_wayland_request_numbers_match_the_protocol) ... skipped 'wayland-protocols is not installed'
 test_wayland_strict_that_you_never_set_fails_closed_only_where_the_compositor_supports_it (__main__.Units.test_wayland_strict_that_you_never_set_fails_closed_only_where_the_compositor_supports_it) ... ok
-test_what_a_program_stored_beside_its_file_follows_it_to_the_new_folder (__main__.Units.test_what_a_program_stored_beside_its_file_follows_it_to_the_new_folder) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-4jxjf6z2/home/.sbx-homes/game/Downloads/settings.json' mode='w' encoding='utf-8'>
+test_what_a_program_stored_beside_its_file_follows_it_to_the_new_folder (__main__.Units.test_what_a_program_stored_beside_its_file_follows_it_to_the_new_folder) ... /home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-pcdrj0vu/home/.sbx-homes/game/Downloads/settings.json' mode='w' encoding='utf-8'>
   os.makedirs(os.path.dirname(f"{h}/{rel}"), exist_ok=True); open(f"{h}/{rel}", "w").write(text)
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-4jxjf6z2/home/.sbx-homes/game/Downloads/save/carda.sav' mode='w' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-pcdrj0vu/home/.sbx-homes/game/Downloads/save/carda.sav' mode='w' encoding='utf-8'>
   os.makedirs(os.path.dirname(f"{h}/{rel}"), exist_ok=True); open(f"{h}/{rel}", "w").write(text)
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-4jxjf6z2/home/.sbx-homes/game/Downloads/game/x/main.cs' mode='w' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1132: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-pcdrj0vu/home/.sbx-homes/game/Downloads/game/x/main.cs' mode='w' encoding='utf-8'>
   os.makedirs(os.path.dirname(f"{h}/{rel}"), exist_ok=True); open(f"{h}/{rel}", "w").write(text)
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/home/tecno/Downloads/github/sbx/test_sbx.py:1140: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-4jxjf6z2/home/.sbx-homes/game/Downloads/retro games/settings.json' mode='r' encoding='utf-8'>
+/home/tecno/Downloads/github/sbx/test_sbx.py:1140: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/sbx-unit-pcdrj0vu/home/.sbx-homes/game/Downloads/retro games/settings.json' mode='r' encoding='utf-8'>
   self.assertEqual(open(f"{t}/settings.json").read(), "disc=a.chd")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
 test_widening_lists_what_a_settings_file_opens_up (__main__.Units.test_widening_lists_what_a_settings_file_opens_up) ... ok
 
 ----------------------------------------------------------------------
-Ran 306 tests in 50.465s
+Ran 307 tests in 45.063s
 
 OK (skipped=1)
