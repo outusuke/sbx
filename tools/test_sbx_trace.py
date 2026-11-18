@@ -513,7 +513,7 @@ print(token + "\\to\\t1\\t-2\\t0\\t/etc/missing", flush=True)
     def test_when_bpftrace_refuses_the_full_set_it_is_tried_again_with_the_basic_set_before_the_command_runs(self):
         ran = f"{self.tmp}/ran"
         exe = self.fake("""
-if "sys_enter_unlink " in " ".join(sys.argv): print("ERROR: no such field", file=sys.stderr); sys.exit(1)
+if "sys_enter_unlinkat " in " ".join(sys.argv): print("ERROR: no such field", file=sys.stderr); sys.exit(1)
 print(token + "\\tREADY", flush=True)
 while True:
     try: os.kill(pid, 0)
