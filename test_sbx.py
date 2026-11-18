@@ -2364,8 +2364,9 @@ class Install(unittest.TestCase):
             S["shutil"] = mock.MagicMock(which=lambda n: f"/usr/bin/{n}" if n in have else None)
             S["subprocess"] = mock.MagicMock(run=fake, SubprocessError=subprocess.SubprocessError, DEVNULL=subprocess.DEVNULL)
             return f("mytool", "/usr/bin/mytool")
-        self.assertTrue(run("yes\n", ["notify-send"])); self.assertFalse(run("\n", ["notify-send"]))             # clicked / closed
-        with self.assertRaises(SystemExit): run("", [])                                                              # nothing to ask with: not installed
+        with mock.patch.object(sys.stdin, "isatty", return_value=False, create=True), mock.patch.object(sys.stderr, "isatty", return_value=False, create=True):      # on a terminal it asks there, not through a dialog
+            self.assertTrue(run("yes\n", ["notify-send"])); self.assertFalse(run("\n", ["notify-send"]))         # clicked / closed
+            with self.assertRaises(SystemExit): run("", [])                                                          # nothing to ask with: not installed
 
     def test_a_normal_install_from_the_file_manager_asks_once_and_cancel_changes_nothing(self):
         h = self.home; folder, _ = self.program(top="tool-1.0", files={"mytool": (self.dynamic_elf(), 0o755)}); asked = []
