@@ -613,6 +613,26 @@ class Units(unittest.TestCase):
         S["teardown"](st)
         self.assertFalse(os.path.exists(boot))
 
+    def test_single_instance_shares_a_private_tmpdir_per_program_and_keeps_tmp_private(self):
+        S = self.S
+        os.makedirs(f"{self.tmp}/run5")
+        S["runtime_dir"] = lambda: f"{self.tmp}/run5"
+        S["bwrap_has"] = lambda flag: True
+        def triples(cmd): return [cmd[i:i + 3] for i in range(len(cmd) - 2)]
+        with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}):
+            name, cmd, st = S["build"]("/bin/true", [], True, {"single_instance": True})
+            self.addCleanup(lambda: [f.close() for f in st["keep"]])
+            si = f"{self.tmp}/run5/sbx/single/{name}"
+            self.assertIn(["--bind", si, si], triples(cmd))
+            self.assertIn(["--setenv", "TMPDIR", si], triples(cmd))
+            self.assertIn(["--tmpfs", "/tmp"], [cmd[i:i + 2] for i in range(len(cmd) - 1)])      # /tmp is still private
+            self.assertEqual(os.stat(si).st_mode & 0o777, 0o700)
+            self.assertEqual(os.stat(os.path.dirname(si)).st_mode & 0o777, 0o700)
+            _, cmd2, st2 = S["build"]("/bin/true", [], True, {})          # off by default: nothing shared, TMPDIR untouched
+            self.addCleanup(lambda: [f.close() for f in st2["keep"]])
+            self.assertFalse(any(c == "TMPDIR" for c in cmd2))
+            self.assertFalse(any("/single/" in c for c in cmd2))
+
     def test_privacy_binds_a_minimal_passwd_without_the_full_name(self):
         S = self.S
         os.makedirs(f"{self.tmp}/run4")

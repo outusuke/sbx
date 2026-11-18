@@ -8,7 +8,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          "--tray": ("tray", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
-         "--compat": ("compat", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
+         "--compat": ("compat", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
          **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
@@ -44,6 +44,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --hostname    hostname 'sbx' inside        --no-userns    the program can't create user namespaces\n"
          "  --privacy     /etc/passwd without your real name or the other accounts; the Account portal is blocked too\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
+         "  --single-instance     a second launch hands its files to the running one (shares a private $TMPDIR per program)\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
          "  --portal-screenshot --portal-screencast --portal-location --portal-shortcuts --portal-remote-desktop\n"
