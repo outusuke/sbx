@@ -69,6 +69,13 @@ complete -c sbx -n $c -l rebind -d "This file is the same program, just moved"
 for p in screenshot screencast location shortcuts remote-desktop input-capture wallpaper launcher secret background
     complete -c sbx -n $c -l portal-$p -d "One more desktop portal (needs --portals)"
 end
+complete -c sbx -n $c -l no-portal-notification -d "Switch the notification portal off (with --portals)"
+complete -c sbx -n $c -l no-portal-openuri -d "Switch the openuri portal off (with --portals)"
+complete -c sbx -n $c -l no-portal-print -d "Switch the print portal off (with --portals)"
+complete -c sbx -n $c -l no-portal-trash -d "Switch the trash portal off (with --portals)"
+complete -c sbx -n $c -l no-portal-email -d "Switch the email portal off (with --portals)"
+complete -c sbx -n $c -l no-portal-inhibit -d "Switch the inhibit portal off (with --portals)"
+complete -c sbx -n $c -l no-portal-network -d "Switch the network portal off (with --portals)"
 complete -c sbx -n $c -l whitelist -r -F -d "Share a file or folder (read-write)"
 complete -c sbx -n $c -l read-only -r -F -d "Share a file or folder (read-only)"
 complete -c sbx -n $c -l env -x -d "Pass a variable through"
