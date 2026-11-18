@@ -79,7 +79,8 @@ SENSITIVE = [".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".netrc", "
 # User fonts, icons, themes and toolkit settings, shown read-only to programs that can draw a window (theme=1).
 THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes",
          ".config/gtk-3.0/settings.ini", ".config/gtk-3.0/gtk.css", ".config/gtk-4.0/settings.ini",
-         ".config/gtk-4.0/gtk.css", ".config/fontconfig", ".cache/fontconfig"]
+         ".config/gtk-4.0/gtk.css", ".config/fontconfig", ".cache/fontconfig",
+         ".config/kdeglobals", ".config/kdedefaults", ".local/share/color-schemes"]      # KDE: colors, icon theme, fonts
 # Desktop portals a program may call when portals=1 (through xdg-dbus-proxy, which runs outside the sandbox).
 # Everything else (Documents, ...) stays blocked, and so do the PORTAL_EXTRA ones until their own switch (portal_*=1) is on.
 PORTAL_NAME = "org.freedesktop.portal.Desktop"
