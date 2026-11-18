@@ -525,6 +525,108 @@ def add_launcher(src, ident):
     return True
 
 
+ICON_SIZES = (16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256, 512)       # the size folders the hicolor theme lists
+ICON_THEME = f"{HOME}/.local/share/icons/hicolor"
+
+
+def find_icon(folder, name):
+    """The icon a program brought along, for its menu entry: the Icon= of a .desktop file in its folder (a file of that name inside it, else
+    the icon theme name), else an image named like the program, else the best image in a folder called icons/ (Firefox keeps
+    browser/chrome/icons/default/default128.png). An xpm first (Anki ships one), else an svg, else the biggest png. A path inside FOLDER, a theme name, or None."""
+    norm = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
+    stem = lambda p: norm(os.path.splitext(os.path.basename(p))[0])
+    images, wanted = [], None
+    for d, dirs, files in os.walk(folder):
+        if d[len(folder):].count("/") >= 4: dirs[:] = []
+        dirs.sort()
+        for f in sorted(files):
+            p = os.path.join(d, f)
+            if os.path.islink(p) or not os.path.isfile(p) or re.search(r"[\x00-\x1f]", p): continue
+            if f.endswith(".desktop") and wanted is None and d[len(folder):].count("/") <= 1:
+                try:
+                    with open(p, errors="replace") as fh:
+                        for line in fh:
+                            if line.startswith("Icon="): wanted = line[5:].strip(); break
+                except OSError: pass
+            elif f.lower().endswith((".svg", ".png", ".xpm")): images.append(p)
+
+    def best(c):
+        for ext in (".xpm", ".svg", ".png"):                               # an xpm first (the biggest), then an svg, else the biggest png
+            hit = [p for p in c if p.lower().endswith(ext)]
+            if hit: return hit[0] if ext == ".svg" else max(hit, key=os.path.getsize)
+        return None
+    if wanted and not wanted.startswith("/") and re.fullmatch(r"[A-Za-z0-9._+-]+", wanted):
+        hit = best([p for p in images if stem(p) == norm(os.path.splitext(wanted)[0])])
+        return hit or wanted
+    n = norm(name)
+    hit = best([p for p in images if n and stem(p).startswith(n)])
+    if hit: return hit
+    in_icons = [p for p in images if "icons" in os.path.relpath(p, folder).lower().split("/")[:-1]]
+    return best(in_icons)
+
+
+def image_kind(p):
+    """('svg', None), ('png', pixels), ('xpm', pixels) or None for a file that is neither (checked by what is inside, not by its name)."""
+    try:
+        with open(p, "rb") as f: head = f.read(16384)
+    except OSError:
+        return None
+    if head[:8] == b"\x89PNG\r\n\x1a\n" and len(head) >= 24:
+        w, h = struct.unpack(">II", head[16:24])
+        return ("png", max(w, h)) if 16 <= max(w, h) <= 8192 else None
+    if head.lstrip()[:9] == b"/* XPM */":
+        m = re.search(rb'"\s*(\d+)\s+(\d+)\s+\d+\s+\d+', head)               # the first string is "width height colors chars"
+        return ("xpm", max(int(m[1]), int(m[2]))) if m and 16 <= max(int(m[1]), int(m[2])) <= 8192 else None
+    return ("svg", None) if b"<svg" in head.lower() else None
+
+
+def remove_icons(name):
+    for p in glob.glob(f"{glob.escape(ICON_THEME)}/*/apps/sbx-{name}.*"):
+        try: os.unlink(p)
+        except OSError: pass
+
+
+def install_icon(name, icon):
+    """Copy the program's icon into the icon theme as sbx-NAME, so the menu finds it whatever the file was called or where it sits.
+    Returns what Icon= should say: the new name, or ICON unchanged when it is a theme name or can't be copied."""
+    if not icon or not icon.startswith("/"): return icon
+    kind = image_kind(icon)
+    if not kind or os.path.getsize(icon) > 5_000_000: return icon
+    ext, px = kind
+    size = "scalable" if ext == "svg" else "%dx%d" % ((s := min(ICON_SIZES, key=lambda x: (abs(x - px), -x))), s)
+    remove_icons(name)
+    try:
+        os.makedirs(f"{ICON_THEME}/{size}/apps", exist_ok=True)
+        shutil.copyfile(icon, f"{ICON_THEME}/{size}/apps/sbx-{name}.{ext}")
+        os.utime(ICON_THEME)                                              # the theme trusts an old cache unless its top folder is newer
+    except OSError:
+        return icon
+    tool = shutil.which("gtk-update-icon-cache") or shutil.which("gtk4-update-icon-cache")
+    if tool and os.path.exists(f"{ICON_THEME}/icon-theme.cache"): subprocess.run([tool, "-f", "-t", ICON_THEME], capture_output=True, check=False)
+    return f"sbx-{name}"
+
+
+def write_install_launcher(name, main, me):
+    """Write ~/.local/share/applications/NAME.desktop for a program made by `sbx install`: it starts MAIN through ME (sbx), with the icon the
+    program's folder brought along. Returns (path, icon)."""
+    q = lambda x: f'"{x}"' if re.search(r"\s", x) else x
+    icon = install_icon(name, find_icon(f"{APPS}/{name}", name))
+    text = f"[Desktop Entry]\nX-Sbx-Sandboxed=true\nType=Application\nName={name}\n" + (f"Icon={icon}\n" if icon else "") + f"Exec={q(me)} --name={name} {q(main)} %U\nTerminal=false\nCategories=Utility;\n"
+    os.makedirs(user_launchers(), exist_ok=True)
+    path = f"{user_launchers()}/{name}.desktop"
+    with open(path, "w") as f: f.write(text)
+    if shutil.which("update-desktop-database"): subprocess.run(["update-desktop-database", user_launchers()], stderr=subprocess.DEVNULL)
+    return path, icon
+
+
+def installed_main(name):
+    """The program's launcher path from the install record of `sbx install`, if the record and the program are still there, else None."""
+    try:
+        with open(f"{INSTALLED}/{name}") as f: main = f.readline().strip()
+    except OSError: return None
+    return main if main and os.path.isfile(main) else None
+
+
 def cmd_desktop(a):
     if a in (["--install-opener"], ["--remove-opener"]): return cmd_opener(a[0] == "--install-opener")
     if a in (["--install-menu"], ["--remove-menu"]): return cmd_menu(a[0] == "--install-menu")
@@ -542,6 +644,12 @@ def cmd_desktop(a):
         for p in found: os.unlink(p); print(f"removed {tilde(p)}")
         return
     found = system_launchers(ident)
+    main = None if found else installed_main(ident)
+    if main:                                                  # made by `sbx install` and the launcher was removed: write it again
+        if os.path.lexists(mine) and "X-Sbx-Sandboxed=true" not in launcher_text(mine): die(f"{tilde(mine)} already exists and was not made by sbx; not touching it")
+        path, icon = write_install_launcher(ident, main, shutil.which("sbx") or os.path.realpath(sys.argv[0]))
+        print(f"wrote {tilde(path)}: the launcher starts the program through sbx" + (f", icon {icon}" if icon else ", no icon found in its folder") + f".\nUndo with: sbx desktop --remove {ident}")
+        return
     if not found: die(f"no launcher called {ident}.desktop, and none that starts {ident}, in the applications folders of XDG_DATA_DIRS")
     if not any([add_launcher(p, ident) for p in found]): sys.exit(1)
 
