@@ -1337,7 +1337,8 @@ class Units(unittest.TestCase):
 
     def test_syscall_numbers_match_the_kernel_headers(self):
         tables = {0: "/usr/include/x86_64-linux-gnu/asm/unistd_64.h", 1: "/usr/include/asm-generic/unistd.h"}
-        if not all(os.path.exists(p) for p in tables.values()): self.skipTest("no kernel headers (linux-libc-dev)")
+        tables = {c: p for c, p in tables.items() if os.path.exists(p)}      # the x86_64 header only exists on x86_64 (an arm runner has just the generic one)
+        if not tables: self.skipTest("no kernel headers (linux-libc-dev)")
         for col, path in tables.items():
             with open(path) as f: nrs = {m[1]: int(m[2]) for m in re.finditer(r"#define __NR_(\w+)\s+(\d+)\s*$", f.read(), re.M)}
             for table in (self.S["BASE_SYSCALLS"], self.S["EXTRA_SYSCALLS"]):
