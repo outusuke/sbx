@@ -5,7 +5,7 @@ _sbx() {
         --no-userns --no-theme --camera --alsa --input --kvm --rocm --printing --ssh-agent --allow-sensitive --compat --ignore-config --rebind
         --portal-screenshot --portal-screencast --portal-location --portal-shortcuts --portal-remote-desktop
         --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret --portal-background
-        --whitelist= --read-only= --env= --setenv= --allow-syscall= --memory= --tasks= --cpu= --name= --loader="
+        --whitelist= --read-only= --env= --setenv= --allow-syscall= --memory= --tasks= --cpu= --gtk-portal= --name= --loader="
     # the first word that isn't an option is the command or the program
     for ((i = 1; i < COMP_CWORD; i++)); do
         word=${COMP_WORDS[i]}

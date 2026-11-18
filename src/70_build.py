@@ -172,7 +172,12 @@ def build(prog, args, live=False, o=None):
         if sock:
             a += ["--ro-bind", sock, f"{rt}/bus"]; env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
             if cfg["portals"]:      # a toolkit uses the file chooser portal only when told to; a theme that compat passes through from your session (gtk3, qt6ct) would open Qt's own dialog, so it is replaced; env= and setenv= still win (no /.flatpak-info for the program: glycin would then run its image loaders through flatpak-spawn, which fails, and GTK aborts)
-                env["GTK_USE_PORTAL"] = "1"; env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
+                gtk = cfg["gtk_portal"] or "auto"
+                if gtk == "auto" and cursor_size_is_zero():
+                    gtk = "0"
+                    if live: warn("gtk_portal=auto: the host's cursor size is 0, which crashes GTK with the file chooser portal, so GTK_USE_PORTAL is not set (gtk_portal=1 sets it anyway)")
+                if gtk != "0": env["GTK_USE_PORTAL"] = "1"
+                env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
                 info = f"{inst}/bwrapinfo.json"      # bwrap writes {"child-pid": N} here once the sandbox exists; the portal refuses every call without it
                 put(info, b""); state["cleanup"].append(inst)
                 if priv: a += ["--info-fd", str(INFO_FD)]; wrapfiles.append((INFO_FD, ">", info))

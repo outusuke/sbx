@@ -303,6 +303,14 @@ few more) through xdg\-dbus\-proxy.
 GTK and Qt programs are told to use the file chooser portal (GTK_USE_PORTAL=1, QT_QPA_PLATFORMTHEME=xdgdesktopportal)
 unless you set or pass through those variables yourself.
 .TP
+.BR \-\-gtk\-portal= auto | 1 | 0
+Whether GTK programs are told to use the file chooser portal (GTK_USE_PORTAL=1; needs
+.BR \-\-portals ).
+auto, the default and what no setting means, sets it except when the cursor size in your desktop settings is 0, which crashes
+GTK; sbx then leaves it unset and prints one line saying why. 1 and 0 force it on or off. Qt programs are not affected. Also the
+setting
+.BR gtk_portal .
+.TP
 .BR \-\-portal\- \fIWHAT\fR
 One more desktop portal each, WHAT being screenshot, screencast, location, shortcuts, wallpaper, launcher,
 remote\-desktop, input\-capture, secret or background (settings: portal_screenshot=1 and so on). They need
@@ -394,7 +402,7 @@ e.g. G\-Diffuser\-v1.2.3\-linux\-x64 for G\-Diffuser) gets folder=1 automaticall
 on start. folder=0 turns that off.
 .PP
 Lists that add up across the two files: whitelist, read_only, env, setenv, allow_syscall. Limits: memory, tasks,
-cpu; an empty value in a program's file cancels the default's. Command\-line flags beat the files.
+cpu (and gtk_portal, which takes auto, 1 or 0); an empty value in a program's file cancels the default's. Command\-line flags beat the files.
 .PP
 .B sbx show
 prints the result of all this.

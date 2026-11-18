@@ -54,7 +54,9 @@ SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
            "compat": False, "tray": False, "folder": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
-LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%"}
+# gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
+# when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
+LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%", "gtk_portal": r"auto|0|1"}
 # Folders in your home that hold secrets. Sharing one (or a folder around one) needs allow_sensitive=1 / --allow-sensitive.
 SENSITIVE = [".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".netrc", ".git-credentials", ".password-store", ".config/gcloud",
              ".config/gh", ".config/rclone", ".local/share/keyrings", ".mozilla", ".thunderbird", ".config/google-chrome",

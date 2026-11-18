@@ -199,6 +199,12 @@ def host_button_layout():
     return gtk_ini_layout()
 
 
+def cursor_size_is_zero():
+    """True when the host's gsettings cursor-size is 0. host_cursor() counts 0 as unset, so it can't tell 0 from missing."""
+    size = gsettings_get(CURSOR_SCHEMA, "cursor-size")
+    return size is not None and CURSOR_SIZE_RE.fullmatch(size) is not None and int(size) == 0
+
+
 def host_cursor():
     """(theme, size) of the host's cursor from gsettings; None for whatever is missing or doesn't pass the checks.
     Size 0 means 'default' and counts as unset."""

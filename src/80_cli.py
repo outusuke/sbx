@@ -11,7 +11,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          "--compat": ("compat", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
          **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
-               "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--name": "name",
+               "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
                "--loader": "loader"}
 COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind", "export", "import", "install", "uninstall")
 
@@ -56,6 +56,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --env=NAME             pass a variable through     --setenv=NAME=VALUE   set a variable\n"
          "  --allow-syscall=NAME   turn a blocked system call back on (io_uring, userfaultfd, kcmp, ...)\n"
          "  --memory=2G --tasks=512 --cpu=200%   limits (systemd-run --user)\n"
+         "  --gtk-portal=auto|1|0  tell GTK programs to use the file chooser portal (with --portals): auto does, except where the host's cursor size is 0\n"
          "  --name=NAME            use another private home and settings name than the program's\n"
          "  --loader=PATH          start the program through this dynamic loader (an absolute path; sbx does it itself for a file it can't make executable)\n"
          "  --ignore-config        ignore the settings files for this run\n"

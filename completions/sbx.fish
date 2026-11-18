@@ -76,6 +76,7 @@ complete -c sbx -n $c -l allow-syscall -x -a "io_uring userfaultfd process_vm_re
 complete -c sbx -n $c -l memory -x -d "Memory limit, e.g. 2G"
 complete -c sbx -n $c -l tasks -x -d "Task limit"
 complete -c sbx -n $c -l cpu -x -d "CPU limit, e.g. 200%"
+complete -c sbx -n $c -l gtk-portal -x -a "auto 1 0" -d "GTK file chooser portal (with --portals)"
 complete -c sbx -n $c -l name -x -d "Use another home and settings name"
 complete -c sbx -n $c -l loader -r -F -d "Start the program through this dynamic loader"
 complete -c sbx -f -n "__fish_seen_subcommand_from export" -a "(__sbx_apps)"

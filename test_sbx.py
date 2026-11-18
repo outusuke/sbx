@@ -88,6 +88,7 @@ def fake_preview(prog, flags, patch=None):
     S["resolv_dirs"] = lambda: ["/run/systemd/resolve"]
     S["resolv_target"] = lambda: "/run/systemd/resolve/stub-resolv.conf"      # /etc/resolv.conf is a link, as on most desktops
     S["glob"] = types.SimpleNamespace(glob=lambda pat: FAKE_GLOBS.get(pat, []))
+    S["cursor_size_is_zero"] = lambda: False                    # nor may the host's cursor size (gtk_portal=auto)
     S["gsettings_keyfile_text"] = lambda: None                  # whatever desktop settings this machine has must not change the snapshot
     S.update(patch or {})
     opts, _ = S["parse_options"](flags)
@@ -2522,6 +2523,29 @@ class Ported(unittest.TestCase):
         self.assertEqual(mount({"portals": False, "name": "tool"}), [], "no portals, no document folder")
         self.assertEqual(mount({"portals": False, "tray": True, "name": "tool"}), [], "the tray alone does not open it")
         self.assertEqual(mount({"portals": True, "name": "other"}), [], "each program gets its own folder")
+
+    def test_gtk_portal_auto_skips_gtk_use_portal_only_for_cursor_size_zero(self):
+        S = load_sbx()
+        def env(o, cursor0, warned=None):
+            with mock.patch.dict(S, {"cursor_size_is_zero": lambda: cursor0}):
+                a = S["build"]("/bin/true", [], False, dict(o, portals=True, ignore_config=True))[1]
+            return {a[i + 1]: a[i + 2] for i in range(len(a) - 2) if a[i] == "--setenv"}
+        for o, c0, want in (({}, False, True), ({}, True, False), ({"gtk_portal": "auto"}, True, False), ({"gtk_portal": "auto"}, False, True),
+                            ({"gtk_portal": "1"}, True, True), ({"gtk_portal": "0"}, False, False)):
+            e = env(o, c0)
+            self.assertEqual("GTK_USE_PORTAL" in e, want, (o, c0))
+            self.assertEqual(e["QT_QPA_PLATFORMTHEME"], "xdgdesktopportal")      # Qt is not affected
+        with mock.patch.dict(S, {"gsettings_get": lambda s, k: "0"}): self.assertTrue(S["cursor_size_is_zero"]())
+        for v in ("24", None, "uint32 0"):
+            with mock.patch.dict(S, {"gsettings_get": lambda s, k, v=v: v}): self.assertFalse(S["cursor_size_is_zero"](), v)
+
+    def test_gtk_portal_setting_and_flag_take_auto_1_or_0(self):
+        S = load_sbx()
+        self.assertEqual(S["parse_options"](["--gtk-portal=0", "prog"])[0]["gtk_portal"], "0")
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"): S["parse_options"](["--gtk-portal=maybe", "prog"])
+        with tempfile.TemporaryDirectory() as d:
+            p = f"{d}/x.conf"; open(p, "w").write("gtk_portal = auto  # default\ngtk_portal=yes\n")
+            with mock.patch("sys.stderr"): self.assertEqual(S["parse_conf"](p)[2], {"gtk_portal": "auto"})
 
     def test_portals_tell_toolkits_to_use_the_file_chooser_portal(self):
         S = load_sbx()
