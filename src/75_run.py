@@ -5,12 +5,12 @@
 STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when sbx is told to stop
 
 def sweep_stale():
-    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp)."""
+    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.a11y, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp)."""
     d = f"{runtime_dir()}/sbx"
     try: names = os.listdir(d)
     except OSError: return
     for n in names:
-        m = re.fullmatch(r"(\d+)\.(bus|xauth|wl|gsettings|boot_id|hostname|hosts|passwd|resolv\.conf|seccomp)", n)
+        m = re.fullmatch(r"(\d+)\.(bus|a11y|xauth|wl|gsettings|boot_id|hostname|hosts|passwd|resolv\.conf|seccomp)", n)
         if not m: continue
         try: os.kill(int(m.group(1)), 0); continue          # still running
         except ProcessLookupError: pass
@@ -21,6 +21,7 @@ def sweep_stale():
 
 def teardown(st):
     stop_proxy(st["proxy"], st["bus"])
+    if st.get("a11y_bus"): stop_proxy(st.get("a11y"), st["a11y_bus"])
     if st["wl"]: st["wl"].close()
     for f in st["files"]:
         try: os.unlink(f)

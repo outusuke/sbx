@@ -37,6 +37,79 @@ def bus_rules(cfg=None):
     return rules + (tray_rules() if cfg and cfg.get("tray") else [])
 
 
+# ---------------------------------------------------------------- accessibility bus
+# Screen readers (Orca) don't read the screen: each program publishes its widgets on the accessibility bus, a second D-Bus apart from the
+# session bus, and the reader reads them there. The program gets a filtered copy of that bus (a11y=1) with the rules Flatpak uses.
+A11Y_REGISTRY = "org.a11y.atspi.Registry"
+A11Y_ROOT = "/org/a11y/atspi/accessible/root"
+A11Y_REG_PATH = "/org/a11y/atspi/registry"
+A11Y_DEC_PATH = "/org/a11y/atspi/registry/deviceeventcontroller"
+
+
+def a11y_rules():
+    """What the accessibility proxy lets through. The program may plug its widgets into the registry (Socket.Embed), ask who listens for events
+    and keys, and hear that a reader started or stopped listening. There is no --talk, so it can't call anything else: not the other programs'
+    widgets, and not GenerateKeyboardEvent or the other calls that send keys and clicks. --sloppy-names: the peers on this bus use unique names."""
+    r = A11Y_REGISTRY
+    return ["--sloppy-names",
+            f"--call={r}=org.a11y.atspi.Socket.Embed@{A11Y_ROOT}",
+            f"--call={r}=org.a11y.atspi.Socket.Unembed@{A11Y_ROOT}",
+            f"--call={r}=org.a11y.atspi.Registry.GetRegisteredEvents@{A11Y_REG_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.GetKeystrokeListeners@{A11Y_DEC_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.GetDeviceEventListeners@{A11Y_DEC_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.NotifyListenersSync@{A11Y_DEC_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.NotifyListenersAsync@{A11Y_DEC_PATH}",
+            f"--broadcast={r}=org.a11y.atspi.Registry.EventListenerRegistered@{A11Y_REG_PATH}",      # so the program emits only what a reader asked for
+            f"--broadcast={r}=org.a11y.atspi.Registry.EventListenerDeregistered@{A11Y_REG_PATH}"]
+
+
+def a11y_bus_address():
+    """Where your accessibility bus is: $AT_SPI_BUS_ADDRESS if it is set, else what org.a11y.Bus says (asking also starts the bus, which a
+    session only starts when something needs it), else the socket in your runtime folder. None when there is none."""
+    addr = os.environ.get("AT_SPI_BUS_ADDRESS", "")
+    if addr.startswith("unix:"): return addr
+    ask = (("gdbus", ["gdbus", "call", "--session", "--dest", "org.a11y.Bus", "--object-path", "/org/a11y/bus", "--method", "org.a11y.Bus.GetAddress"]),
+           ("busctl", ["busctl", "--user", "call", "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress"]))
+    for tool, cmd in ask:
+        if not shutil.which(tool): continue
+        try: r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError): continue
+        m = re.search(r"unix:[^'\"\s)]+", r.stdout) if r.returncode == 0 else None
+        if m: return m.group(0)
+    socks = sorted(glob.glob(f"{runtime_dir()}/at-spi/bus_*"))
+    return f"unix:path={socks[0]}" if socks else None
+
+
+def start_a11y_proxy(sock):
+    """Start xdg-dbus-proxy on your accessibility bus with the a11y rules, listening on SOCK. Returns (process, pipe) or None (a warning says why)."""
+    px = shutil.which("xdg-dbus-proxy")
+    if not px:
+        warn(f"xdg-dbus-proxy missing, so a11y is off: {install_hint('xdg-dbus-proxy')}")
+        return None
+    addr = a11y_bus_address()
+    if not addr:
+        warn("a11y=1, but your accessibility bus was not found (is at-spi2-core installed and a desktop session running?); running without it")
+        return None
+    os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
+    r, w = os.pipe()
+    try:
+        proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + a11y_rules(), pass_fds=[w],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        os.close(r); os.close(w)
+        stop_proxy(None, sock)
+        warn(f"could not start xdg-dbus-proxy ({e}); running without a11y")
+        return None
+    os.close(w)
+    ok = False
+    try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
+    except OSError: pass
+    if ok: return proc, r
+    stop_proxy((proc, r), sock)
+    warn("could not start xdg-dbus-proxy on the accessibility bus; running without a11y")
+    return None
+
+
 PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")
 
 

@@ -60,11 +60,15 @@ PORTAL_EXTRA = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenC
 # namespace), so it is small. An app whose main process has a higher PID gets no tray icon; the range can be raised here.
 TRAY_PIDS = range(2, 65)
 TRAY_IDS = range(1, 4)
+# Screen reader (a11y=1). AT_SPI_BUS_ADDRESS (where the program finds the accessibility bus) is set by sbx. These two make toolkits that would
+# otherwise ask the desktop whether a screen reader is on (they can't reach it from the sandbox) turn their accessibility support on: Qt, and
+# Firefox and other GNOME programs.
+A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 # Settings (key=value files) and their defaults. Lists: LISTS. Text values: LIMITS (a pattern each value must match).
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, "tray": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
+           "compat": False, "tray": False, "a11y": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
@@ -815,6 +819,79 @@ def bus_rules(cfg=None):
     return rules + (tray_rules() if cfg and cfg.get("tray") else [])
 
 
+# ---------------------------------------------------------------- accessibility bus
+# Screen readers (Orca) don't read the screen: each program publishes its widgets on the accessibility bus, a second D-Bus apart from the
+# session bus, and the reader reads them there. The program gets a filtered copy of that bus (a11y=1) with the rules Flatpak uses.
+A11Y_REGISTRY = "org.a11y.atspi.Registry"
+A11Y_ROOT = "/org/a11y/atspi/accessible/root"
+A11Y_REG_PATH = "/org/a11y/atspi/registry"
+A11Y_DEC_PATH = "/org/a11y/atspi/registry/deviceeventcontroller"
+
+
+def a11y_rules():
+    """What the accessibility proxy lets through. The program may plug its widgets into the registry (Socket.Embed), ask who listens for events
+    and keys, and hear that a reader started or stopped listening. There is no --talk, so it can't call anything else: not the other programs'
+    widgets, and not GenerateKeyboardEvent or the other calls that send keys and clicks. --sloppy-names: the peers on this bus use unique names."""
+    r = A11Y_REGISTRY
+    return ["--sloppy-names",
+            f"--call={r}=org.a11y.atspi.Socket.Embed@{A11Y_ROOT}",
+            f"--call={r}=org.a11y.atspi.Socket.Unembed@{A11Y_ROOT}",
+            f"--call={r}=org.a11y.atspi.Registry.GetRegisteredEvents@{A11Y_REG_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.GetKeystrokeListeners@{A11Y_DEC_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.GetDeviceEventListeners@{A11Y_DEC_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.NotifyListenersSync@{A11Y_DEC_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.NotifyListenersAsync@{A11Y_DEC_PATH}",
+            f"--broadcast={r}=org.a11y.atspi.Registry.EventListenerRegistered@{A11Y_REG_PATH}",      # so the program emits only what a reader asked for
+            f"--broadcast={r}=org.a11y.atspi.Registry.EventListenerDeregistered@{A11Y_REG_PATH}"]
+
+
+def a11y_bus_address():
+    """Where your accessibility bus is: $AT_SPI_BUS_ADDRESS if it is set, else what org.a11y.Bus says (asking also starts the bus, which a
+    session only starts when something needs it), else the socket in your runtime folder. None when there is none."""
+    addr = os.environ.get("AT_SPI_BUS_ADDRESS", "")
+    if addr.startswith("unix:"): return addr
+    ask = (("gdbus", ["gdbus", "call", "--session", "--dest", "org.a11y.Bus", "--object-path", "/org/a11y/bus", "--method", "org.a11y.Bus.GetAddress"]),
+           ("busctl", ["busctl", "--user", "call", "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress"]))
+    for tool, cmd in ask:
+        if not shutil.which(tool): continue
+        try: r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError): continue
+        m = re.search(r"unix:[^'\"\s)]+", r.stdout) if r.returncode == 0 else None
+        if m: return m.group(0)
+    socks = sorted(glob.glob(f"{runtime_dir()}/at-spi/bus_*"))
+    return f"unix:path={socks[0]}" if socks else None
+
+
+def start_a11y_proxy(sock):
+    """Start xdg-dbus-proxy on your accessibility bus with the a11y rules, listening on SOCK. Returns (process, pipe) or None (a warning says why)."""
+    px = shutil.which("xdg-dbus-proxy")
+    if not px:
+        warn(f"xdg-dbus-proxy missing, so a11y is off: {install_hint('xdg-dbus-proxy')}")
+        return None
+    addr = a11y_bus_address()
+    if not addr:
+        warn("a11y=1, but your accessibility bus was not found (is at-spi2-core installed and a desktop session running?); running without it")
+        return None
+    os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
+    r, w = os.pipe()
+    try:
+        proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + a11y_rules(), pass_fds=[w],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        os.close(r); os.close(w)
+        stop_proxy(None, sock)
+        warn(f"could not start xdg-dbus-proxy ({e}); running without a11y")
+        return None
+    os.close(w)
+    ok = False
+    try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
+    except OSError: pass
+    if ok: return proc, r
+    stop_proxy((proc, r), sock)
+    warn("could not start xdg-dbus-proxy on the accessibility bus; running without a11y")
+    return None
+
+
 PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")
 
 
@@ -1506,7 +1583,7 @@ def build(prog, args, live=False, o=None):
     rt = runtime_dir()
     tag = f"{rt}/sbx/{os.getpid() if live else 'PID'}"
     inst = f"{rt}/.flatpak/{os.getpid() if live else 'PID'}"      # the portal looks the program up here, by the pid in bwrapinfo.json (as it does for a flatpak)
-    state = {"proxy": None, "bus": tag + ".bus", "files": [], "fds": [], "keep": [], "wl": None, "cleanup": [], "prefix": [], "wrap": []}
+    state = {"proxy": None, "bus": tag + ".bus", "a11y": None, "a11y_bus": tag + ".a11y", "files": [], "fds": [], "keep": [], "wl": None, "cleanup": [], "prefix": [], "wrap": []}
     wrapfiles = []          # files the shell in front of bwrap opens as descriptors when pasta is used, which closes inherited ones: (descriptor, "<" or ">", path)
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": sandbox_path(), "XDG_RUNTIME_DIR": rt, "SBX_ACTIVE": "1"}
     for k in ENV_KEEP:
@@ -1642,6 +1719,14 @@ def build(prog, args, live=False, o=None):
                     f = os.fdopen(os.open(info, os.O_WRONLY | os.O_NOFOLLOW), "wb"); os.set_inheritable(f.fileno(), True)
                     state["keep"].append(f); state["fds"].append(f.fileno()); a += ["--info-fd", str(f.fileno())]
                 else: a += ["--info-fd", "FD"]
+    if cfg["a11y"]:         # a screen reader talks to each program over the accessibility bus; the program gets a filtered copy of it (works without portals)
+        sock = state["a11y_bus"]
+        if live:
+            state["a11y"] = start_a11y_proxy(sock)
+            if not state["a11y"]: sock = None
+        if sock:
+            a += ["--ro-bind", sock, f"{rt}/at-spi/bus"]; env["AT_SPI_BUS_ADDRESS"] = f"unix:path={rt}/at-spi/bus"
+            env.update(A11Y_ENV)
     if cfg["portals"]:      # the files you pick in a chooser appear here, only this program's own (bind-try: nothing when there is no document portal)
         a += ["--bind-try", f"{runtime_dir()}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
     if live and not cfg["portals"] and any(cfg[k] for k in PORTAL_EXTRA):
@@ -1779,12 +1864,12 @@ def stop_program(name):
 STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when sbx is told to stop
 
 def sweep_stale():
-    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp)."""
+    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.a11y, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp)."""
     d = f"{runtime_dir()}/sbx"
     try: names = os.listdir(d)
     except OSError: return
     for n in names:
-        m = re.fullmatch(r"(\d+)\.(bus|xauth|wl|gsettings|boot_id|hostname|hosts|passwd|resolv\.conf|seccomp)", n)
+        m = re.fullmatch(r"(\d+)\.(bus|a11y|xauth|wl|gsettings|boot_id|hostname|hosts|passwd|resolv\.conf|seccomp)", n)
         if not m: continue
         try: os.kill(int(m.group(1)), 0); continue          # still running
         except ProcessLookupError: pass
@@ -1795,6 +1880,7 @@ def sweep_stale():
 
 def teardown(st):
     stop_proxy(st["proxy"], st["bus"])
+    if st.get("a11y_bus"): stop_proxy(st.get("a11y"), st["a11y_bus"])
     if st["wl"]: st["wl"].close()
     for f in st["files"]:
         try: os.unlink(f)
@@ -1909,7 +1995,7 @@ def run(prog, args, opts):
 FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
          "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
-         "--tray": ("tray", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
+         "--tray": ("tray", True), "--a11y": ("a11y", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
@@ -1950,6 +2036,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --hostname    hostname 'sbx' inside        --no-userns    the program can't create user namespaces\n"
          "  --privacy     /etc/passwd without your real name or the other accounts; the Account portal is blocked too\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
+         "  --a11y        screen reader and other assistive tools can see the program (filtered accessibility bus, xdg-dbus-proxy)\n"
          "  --single-instance     a second launch hands its files to the running one (shares a private $TMPDIR per program)\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
@@ -2857,7 +2944,7 @@ def doctor():
         row("OK" if bwrap_has("--disable-userns") else "WARN", "userns=0 supported (bubblewrap 0.8+)")
     row("OK" if shutil.which("notify-send") else "WARN", "notify-send", "" if shutil.which("notify-send") else f"only needed for the failed-to-start popup: {install_hint('libnotify')}")
     px = shutil.which("xdg-dbus-proxy")
-    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1 and tray=1: {install_hint('xdg-dbus-proxy')}")
+    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1 and a11y=1: {install_hint('xdg-dbus-proxy')}")
     ps = shutil.which("pasta")
     row("OK" if ps else "WARN", "pasta", "" if ps else f"only needed for net_private=1: {install_hint('passt')}")
     sd = shutil.which("systemd-run")

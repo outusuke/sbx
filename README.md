@@ -14,7 +14,7 @@ sbx --net=none --here python3 script.py
 ## Install
 
 Needs Linux, Python 3.8+ and `bubblewrap` (0.8+ for `userns=0`).
-Optional: GTK 4 + libadwaita 1.5 + PyGObject (GUI), `xdg-dbus-proxy` (`portals`), `pasta` (`net_private`), `systemd-run` (limits).
+Optional: GTK 4 + libadwaita 1.5 + PyGObject (GUI), `xdg-dbus-proxy` (`portals`, `tray`, `a11y`), `pasta` (`net_private`), `systemd-run` (limits).
 
 ```
 sudo apt install bubblewrap         # or your distro's equivalent
@@ -80,6 +80,7 @@ The program goes to `~/Apps/NAME` and is shared with it read-only. Its launcher 
 | Option | Effect |
 |---|---|
 | `--net=none` | no network |
+| `--a11y` | a screen reader (Orca) can read the program, through a filtered accessibility bus (needs `xdg-dbus-proxy`) |
 | `--net-private` | no localhost or local services (needs `pasta`) |
 | `--private` | erase private home on exit |
 | `--here` | share current folder, read-write |
