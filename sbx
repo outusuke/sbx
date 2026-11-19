@@ -816,7 +816,10 @@ def tray_rules():
 # ---------------------------------------------------------------- GNOME Shell integration
 # The browser's GNOME Shell connector (gnome-browser-connector, run by the browser inside the sandbox) talks to the Shell as org.gnome.Shell at
 # /org/gnome/Shell, interface org.gnome.Shell.Extensions (not the org.gnome.Shell.Extensions name that gnome-extensions uses). The rules name that
-# interface and path only: org.gnome.Shell, the interface of Eval, stays closed, and nothing is --talk.
+# interface and path only: org.gnome.Shell, the interface of Eval, stays closed, and nothing is --talk. The host itself is a GApplication that registers
+# as org.gnome.BrowserConnector on the session bus when it starts and exits at once if the bus refuses (the proxy answers ServiceUnknown), so that one
+# name is --own: the program runs the connector itself, and no service outside the sandbox is reached.
+GNOME_SHELL_OWN = "org.gnome.BrowserConnector"
 GNOME_SHELL = "org.gnome.Shell"
 GNOME_SHELL_PATH = "/org/gnome/Shell"
 GNOME_SHELL_EXT = "org.gnome.Shell.Extensions"
@@ -827,11 +830,11 @@ GNOME_SHELL_MANAGE = ("EnableExtension", "DisableExtension", "UninstallExtension
 def gnome_shell_rules(cfg=None):
     """Let the program list, inspect and (after your confirmation in the Shell) install GNOME Shell extensions, and read the Shell's version.
     gnome_shell_manage=1 adds enabling, disabling and uninstalling. Properties.Get and GetAll are read-only (no Set, so UserExtensionsEnabled can't
-    be changed); the broadcasts are the signals the connector listens to. Nothing else of org.gnome.Shell is reachable."""
+    be changed); the broadcasts are the signals the connector listens to. Nothing else of org.gnome.Shell is reachable; the connector's own name is the only one the program may own."""
     if not cfg or not cfg.get("gnome_shell"): return []
     p = GNOME_SHELL_PATH; props = "org.freedesktop.DBus.Properties"
     calls = GNOME_SHELL_CALLS + (GNOME_SHELL_MANAGE if cfg.get("gnome_shell_manage") else ())
-    return ([f"--call={GNOME_SHELL}={GNOME_SHELL_EXT}.{m}@{p}" for m in calls]
+    return ([f"--own={GNOME_SHELL_OWN}"] + [f"--call={GNOME_SHELL}={GNOME_SHELL_EXT}.{m}@{p}" for m in calls]
             + [f"--call={GNOME_SHELL}={props}.Get@{p}", f"--call={GNOME_SHELL}={props}.GetAll@{p}"]
             + [f"--broadcast={GNOME_SHELL}={GNOME_SHELL_EXT}.{s}@{p}" for s in ("ExtensionStateChanged", "ExtensionStatusChanged")]
             + [f"--broadcast={GNOME_SHELL}={props}.PropertiesChanged@{p}"])
