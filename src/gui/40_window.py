@@ -159,6 +159,9 @@ class Win(Adw.ApplicationWindow):
             sg.set_visible(bool(hints))
         lg = Adw.PreferencesGroup(title="Recent activity" + (f" · {scope}" if scope else ""),
                                   description="Starts, exits, warnings, and what programs print when they have no terminal. Paste this when asking for help.")
+        everything = [False]                                  # the latest run only, until "Show all"
+        more = Gtk.Button(valign=Gtk.Align.CENTER)
+        lg.set_header_suffix(more)
         tv = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR,
                           left_margin=8, right_margin=8, top_margin=8, bottom_margin=8)
         sw = Gtk.ScrolledWindow(min_content_height=320, child=tv, css_classes=["card"])
@@ -182,15 +185,18 @@ class Win(Adw.ApplicationWindow):
         Adw.StyleManager.get_default().connect("notify::dark", paint)
 
         def show_log():
-            lines = log_lines(scope)[-200:]
+            lines = log_lines(scope)
+            more.set_label("Latest run only" if everything[0] else "Show all")
+            more.set_visible(len(lines) > len(latest_run_lines(lines)))      # nothing more to show when the latest run is everything
             buf.set_text("")
             if not lines:
                 buf.set_text("Nothing logged yet." if os.path.exists(LOG) else "No launches logged yet.")
                 return
-            for i, line in enumerate(lines):
-                ts, name, text, kind = log_line_parts(line)
-                for chunk, tag in ((ts, "ts"), (name, "name"), (text + ("\n" if i < len(lines) - 1 else ""), kind)):
-                    if chunk: buf.insert_with_tags(buf.get_end_iter(), chunk, tags[tag]) if tag else buf.insert(buf.get_end_iter(), chunk)
+            rows = log_rows((lines if everything[0] else latest_run_lines(lines))[-200:])
+            for i, row in enumerate(rows):
+                for chunk, tag in row + ([("\n", "")] if i < len(rows) - 1 else []):
+                    if tag: buf.insert_with_tags(buf.get_end_iter(), chunk, tags[tag])
+                    else: buf.insert(buf.get_end_iter(), chunk)
             GLib.idle_add(lambda: sw.get_vadjustment().set_value(sw.get_vadjustment().get_upper()) and False)     # newest line in view
 
         latest = [0]
@@ -209,6 +215,10 @@ class Win(Adw.ApplicationWindow):
             threading.Thread(target=work, daemon=True).start()                    # sbx doctor can take seconds: the window never waits for it
             show_log()
             show_hints()
+        def toggle(*_):
+            everything[0] = not everything[0]
+            show_log()
+        more.connect("clicked", toggle)
         rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
         rb.connect("clicked", refresh)
         cb = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy the health checks and the log, to paste when asking for help")

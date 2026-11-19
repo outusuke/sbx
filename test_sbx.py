@@ -3997,6 +3997,43 @@ class Gui(unittest.TestCase):
         for odd in ("", "[", "[]", ts):
             parts(odd)                                                    # must never raise
 
+    def test_log_rows_separate_runs_shorten_start_and_drop_todays_date(self):
+        G = self.G
+        rows, today = G["log_rows"], "2026-11-19"
+        old, now = "[2026-11-18 09:00:00] ", "[2026-11-19 10:41:00] "
+        dflt = ",".join(k for k, (_, _, d) in G["SWITCHES"].items() if d)                 # a run with every default, x11 added
+        lines = [old + f"[a] START allow=[{dflt}]", "[a] hello", old + "[a] EXIT code=0",
+                 now + f"[a] START allow=[{dflt},x11]", now + "[a] EXIT code=1"]
+        out = rows(lines, today)
+        self.assertEqual(out[0][0], (old, "ts"))                                   # another day keeps its date
+        self.assertEqual(out[3], [(G["RULE"], "dim")])                             # a rule before the second START...
+        self.assertEqual(len(out), 6)                                              # ...and none before the first row
+        self.assertEqual(out[4][0], ("[10:41:00] ", "ts"))                         # today's lines lose the date
+        self.assertEqual([c for c in out[4] if c[1] == "info"], [("START", "info")])
+        self.assertEqual(out[4][-1], (" +" + G["SHORT"].get("x11", "x11"), "dim"))       # only what differs, dimmed
+        self.assertTrue(all("allow=" not in "".join(c[0] for c in r) for r in out))
+        self.assertEqual(rows([], today), [])
+        for odd in ("", "[", "[2026-11-19 10:41:00] "):
+            rows([odd], today)                                                     # must never raise
+
+    def test_start_shows_only_switches_that_differ_from_the_defaults(self):
+        G = self.G
+        on = [k for k, (_, _, d) in G["SWITCHES"].items() if d]
+        self.assertEqual(G["start_changes"](on), "(defaults)")
+        off_one = G["start_changes"](on[1:])
+        self.assertEqual(off_one, "-" + G["SHORT"].get(on[0], on[0]))
+        off_key = next(k for k, (_, _, d) in G["SWITCHES"].items() if not d)
+        self.assertEqual(G["start_changes"](on + [off_key]), "+" + G["SHORT"].get(off_key, off_key))
+
+    def test_the_latest_run_starts_at_its_start_line(self):
+        G = self.G
+        a, b = "[t] [a] START allow=[]", "[t] [a] START allow=[net]"
+        lines = ["[t] [a] EXIT code=0", a, "[a] x", "[t] [a] EXIT code=1", b, "[a] y"]
+        self.assertEqual(G["latest_run_lines"](lines), [b, "[a] y"])
+        self.assertEqual(G["latest_run_lines"](["[a] only output"]), ["[a] only output"])      # no START: everything
+        self.assertEqual(G["latest_run_lines"]([]), [])
+        self.assertEqual(G["last_run"](lines), (["[a] y"], None))                               # last_run is unchanged
+
     # -- troubleshooting hints: which log lines suggest which setting (pure logic, no window) --
     START = "[2026-11-11 20:00:00] [app] START allow=[net,sound,gpu]"
 
