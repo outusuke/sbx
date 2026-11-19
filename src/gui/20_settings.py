@@ -231,6 +231,14 @@ def needs(key):
     return ("portals",) if key.startswith("portal_") else NEEDS.get(key, ())
 
 
+def desktop_hidden(scope, key, desktop=None):
+    """True if KEY is for another desktop than the one running (XDG_CURRENT_DESKTOP, e.g. "KDE" or "ubuntu:GNOME") and is not on for SCOPE.
+    Nothing is hidden when the desktop is not GNOME or KDE or is not known, and a switch that is on always stays visible, so it can be turned off."""
+    want = DESKTOP_ONLY.get(key)
+    have = {w.upper() for w in re.split(r"[:;]", os.environ.get("XDG_CURRENT_DESKTOP", "") if desktop is None else desktop)} & {"GNOME", "KDE"}
+    return bool(want and have and want not in have and not is_on(scope, key))
+
+
 def is_on(scope, key):
     """The value a switch has for this program: its own setting, else the default settings, else the built-in default."""
     sc = parse(scope)[0]

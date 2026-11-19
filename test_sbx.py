@@ -4148,6 +4148,15 @@ class Gui(unittest.TestCase):
         self.assertIn("kde", [r[0] for r in dict(G["GROUPS"])["Desktop integration"]])
         self.assertIs(G["SWITCHES"]["kde"][2], False); self.assertIn("kde", G["SHORT"]); self.assertIn("kde", self.S["SCALARS"]); self.assertIn("kde", dict(G["CAN"]))
 
+    def test_desktop_specific_switches_are_hidden_on_the_other_desktop_unless_on(self):
+        G = self.G; H = G["desktop_hidden"]; on = {"v": False}
+        G["is_on"] = lambda scope, key: on["v"]
+        for d, hidden in (("GNOME", {"kde"}), ("ubuntu:GNOME", {"kde"}), ("KDE", {"gnome_shell", "gnome_shell_manage"}), ("X-Cinnamon", set()), ("", set())):
+            self.assertEqual({k for k in ("gnome_shell", "gnome_shell_manage", "kde") if H(None, k, d)}, hidden, d)
+        self.assertFalse(H(None, "tray", "KDE"), "only the desktop-specific switches are ever hidden")
+        on["v"] = True
+        self.assertFalse(H(None, "kde", "GNOME"), "a switch that is on stays visible so it can be turned off")
+
     def test_the_folder_switch_has_wording_and_warns_when_the_folder_cannot_be_shared(self):
         G = self.G
         self.assertIn("folder", G["SWITCHES"]); self.assertIn("folder", G["SHORT"]); self.assertIn("folder", self.S["SCALARS"])
