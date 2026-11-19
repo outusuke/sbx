@@ -2432,29 +2432,13 @@ def cmd_rebind(a):
     print(f"'{name}' now belongs to {tilde(p['new'])}, with the settings and private home it had. Start it again.")
 
 
-def wm_class_fix(cls, prog):
-    """The window class a launcher should claim, or None to leave it. Chromium-based browsers started by sbx name their window after
-    the executable (google-chrome-stable, brave-browser-stable), so StartupWMClass=google-chrome never matches it and the desktop
-    shows a second, generic icon instead of the pinned one. Only the '-suffix' case is touched; any other class is left as it is."""
-    return prog if cls and prog and prog != cls and prog.startswith(cls + "-") else None
-
-
 def rewrite_desktop(text, sbx):
     """A copy of a .desktop file whose launchers go through sbx. Returns (new text, list of warnings)."""
     out, notes, group = [], [], ""
     q = f'"{sbx}"' if " " in sbx else sbx
-    main, grp = {}, ""        # the main Exec= program and StartupWMClass=, to fix the class below
-    for line in text.splitlines():
-        if line.startswith("["): grp = line
-        elif grp == "[Desktop Entry]":
-            if line.startswith("Exec=") and "prog" not in main: main["prog"] = exec_program(line[5:])
-            elif line.startswith("StartupWMClass="): main["cls"] = line[15:].strip()
     for line in text.splitlines():
         if line.startswith("["): group = line
-        if line.startswith("StartupWMClass=") and group == "[Desktop Entry]":
-            new = wm_class_fix(main.get("cls"), main.get("prog"))
-            if new: line = f"StartupWMClass={new}"
-        elif line.startswith("Exec="):
+        if line.startswith("Exec="):
             rest = line[5:]
             first = rest.split(None, 1)[0] if rest.strip() else ""
             if first in ("env", "sh", "bash") or "=" in first:
