@@ -1,7 +1,7 @@
 # bash completion for sbx
 _sbx() {
     local cur=${COMP_WORDS[COMP_CWORD]} i word
-    local opts="--net=none --net-private --private --here --no-wayland --wayland-strict --x11 --no-gpu --gpu-render-only --no-sound --portals --tray --a11y --hostname --privacy
+    local opts="--net=none --net-private --private --here --no-wayland --wayland-strict --x11 --no-gpu --gpu-render-only --no-sound --portals --tray --a11y --gnome-shell --gnome-shell-manage --hostname --privacy
         --no-userns --no-theme --camera --alsa --input --kvm --rocm --printing --ssh-agent --single-instance --allow-sensitive --compat --ignore-config --rebind
         --portal-screenshot --portal-screencast --portal-location --portal-shortcuts --portal-remote-desktop
         --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret --portal-background
