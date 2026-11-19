@@ -52,6 +52,7 @@ SCENARIOS = [                                   # (title, program, flags, overri
     ("locked down", "firefox", ["--net=none", "--private", "--hostname", "--portals", "--no-gpu", "--no-sound", "--no-wayland",
                                 "--no-userns"], {}),
     ("x11", "firefox", ["--x11"], {}),
+    ("screen reader", "firefox", ["--a11y"], {}),
     ("program inside your home", "/home/user/apps/foo/bin/foo", [], {}),
     ("shared folders, parent read-only", "firefox",
      [f"--whitelist={FIX}/a/b", f"--read-only={FIX}/a", f"--whitelist={FIX}/c", "--here"], {"share_dir": lambda d: f"{FIX}/a/b"}),
@@ -297,6 +298,109 @@ class Units(unittest.TestCase):
         self.assertFalse(os.path.exists(sock + ".info"), "the app file is removed")
         cmds.clear(); self.assertIsNone(S["start_proxy"](sock, {"portals": True}))
         self.assertEqual([c[0] for c in cmds], ["/fake/xdg-dbus-proxy"], "no app id, no app file")
+
+    # -- screen reader (a11y)
+    def test_a11y_rules_let_a_program_register_and_nothing_else(self):
+        S = self.S
+        r = S["a11y_rules"]()
+        self.assertIn("--sloppy-names", r)
+        self.assertIn("--call=org.a11y.atspi.Registry=org.a11y.atspi.Socket.Embed@/org/a11y/atspi/accessible/root", r)
+        self.assertIn("--call=org.a11y.atspi.Registry=org.a11y.atspi.DeviceEventController.GetKeystrokeListeners@/org/a11y/atspi/registry/deviceeventcontroller", r)
+        self.assertIn("--broadcast=org.a11y.atspi.Registry=org.a11y.atspi.Registry.EventListenerRegistered@/org/a11y/atspi/registry", r)
+        self.assertIn("--broadcast=org.a11y.atspi.Registry=org.a11y.atspi.Registry.EventListenerDeregistered@/org/a11y/atspi/registry", r)
+        self.assertTrue(all(x == "--sloppy-names" or x.startswith(("--call=org.a11y.atspi.Registry=", "--broadcast=org.a11y.atspi.Registry=")) for x in r),
+                        "the a11y rules name something besides the registry (no --talk, no --own)")
+        self.assertTrue(all("@/org/a11y/atspi/" in x for x in r if x != "--sloppy-names"), "every rule names an object path")
+        self.assertFalse([x for x in r if "Generate" in x or "DeregisterKeystrokeListener" in x], "sending keys and clicks must stay blocked")
+        self.assertIs(S["SCALARS"]["a11y"], False)                                          # off unless asked for
+        self.assertEqual(S["FLAGS"]["--a11y"], ("a11y", True))
+        self.assertEqual(S["parse_options"](["--a11y", "x"])[0], {"a11y": True})
+
+    def test_a11y_bus_address_comes_from_the_environment_then_the_session_then_the_socket(self):
+        S = self.S; S["runtime_dir"] = lambda: f"{self.tmp}/run"; ran, out = [], {}
+        def fake_run(cmd, **k):
+            ran.append(cmd[0]); return types.SimpleNamespace(returncode=out.get(cmd[0], (1, ""))[0], stdout=out.get(cmd[0], (1, ""))[1])
+        S["subprocess"] = types.SimpleNamespace(run=fake_run, DEVNULL=-3, SubprocessError=subprocess.SubprocessError)
+        S["shutil"] = types.SimpleNamespace(which=lambda n: f"/usr/bin/{n}")
+        with mock.patch.dict(os.environ):
+            os.environ["AT_SPI_BUS_ADDRESS"] = "unix:path=/mine/bus"
+            self.assertEqual(S["a11y_bus_address"](), "unix:path=/mine/bus"); self.assertEqual(ran, [], "nothing is asked when you set it")
+            del os.environ["AT_SPI_BUS_ADDRESS"]
+            self.assertIsNone(S["a11y_bus_address"]()); self.assertEqual(ran, ["gdbus", "busctl"], "no answer and no socket: none")
+            os.makedirs(f"{self.tmp}/run/at-spi"); open(f"{self.tmp}/run/at-spi/bus_0", "w").close()
+            self.assertEqual(S["a11y_bus_address"](), f"unix:path={self.tmp}/run/at-spi/bus_0")
+            out["busctl"] = (0, 's "unix:path=/run/user/1000/at-spi/bus_0,guid=abc"\n')
+            self.assertEqual(S["a11y_bus_address"](), "unix:path=/run/user/1000/at-spi/bus_0,guid=abc")
+            out["gdbus"] = (0, "('unix:path=/run/user/1000/at-spi/bus_1,guid=def',)\n")
+            ran.clear(); self.assertEqual(S["a11y_bus_address"](), "unix:path=/run/user/1000/at-spi/bus_1,guid=def"); self.assertEqual(ran, ["gdbus"])
+            S["shutil"] = types.SimpleNamespace(which=lambda n: None)                       # neither tool installed: the socket
+            self.assertEqual(S["a11y_bus_address"](), f"unix:path={self.tmp}/run/at-spi/bus_0")
+
+    def test_the_a11y_proxy_filters_your_accessibility_bus(self):
+        S = self.S; sock = f"{self.tmp}/run/sbx/1.a11y"; seen = []
+        S["a11y_bus_address"] = lambda: "unix:path=/x/at-spi/bus_0"
+        S["shutil"] = types.SimpleNamespace(which=lambda n: f"/fake/{n}")
+        class Proc:
+            def terminate(self): seen.append("terminated")
+            def wait(self, t=None): return 0
+        def popen(cmd, **k):
+            seen.append(cmd); os.write(int(cmd[1].split("=")[1]), b"x"); return Proc()                      # what the proxy does once it listens
+        S["subprocess"] = types.SimpleNamespace(Popen=popen, DEVNULL=-3, TimeoutExpired=subprocess.TimeoutExpired, SubprocessError=subprocess.SubprocessError)
+        px = S["start_a11y_proxy"](sock)
+        self.assertEqual(seen[0][0], "/fake/xdg-dbus-proxy")
+        self.assertEqual(seen[0][2:5], ["unix:path=/x/at-spi/bus_0", sock, "--filter"]); self.assertEqual(seen[0][5:], S["a11y_rules"]())
+        self.assertTrue(os.path.isdir(os.path.dirname(sock)))
+        S["stop_proxy"](px, sock); self.assertEqual(seen[1:], ["terminated"])
+        with self.assertRaises(OSError): os.fstat(px[1])                                                       # the pipe is closed
+        seen.clear(); self.warned.clear()
+        S["a11y_bus_address"] = lambda: None
+        self.assertIsNone(S["start_a11y_proxy"](sock)); self.assertEqual(seen, [], "no bus, no proxy")
+        self.assertTrue(any("accessibility bus was not found" in w for w in self.warned), self.warned)
+        S["a11y_bus_address"] = lambda: "unix:path=/x/at-spi/bus_0"
+        def boom(cmd, **k): raise OSError(8, "Exec format error")
+        S["subprocess"] = types.SimpleNamespace(Popen=boom, DEVNULL=-3, TimeoutExpired=subprocess.TimeoutExpired, SubprocessError=subprocess.SubprocessError)
+        before = sorted(os.listdir("/proc/self/fd")); self.warned.clear()
+        self.assertIsNone(S["start_a11y_proxy"](sock)); self.assertEqual(sorted(os.listdir("/proc/self/fd")), before, "no descriptor is left open")
+        self.assertTrue(any("could not start xdg-dbus-proxy" in w for w in self.warned), self.warned)
+        S["shutil"] = types.SimpleNamespace(which=lambda n: None); self.warned.clear()
+        self.assertIsNone(S["start_a11y_proxy"](sock)); self.assertTrue(any("xdg-dbus-proxy missing" in w for w in self.warned), self.warned)
+
+    def test_a11y_binds_the_filtered_bus_and_tells_the_program_where_it_is_without_a_session_bus(self):
+        S = self.S; rt = f"{self.tmp}/run"; S["runtime_dir"] = lambda: rt
+        def env_of(a): return {a[j + 1]: a[j + 2] for j, x in enumerate(a) if x == "--setenv"}
+        a = S["build"]("/bin/true", [], False, {"a11y": True, "name": "tool", "ignore_config": True})[1]
+        i = a.index(f"{rt}/at-spi/bus")
+        self.assertEqual(a[i - 2], "--ro-bind"); self.assertTrue(a[i - 1].endswith(".a11y"), a[i - 1])
+        e = env_of(a)
+        self.assertEqual(e["AT_SPI_BUS_ADDRESS"], f"unix:path={rt}/at-spi/bus")
+        self.assertEqual({k: e[k] for k in S["A11Y_ENV"]}, S["A11Y_ENV"])
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", e); self.assertNotIn(f"{rt}/bus", a)                      # a11y alone does not open the session bus
+        a = S["build"]("/bin/true", [], False, {"name": "tool", "ignore_config": True})[1]
+        self.assertNotIn(f"{rt}/at-spi/bus", a); self.assertFalse(set(env_of(a)) & ({"AT_SPI_BUS_ADDRESS"} | set(S["A11Y_ENV"])))
+        a = S["build"]("/bin/true", [], False, {"a11y": True, "portals": True, "name": "tool", "ignore_config": True})[1]
+        self.assertIn(f"{rt}/at-spi/bus", a); self.assertIn(f"{rt}/bus", a)                                    # next to the portals, each its own proxy
+        self.assertEqual(env_of(a)["AT_SPI_BUS_ADDRESS"], f"unix:path={rt}/at-spi/bus")
+        def live(extra):
+            with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}), mock.patch.object(shutil, "which", lambda x: f"/usr/bin/{x}"):
+                return S["build"]("/bin/true", [], True, {"name": "tool", "ignore_config": True, **extra})
+        S["start_a11y_proxy"] = lambda sock: ("proxy", -1)
+        _, a, st = live({"a11y": True})
+        self.assertEqual(st["a11y"], ("proxy", -1)); self.assertTrue(st["a11y_bus"].endswith(f"{os.getpid()}.a11y")); self.assertIn(f"{rt}/at-spi/bus", a)
+        S["start_a11y_proxy"] = lambda sock: None                                                              # the proxy did not start: the program gets no bus
+        _, a, st = live({"a11y": True})
+        self.assertIsNone(st["a11y"]); self.assertNotIn(f"{rt}/at-spi/bus", a); self.assertNotIn("AT_SPI_BUS_ADDRESS", env_of(a))
+
+    def test_teardown_stops_the_a11y_proxy_and_removes_its_socket(self):
+        S = self.S; sock = f"{self.tmp}/run/1.a11y"; seen = []
+        os.makedirs(os.path.dirname(sock)); open(sock, "w").close()
+        r, w = os.pipe(); os.close(w)
+        class Proc:
+            def terminate(self): seen.append("terminated")
+            def wait(self, t=None): return 0
+        S["teardown"]({"proxy": None, "bus": f"{self.tmp}/run/1.bus", "a11y": (Proc(), r), "a11y_bus": sock, "wl": None, "files": [], "cleanup": []})
+        self.assertEqual(seen, ["terminated"]); self.assertFalse(os.path.exists(sock))
+        with self.assertRaises(OSError): os.fstat(r)
+        S["teardown"]({"proxy": None, "bus": f"{self.tmp}/run/1.bus", "wl": None, "files": [], "cleanup": []})   # a state without the a11y keys still tears down
 
     def test_proxy_sandbox_has_the_app_file_and_no_home(self):
         S = self.S; info = f"{self.tmp}/p.info"; rt = "/run/user/1000"
@@ -1827,7 +1931,7 @@ class Units(unittest.TestCase):
             try: os.kill(dead, 0); dead += 1
             except ProcessLookupError: break
             except PermissionError: dead += 1
-        names = {f"{dead}.bus": False, f"{dead}.xauth": False, f"{dead}.wl": False, f"{dead}.boot_id": False, f"{dead}.hostname": False, f"{dead}.hosts": False, f"{dead}.resolv.conf": False, f"{dead}.seccomp": False, f"{os.getpid()}.wl": True, "notes.txt": True, f"{dead}.other": True}
+        names = {f"{dead}.bus": False, f"{dead}.a11y": False, f"{dead}.xauth": False, f"{dead}.wl": False, f"{dead}.boot_id": False, f"{dead}.hostname": False, f"{dead}.hosts": False, f"{dead}.resolv.conf": False, f"{dead}.seccomp": False, f"{os.getpid()}.wl": True, "notes.txt": True, f"{dead}.other": True}
         for n in names: open(f"{d}/{n}", "w").close()
         self.S["sweep_stale"]()
         for n, kept in names.items(): self.assertEqual(os.path.exists(f"{d}/{n}"), kept, n)
@@ -3940,6 +4044,11 @@ class Gui(unittest.TestCase):
         self.assertIsNone(G["set_env_entry"]("app", "A=1", ("setenv", "A=100")))
         self.assertIsNone(G["set_env_entry"]("app", "B=3", ("setenv", "A=1")))                       # renamed onto another entry: one remains
         self.assertEqual(G["raw_list"]("app", "setenv"), ["B=3", "C=4"])
+
+    def test_the_screen_reader_switch_is_in_the_desktop_integration_group_and_off_by_default(self):
+        G = self.G
+        self.assertIn("a11y", [r[0] for r in dict(G["GROUPS"])["Desktop integration"]])
+        self.assertIs(G["SWITCHES"]["a11y"][2], False); self.assertIn("a11y", G["SHORT"]); self.assertIn("a11y", dict(G["CAN"]))
 
     def test_the_folder_switch_has_wording_and_warns_when_the_folder_cannot_be_shared(self):
         G = self.G

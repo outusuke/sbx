@@ -34,6 +34,7 @@ GROUPS = [
         ("portal_screenshot", "Screenshots", "Let the program ask the desktop for a screenshot. The desktop shows its own prompt.", False),
         ("portal_screencast", "Screen sharing", "Let the program ask to share your screen or a window (Discord, Teams, Slack). The desktop shows its own picker.", False),
         ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)", False),
+        ("a11y", "Screen reader support", "Let a screen reader such as Orca read the program (needs xdg-dbus-proxy)", False),
         ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and GTK settings, so the program looks like your desktop", True),
         ("portal_location", "Location", "Lets the program ask the desktop where you are.", False),
         ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window.", False),
@@ -62,7 +63,7 @@ SHORT = {"net": "network", "net_private": "this computer private", "wayland": "W
          "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
          "portal_notification": "notifications", "portal_openuri": "open links", "portal_print": "print dialog", "portal_trash": "trash",
          "portal_email": "email", "portal_inhibit": "keep awake", "portal_network": "network state", "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",
-         "tray": "tray icon", "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
+         "tray": "tray icon", "a11y": "screen reader", "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
          "folder": "own folder", "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets", "portal_background": "background"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
@@ -79,7 +80,7 @@ ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    
 # The window edits whitelist, read_only, setenv and env; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
-       ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))
+       ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("a11y", "screen reader"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))
 NEEDS = {"net_private": ("net",), "gpu_render_only": ("gpu", "rocm"), "wayland_strict": ("wayland",)}      # key -> switches of which one must be on for it to do anything (portal_* need portals, see needs())
 # Troubleshooting hints: a pattern in a failed run's log -> the one setting that usually fixes it. Each entry is
 # (pattern, setting, wanted value, title, why, only while these hold). A hint is shown only if the setting is not already as wanted.

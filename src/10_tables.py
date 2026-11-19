@@ -48,11 +48,15 @@ PORTAL_EXTRA = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenC
 # namespace), so it is small. An app whose main process has a higher PID gets no tray icon; the range can be raised here.
 TRAY_PIDS = range(2, 65)
 TRAY_IDS = range(1, 4)
+# Screen reader (a11y=1). AT_SPI_BUS_ADDRESS (where the program finds the accessibility bus) is set by sbx. These two make toolkits that would
+# otherwise ask the desktop whether a screen reader is on (they can't reach it from the sandbox) turn their accessibility support on: Qt, and
+# Firefox and other GNOME programs.
+A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 # Settings (key=value files) and their defaults. Lists: LISTS. Text values: LIMITS (a pattern each value must match).
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, "tray": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
+           "compat": False, "tray": False, "a11y": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
