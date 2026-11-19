@@ -4148,6 +4148,26 @@ class Gui(unittest.TestCase):
         self.assertIn("kde", [r[0] for r in dict(G["GROUPS"])["Desktop integration"]])
         self.assertIs(G["SWITCHES"]["kde"][2], False); self.assertIn("kde", G["SHORT"]); self.assertIn("kde", self.S["SCALARS"]); self.assertIn("kde", dict(G["CAN"]))
 
+    def test_every_bus_integration_and_desktop_switch_is_wired_in_every_place(self):
+        """One check for all of them, so a new integration needs no new test: the places a switch must be listed in, and that it starts the proxy."""
+        G, S = self.G, self.S; rows = [r[0] for _t, rs in G["GROUPS"] for r in rs]
+        for key, fn in S["BUS_INTEGRATIONS"]:
+            self.assertIn(key, rows, key); self.assertIn(key, G["SHORT"], key); self.assertIn(key, S["SCALARS"], key); self.assertIn(key, dict(G["CAN"]), key)
+            self.assertTrue(S["bus_rules"]({"portals": False, key: True}), f"{key} on adds no rules")     # on: its rules reach the proxy
+            self.assertEqual(S["bus_rules"]({"portals": False, key: False}), [], key)
+        for key, desktop in G["DESKTOP_ONLY"].items():
+            self.assertIn(key, rows, key); self.assertIn(desktop, G["DESKTOP_NAMES"], key)     # every desktop has an expander title
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "70_build.py")).read()
+        self.assertIn("BUS_INTEGRATIONS", src)                                                  # the proxy start reads the list, not a hand-written condition
+
+    def test_a_desktop_folds_into_an_expander_only_when_it_has_more_than_three_rows(self):
+        F = self.G["folded_desktops"]; n = self.G["DESKTOP_FOLD"]; self.assertEqual(n, 3)
+        self.assertEqual(F([k for k, d in self.G["DESKTOP_ONLY"].items()]), set())              # today's rows stay at the top level
+        self.assertEqual(F(["a11y", "tray"]), set())
+        with mock.patch.dict(self.G["DESKTOP_ONLY"], {f"x{i}": "GNOME" for i in range(4)}):
+            self.assertEqual(F([f"x{i}" for i in range(4)]), {"GNOME"})
+            self.assertEqual(F([f"x{i}" for i in range(3)]), set())
+
     def test_desktop_specific_switches_are_hidden_on_the_other_desktop_unless_on(self):
         G = self.G; H = G["desktop_hidden"]; on = {"v": False}
         G["is_on"] = lambda scope, key: on["v"]
