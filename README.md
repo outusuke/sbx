@@ -85,6 +85,7 @@ The program goes to `~/Apps/NAME` and is shared with it read-only. Its launcher 
 | `--here` | share current folder, read-write |
 | `--whitelist=PATH` / `--read-only=PATH` | share a path, read-write / read-only |
 | `--name=NAME` | separate home and settings |
+| `--app-id=ID` | the id the desktop is told the program has (a launcher's file name without `.desktop`); `sbx desktop` sets it |
 | `--memory=2G` `--tasks=512` `--cpu=200%` | limits |
 | `--gtk-portal=auto\|1\|0` | with `--portals`: tell GTK programs to use the file chooser portal. `auto` (default) does, except when your desktop's cursor size is 0, which crashes GTK (sbx says so); `1`/`0` force it. Setting: `gtk_portal` |
 | `--ignore-config` | ignore settings files |

@@ -416,10 +416,12 @@ def cmd_rebind(a):
     print(f"'{name}' now belongs to {tilde(p['new'])}, with the settings and private home it had. Start it again.")
 
 
-def rewrite_desktop(text, sbx):
-    """A copy of a .desktop file whose launchers go through sbx. Returns (new text, list of warnings)."""
+def rewrite_desktop(text, sbx, app_id=None):
+    """A copy of a .desktop file whose launchers go through sbx. With APP_ID, each Exec= tells sbx that id (--app-id), which sbx
+    gives the desktop as the program's id. Returns (new text, list of warnings)."""
     out, notes, group = [], [], ""
     q = f'"{sbx}"' if " " in sbx else sbx
+    opt = f" --app-id={app_id}" if app_id else ""
     for line in text.splitlines():
         if line.startswith("["): group = line
         if line.startswith("Exec="):
@@ -427,7 +429,7 @@ def rewrite_desktop(text, sbx):
             first = rest.split(None, 1)[0] if rest.strip() else ""
             if first in ("env", "sh", "bash") or "=" in first:
                 notes.append(f"'{line}' starts with {first}: sbx would name the program '{first}'. Edit the file by hand.")
-            line = f"Exec={q} {rest}"
+            line = f"Exec={q}{opt} {rest}"
         elif line.startswith("DBusActivatable="): line = "DBusActivatable=false"       # D-Bus activation would bypass sbx
         elif line.startswith("Name=") and group == "[Desktop Entry]": line += " (sbx)"
         out.append(line)
@@ -461,7 +463,9 @@ def exec_program(value):
     """The program an Exec= value starts: the base name of its first word, past a leading sbx. None when it can't tell."""
     try: w = shlex.split(value)
     except ValueError: return None
-    if w and os.path.basename(w[0]) == "sbx": w = w[1:]
+    if w and os.path.basename(w[0]) == "sbx":
+        w = w[1:]
+        while w and w[0].startswith("--app-id="): w = w[1:]        # the id add_launcher gives the launcher
     return os.path.basename(w[0]) if w else None
 
 
@@ -517,7 +521,8 @@ def add_launcher(src, ident):
     dest = f"{user_launchers()}/{os.path.basename(src)}"
     if os.path.lexists(dest) and "X-Sbx-Sandboxed=true" not in launcher_text(dest):
         warn(f"{tilde(dest)} already exists and was not made by sbx; not touching it"); return False
-    text, notes = rewrite_desktop(launcher_text(src), shutil.which("sbx") or os.path.realpath(sys.argv[0]))
+    ident_of_file = os.path.basename(src)[:-8] if src.endswith(".desktop") else ""        # a launcher's id is its file name without .desktop
+    text, notes = rewrite_desktop(launcher_text(src), shutil.which("sbx") or os.path.realpath(sys.argv[0]), ident_of_file if re.fullmatch(APP_ID, ident_of_file) else None)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, "w") as f: f.write(text)
     for n in notes: warn(n)

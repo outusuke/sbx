@@ -351,6 +351,13 @@ Resource limits, through
 .BI \-\-name= NAME
 Use another private home, machine\-id and settings name than the program's.
 .TP
+.BI \-\-app\-id= ID
+The id the desktop is told the program has, so it can match the window to the launcher: a launcher's file name without
+.IR .desktop .
+It goes to the compositor with the Wayland security context, where the compositor uses it. Without it the id is the program's name.
+.B sbx desktop
+writes it into the launcher it makes.
+.TP
 .BI \-\-loader= PATH
 Start the program through this dynamic loader (an absolute path, such as /lib64/ld\-linux\-x86\-64.so.2) instead of running it directly.
 sbx does this by itself for a dynamically linked file that has no execute bit and whose mode it cannot change.

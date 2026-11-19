@@ -694,7 +694,9 @@ def launcher_program(text):
         elif group == "[Desktop Entry]" and line.startswith("Exec="):
             try: w = shlex.split(line[5:])
             except ValueError: return None
-            if w and os.path.basename(w[0]) == "sbx": w = w[1:]
+            if w and os.path.basename(w[0]) == "sbx":
+                w = w[1:]
+                while w and w[0].startswith("--app-id="): w = w[1:]
             return os.path.basename(w[0]) if w else None
     return None
 

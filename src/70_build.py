@@ -124,7 +124,7 @@ def build(prog, args, live=False, o=None):
     if wp:
         bind_src = wp
         if live:
-            state["wl"] = wayland_context(wp, tag + ".wl", name, f"{name}-{os.getpid()}")
+            state["wl"] = wayland_context(wp, tag + ".wl", o.get("app_id") or name, f"{name}-{os.getpid()}")
             if state["wl"]: bind_src = tag + ".wl"
         elif wl_supported(wp): bind_src = tag + ".wl"
         # wayland_strict that you never set is on exactly where the compositor can restrict programs: if the attempt failed
