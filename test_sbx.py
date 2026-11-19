@@ -2772,9 +2772,11 @@ class Ported(unittest.TestCase):
         self.assertIn(f"--call=org.gnome.Shell={P}.Get@/org/gnome/Shell", r); self.assertIn(f"--call=org.gnome.Shell={P}.GetAll@/org/gnome/Shell", r)
         self.assertIn(f"--broadcast=org.gnome.Shell={E}.ExtensionStateChanged@/org/gnome/Shell", r)
         self.assertIn(f"--broadcast=org.gnome.Shell={P}.PropertiesChanged@/org/gnome/Shell", r)
-        self.assertTrue(all(x.startswith(("--call=org.gnome.Shell=", "--broadcast=org.gnome.Shell=")) and x.endswith("@/org/gnome/Shell") for x in r),
-                        "every rule names org.gnome.Shell and the one object path")
-        self.assertFalse([x for x in r if x.startswith(("--talk", "--own", "--see"))], "never --talk to the Shell: that would open Eval")
+        self.assertIn("--own=org.gnome.BrowserConnector", r)                             # the host registers its GApplication under this name, or exits
+        self.assertTrue(all(x.startswith(("--call=org.gnome.Shell=", "--broadcast=org.gnome.Shell=")) and x.endswith("@/org/gnome/Shell")
+                            for x in r if x != "--own=org.gnome.BrowserConnector"), "every other rule names org.gnome.Shell and the one object path")
+        self.assertFalse([x for x in r if x.startswith(("--talk", "--see"))], "never --talk to the Shell: that would open Eval")
+        self.assertEqual([x for x in r if x.startswith("--own")], ["--own=org.gnome.BrowserConnector"], "the connector's own name, nothing else")
         self.assertFalse([x for x in r if any(w in x for w in ("Eval", "Enable", "Disable", "Uninstall", "Reload", "Prefs", ".Set@", "CheckForUpdates"))], r)
         self.assertFalse([x for x in r if "=org.gnome.Shell." in x and f"={E}." not in x and f"={P}." not in x], "no other interface of the Shell")
         m = R({"gnome_shell": True, "gnome_shell_manage": True})

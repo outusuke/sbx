@@ -298,7 +298,7 @@ session bus proxy (xdg\-dbus\-proxy, also used by
 .BR \-\-portals " and " \-\-tray )
 allows only these calls on org.gnome.Shell.Extensions at /org/gnome/Shell: ListExtensions, GetExtensionInfo, GetExtensionErrors and InstallRemoteExtension (the Shell
 shows a confirmation dialog before it installs anything), reading the Shell's properties (its version), and the extension\-state signals. Nothing else of
-org.gnome.Shell is reachable, in particular not Eval. Works without
+org.gnome.Shell is reachable, in particular not Eval. The program may also own the name org.gnome.BrowserConnector, which the connector registers when it starts. Works without
 .BR \-\-portals .
 .TP
 .B \-\-gnome\-shell\-manage
