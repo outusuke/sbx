@@ -345,6 +345,7 @@ class Win(Adw.ApplicationWindow):
             g = Adw.PreferencesGroup(title=title, description=GROUP_INFO.get(title, ""))
             members, more = [], None
             for key, _t, _s, _d in rows:
+                if desktop_hidden(scope, key): continue                           # the GNOME Shell rows on KDE, the KDE row on GNOME
                 r = self.switch_row(scope, key, page_rows)
                 if key in ADVANCED:                                               # seldom needed: one collapsed row, "More desktop services"
                     if more is None:

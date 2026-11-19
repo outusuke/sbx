@@ -103,6 +103,7 @@ ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
        ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("a11y", "screen reader"), ("gnome_shell", "GNOME Shell extensions"), ("kde", "KDE Plasma integration"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))
+DESKTOP_ONLY = {"gnome_shell": "GNOME", "gnome_shell_manage": "GNOME", "kde": "KDE"}      # switch -> the desktop it is for; hidden on the other one (see desktop_hidden())
 NEEDS = {"gnome_shell_manage": ("gnome_shell",), "net_private": ("net",), "gpu_render_only": ("gpu", "rocm"), "wayland_strict": ("wayland",)}      # key -> switches of which one must be on for it to do anything (portal_* need portals, see needs())
 # Troubleshooting hints: a pattern in a failed run's log -> the one setting that usually fixes it. Each entry is
 # (pattern, setting, wanted value, title, why, only while these hold). A hint is shown only if the setting is not already as wanted.
@@ -395,6 +396,14 @@ def app_names():
 def needs(key):
     """The switches of which at least one must be on before KEY does anything, or ()."""
     return ("portals",) if key.startswith("portal_") else NEEDS.get(key, ())
+
+
+def desktop_hidden(scope, key, desktop=None):
+    """True if KEY is for another desktop than the one running (XDG_CURRENT_DESKTOP, e.g. "KDE" or "ubuntu:GNOME") and is not on for SCOPE.
+    Nothing is hidden when the desktop is not GNOME or KDE or is not known, and a switch that is on always stays visible, so it can be turned off."""
+    want = DESKTOP_ONLY.get(key)
+    have = {w.upper() for w in re.split(r"[:;]", os.environ.get("XDG_CURRENT_DESKTOP", "") if desktop is None else desktop)} & {"GNOME", "KDE"}
+    return bool(want and have and want not in have and not is_on(scope, key))
 
 
 def is_on(scope, key):
@@ -1342,6 +1351,7 @@ class Win(Adw.ApplicationWindow):
             g = Adw.PreferencesGroup(title=title, description=GROUP_INFO.get(title, ""))
             members, more = [], None
             for key, _t, _s, _d in rows:
+                if desktop_hidden(scope, key): continue                           # the GNOME Shell rows on KDE, the KDE row on GNOME
                 r = self.switch_row(scope, key, page_rows)
                 if key in ADVANCED:                                               # seldom needed: one collapsed row, "More desktop services"
                     if more is None:
