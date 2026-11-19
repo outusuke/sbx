@@ -325,6 +325,43 @@ def log_line_parts(line):
     return ts or "", name or "", text, kind
 
 
+START_RE = re.compile(r"^START allow=\[([^\]]*)\]$")
+RULE = "\u2500" * 32
+
+
+def start_changes(allowed):
+    """What a START line says, shortened to the switches that differ from the built-in defaults: "+x11 -network", or
+    "(defaults)". ALLOWED are the names of the switches that were on."""
+    on = set(allowed)
+    diff = [f"+{SHORT.get(k, k)}" for k in SWITCHES if k in on and not SWITCHES[k][2]]
+    diff += [f"-{SHORT.get(k, k)}" for k in SWITCHES if k not in on and SWITCHES[k][2]]
+    return " ".join(diff) or "(defaults)"
+
+
+def short_ts(ts, today):
+    """A timestamp "[2026-11-19 10:41:00] " without its date when it is TODAY's ("YYYY-MM-DD")."""
+    return "[" + ts[len(today) + 2:] if ts.startswith(f"[{today} ") else ts
+
+
+def log_rows(lines, today=None):
+    """LINES laid out for the log page: one row per line, each a list of (text, tag) chunks, tag "" for plain text.
+    Today's timestamps lose their date, a START line shows only what differs from the defaults (dimmed), and a rule
+    comes before every run except the first row, so runs do not run together."""
+    today = today or time.strftime("%F")
+    rows = []
+    for line in lines:
+        ts, name, text, kind = log_line_parts(line)
+        chunks = [(short_ts(ts, today), "ts"), (name, "name")]
+        m = START_RE.match(text)
+        if m:
+            if rows: rows.append([(RULE, "dim")])
+            chunks += [("START", "info"), (" " + start_changes([k for k in m.group(1).split(",") if k]), "dim")]
+        else:
+            chunks.append((text, kind))
+        rows.append([c for c in chunks if c[0]])
+    return rows
+
+
 def effective_switches(scope):
     """The switch values a program runs with: built-in defaults, then default.conf, then the program's own file."""
     v = {k: d for k, (_, _, d) in SWITCHES.items()}
@@ -338,14 +375,22 @@ def effective_lists(scope):
     return {k: raw_list(None, k) + (raw_list(scope, k) if scope is not None else []) for k in HINT_LISTS}
 
 
-def last_run(lines):
-    """(lines of the most recent run, its exit code or None). A run starts at a START line and ends at an EXIT line."""
-    start = 0
+def last_start(lines):
+    """Index of the most recent START line, or -1 if there is none."""
     for i in range(len(lines) - 1, -1, -1):
         if "] START allow=[" in lines[i]:
-            start = i + 1
-            break
-    run_lines = lines[start:]
+            return i
+    return -1
+
+
+def latest_run_lines(lines):
+    """The most recent run with its START line: from the last START to the end (everything, when no START is logged)."""
+    return lines[max(last_start(lines), 0):]
+
+
+def last_run(lines):
+    """(lines of the most recent run, its exit code or None). A run starts at a START line and ends at an EXIT line."""
+    run_lines = lines[last_start(lines) + 1:]
     code = None
     for ln in reversed(run_lines):
         m = re.search(r"\] EXIT code=(-?\d+)", ln)
