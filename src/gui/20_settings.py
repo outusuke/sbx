@@ -239,6 +239,17 @@ def desktop_hidden(scope, key, desktop=None):
     return bool(want and have and want not in have and not is_on(scope, key))
 
 
+DESKTOP_FOLD = 3      # a desktop with more rows than this gets an expander of its own; with fewer they stay at the top level
+
+
+def folded_desktops(keys):
+    """The desktops (as DESKTOP_ONLY names them) that have more than DESKTOP_FOLD of KEYS, the rows that are shown. Few rows are easier to reach left open."""
+    count = {}
+    for k in keys:
+        if k in DESKTOP_ONLY: count[DESKTOP_ONLY[k]] = count.get(DESKTOP_ONLY[k], 0) + 1
+    return {d for d, n in count.items() if n > DESKTOP_FOLD}
+
+
 def is_on(scope, key):
     """The value a switch has for this program: its own setting, else the default settings, else the built-in default."""
     sc = parse(scope)[0]

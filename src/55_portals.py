@@ -85,10 +85,17 @@ def kde_rules(cfg=None):
     return own + jobs + [f"--call={KDE_INHIBIT}={KDE_INHIBIT}.{m}@{KDE_INHIBIT_PATH}" for m in ("Inhibit", "UnInhibit")]
 
 
+# Every switch that opens the session-bus proxy, with the function that gives its rules. A new integration is one line here: bus_rules() and the
+# check that starts the proxy (70_build.py) both read this list, so the switch can't be added without the proxy starting for it.
+BUS_INTEGRATIONS = (("tray", lambda cfg: tray_rules()), ("gnome_shell", gnome_shell_rules), ("kde", kde_rules))
+
+
 def bus_rules(cfg=None):
-    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the tray, GNOME Shell and KDE rules."""
+    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the rules of each integration that is on."""
     rules = portal_rules(cfg) if cfg is None or cfg.get("portals") else []
-    return rules + (tray_rules() if cfg and cfg.get("tray") else []) + gnome_shell_rules(cfg) + kde_rules(cfg)
+    for key, fn in BUS_INTEGRATIONS:
+        if cfg and cfg.get(key): rules = rules + fn(cfg)
+    return rules
 
 
 # ---------------------------------------------------------------- accessibility bus

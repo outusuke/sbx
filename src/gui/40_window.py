@@ -343,28 +343,36 @@ class Win(Adw.ApplicationWindow):
         found = []                                                                # (group, [(row, words searched)]) for the search
         for title, rows in GROUPS:
             g = Adw.PreferencesGroup(title=title, description=GROUP_INFO.get(title, ""))
-            members, more = [], None
+            fold = folded_desktops([k for k, _t, _s, _d in rows if not desktop_hidden(scope, k)])
+            members, holder, boxes, names = [], {}, {}, {}                         # holder: switch -> its expander; boxes: title -> expander; names: title -> row titles
             for key, _t, _s, _d in rows:
                 if desktop_hidden(scope, key): continue                           # the GNOME Shell rows on KDE, the KDE row on GNOME
                 r = self.switch_row(scope, key, page_rows)
-                if key in ADVANCED:                                               # seldom needed: one collapsed row, "More desktop services"
-                    if more is None:
-                        more = Adw.ExpanderRow(title="More desktop services", subtitle="Location, shortcuts, wallpaper, launchers, remote control, secrets, background", use_markup=False)
-                        g.add(more)
-                    more.add_row(r)
-                else: g.add(r)
+                if key in ADVANCED: box = "More desktop services"                 # seldom needed: one collapsed row
+                elif DESKTOP_ONLY.get(key) in fold: box = DESKTOP_NAMES.get(DESKTOP_ONLY[key], DESKTOP_ONLY[key])      # a desktop with many rows: one collapsed row
+                else: box = None
+                if box is None: g.add(r)
+                else:
+                    if box not in boxes:
+                        boxes[box] = Adw.ExpanderRow(title=box, subtitle="Location, shortcuts, wallpaper, launchers, remote control, secrets, background" if key in ADVANCED else "", use_markup=False)
+                        g.add(boxes[box])
+                    boxes[box].add_row(r); holder[key] = boxes[box]
+                    if key not in ADVANCED:
+                        names.setdefault(box, []).append(r.get_title())
+                        if is_on(scope, key): boxes[box].set_expanded(True)       # a switch that is on never hides behind a closed row
                 members.append((r, key))
+            for box, titles in names.items(): boxes[box].set_subtitle(", ".join(titles))      # built from the rows, so it can't go stale
             page.add(g)
-            found.append((g, members, more))
+            found.append((g, members, holder))
 
         def filter_rows(entry):
             words = entry.get_text().lower().split()
-            for g, members, more in found:
+            for g, members, holder in found:
                 shown = 0
                 for r, key in members:
                     hit = all(w in f"{r.get_title()} {r.get_subtitle() or ''} {key}".lower() for w in words)
                     r.set_visible(hit); shown += hit
-                    if more is not None and key in ADVANCED and hit and words: more.set_expanded(True)      # a match inside the collapsed row opens it
+                    if key in holder and hit and words: holder[key].set_expanded(True)      # a match inside a collapsed row opens it
                 g.set_visible(shown > 0)
         search = Gtk.SearchEntry(placeholder_text="Search settings", hexpand=True)
         search.connect("search-changed", filter_rows)

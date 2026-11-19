@@ -84,6 +84,7 @@ ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
        ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("a11y", "screen reader"), ("gnome_shell", "GNOME Shell extensions"), ("kde", "KDE Plasma integration"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))
+DESKTOP_NAMES = {"GNOME": "GNOME Shell", "KDE": "KDE Plasma"}      # desktop -> the title of its expander; a new desktop is one line here and one in DESKTOP_ONLY
 DESKTOP_ONLY = {"gnome_shell": "GNOME", "gnome_shell_manage": "GNOME", "kde": "KDE"}      # switch -> the desktop it is for; hidden on the other one (see desktop_hidden())
 NEEDS = {"gnome_shell_manage": ("gnome_shell",), "net_private": ("net",), "gpu_render_only": ("gpu", "rocm"), "wayland_strict": ("wayland",)}      # key -> switches of which one must be on for it to do anything (portal_* need portals, see needs())
 # Troubleshooting hints: a pattern in a failed run's log -> the one setting that usually fixes it. Each entry is
