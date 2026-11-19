@@ -13,7 +13,8 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          **{"--no-" + k.replace("_", "-"): (k, False) for k in PORTAL_TOGGLES}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
-               "--loader": "loader"}
+               "--loader": "loader", "--app-id": "app_id"}
+APP_ID = r"[A-Za-z0-9._+-]{1,255}"       # what a desktop file name (without .desktop) may hold; a window id for the compositor
 COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind", "export", "import", "install", "uninstall")
 
 USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
@@ -62,6 +63,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --memory=2G --tasks=512 --cpu=200%   limits (systemd-run --user)\n"
          "  --gtk-portal=auto|1|0  tell GTK programs to use the file chooser portal (with --portals): auto does, except where the host's cursor size is 0\n"
          "  --name=NAME            use another private home and settings name than the program's\n"
+         "  --app-id=ID            the id the desktop is told the program has, so it finds the launcher (a launcher's file name without .desktop; sbx desktop sets it)\n"
          "  --loader=PATH          start the program through this dynamic loader (an absolute path; sbx does it itself for a file it can't make executable)\n"
          "  --ignore-config        ignore the settings files for this run\n"
          "  --rebind               this file is the same program as before, just moved (only needed when sbx can't tell; see below)\n"
@@ -93,6 +95,9 @@ def parse_options(a):
                 if not re.fullmatch(LIMITS[key], v): die(f"{k}: '{v}' is not a valid value")
                 o[key] = v
             elif key in ("name", "loader"): o[key] = v
+            elif key == "app_id":
+                if not re.fullmatch(APP_ID, v): die(f"{k}: '{v}' is not an id (letters, digits and . _ + - only)")
+                o[key] = v
             else:
                 if key == "env" and not env_name_ok(v): die(f"{k}: '{v}' is not a variable name")
                 if key == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): die(f"{k}: use NAME=VALUE")

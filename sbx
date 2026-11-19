@@ -1575,7 +1575,7 @@ def build(prog, args, live=False, o=None):
     if wp:
         bind_src = wp
         if live:
-            state["wl"] = wayland_context(wp, tag + ".wl", name, f"{name}-{os.getpid()}")
+            state["wl"] = wayland_context(wp, tag + ".wl", o.get("app_id") or name, f"{name}-{os.getpid()}")
             if state["wl"]: bind_src = tag + ".wl"
         elif wl_supported(wp): bind_src = tag + ".wl"
         # wayland_strict that you never set is on exactly where the compositor can restrict programs: if the attempt failed
@@ -1917,7 +1917,8 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          **{"--no-" + k.replace("_", "-"): (k, False) for k in PORTAL_TOGGLES}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
-               "--loader": "loader"}
+               "--loader": "loader", "--app-id": "app_id"}
+APP_ID = r"[A-Za-z0-9._+-]{1,255}"       # what a desktop file name (without .desktop) may hold; a window id for the compositor
 COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind", "export", "import", "install", "uninstall")
 
 USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
@@ -1966,6 +1967,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --memory=2G --tasks=512 --cpu=200%   limits (systemd-run --user)\n"
          "  --gtk-portal=auto|1|0  tell GTK programs to use the file chooser portal (with --portals): auto does, except where the host's cursor size is 0\n"
          "  --name=NAME            use another private home and settings name than the program's\n"
+         "  --app-id=ID            the id the desktop is told the program has, so it finds the launcher (a launcher's file name without .desktop; sbx desktop sets it)\n"
          "  --loader=PATH          start the program through this dynamic loader (an absolute path; sbx does it itself for a file it can't make executable)\n"
          "  --ignore-config        ignore the settings files for this run\n"
          "  --rebind               this file is the same program as before, just moved (only needed when sbx can't tell; see below)\n"
@@ -1997,6 +1999,9 @@ def parse_options(a):
                 if not re.fullmatch(LIMITS[key], v): die(f"{k}: '{v}' is not a valid value")
                 o[key] = v
             elif key in ("name", "loader"): o[key] = v
+            elif key == "app_id":
+                if not re.fullmatch(APP_ID, v): die(f"{k}: '{v}' is not an id (letters, digits and . _ + - only)")
+                o[key] = v
             else:
                 if key == "env" and not env_name_ok(v): die(f"{k}: '{v}' is not a variable name")
                 if key == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): die(f"{k}: use NAME=VALUE")
@@ -2432,10 +2437,12 @@ def cmd_rebind(a):
     print(f"'{name}' now belongs to {tilde(p['new'])}, with the settings and private home it had. Start it again.")
 
 
-def rewrite_desktop(text, sbx):
-    """A copy of a .desktop file whose launchers go through sbx. Returns (new text, list of warnings)."""
+def rewrite_desktop(text, sbx, app_id=None):
+    """A copy of a .desktop file whose launchers go through sbx. With APP_ID, each Exec= tells sbx that id (--app-id), which sbx
+    gives the desktop as the program's id. Returns (new text, list of warnings)."""
     out, notes, group = [], [], ""
     q = f'"{sbx}"' if " " in sbx else sbx
+    opt = f" --app-id={app_id}" if app_id else ""
     for line in text.splitlines():
         if line.startswith("["): group = line
         if line.startswith("Exec="):
@@ -2443,7 +2450,7 @@ def rewrite_desktop(text, sbx):
             first = rest.split(None, 1)[0] if rest.strip() else ""
             if first in ("env", "sh", "bash") or "=" in first:
                 notes.append(f"'{line}' starts with {first}: sbx would name the program '{first}'. Edit the file by hand.")
-            line = f"Exec={q} {rest}"
+            line = f"Exec={q}{opt} {rest}"
         elif line.startswith("DBusActivatable="): line = "DBusActivatable=false"       # D-Bus activation would bypass sbx
         elif line.startswith("Name=") and group == "[Desktop Entry]": line += " (sbx)"
         out.append(line)
@@ -2477,7 +2484,9 @@ def exec_program(value):
     """The program an Exec= value starts: the base name of its first word, past a leading sbx. None when it can't tell."""
     try: w = shlex.split(value)
     except ValueError: return None
-    if w and os.path.basename(w[0]) == "sbx": w = w[1:]
+    if w and os.path.basename(w[0]) == "sbx":
+        w = w[1:]
+        while w and w[0].startswith("--app-id="): w = w[1:]        # the id add_launcher gives the launcher
     return os.path.basename(w[0]) if w else None
 
 
@@ -2533,7 +2542,8 @@ def add_launcher(src, ident):
     dest = f"{user_launchers()}/{os.path.basename(src)}"
     if os.path.lexists(dest) and "X-Sbx-Sandboxed=true" not in launcher_text(dest):
         warn(f"{tilde(dest)} already exists and was not made by sbx; not touching it"); return False
-    text, notes = rewrite_desktop(launcher_text(src), shutil.which("sbx") or os.path.realpath(sys.argv[0]))
+    ident_of_file = os.path.basename(src)[:-8] if src.endswith(".desktop") else ""        # a launcher's id is its file name without .desktop
+    text, notes = rewrite_desktop(launcher_text(src), shutil.which("sbx") or os.path.realpath(sys.argv[0]), ident_of_file if re.fullmatch(APP_ID, ident_of_file) else None)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, "w") as f: f.write(text)
     for n in notes: warn(n)

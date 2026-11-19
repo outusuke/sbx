@@ -2047,6 +2047,7 @@ class Units(unittest.TestCase):
         self.assertEqual(ep("firefox --new-window %u"), "firefox")
         self.assertEqual(ep("/usr/local/bin/sbx /usr/bin/x %U"), "x")                  # a launcher sbx already rewrote
         self.assertEqual(ep('"/opt/my tools/sbx" app %f'), "app")
+        self.assertEqual(ep("/usr/local/bin/sbx --app-id=my-app /usr/bin/x %U"), "x")      # a launcher made with its id
         self.assertEqual(ep("env FOO=1 app"), "env")                                    # not the program: rewrite_desktop warns about these
         self.assertIsNone(ep("")); self.assertIsNone(ep('app "unterminated'))
 
@@ -2156,6 +2157,49 @@ class Units(unittest.TestCase):
         self.assertTrue(notes)
         new, _ = self.S["rewrite_desktop"]("[Desktop Entry]\nExec=app\n", "/opt/my tools/sbx")
         self.assertIn('Exec="/opt/my tools/sbx" app', new)
+
+    def test_app_id_option_takes_a_desktop_file_name_and_nothing_else(self):
+        S = self.S
+        self.assertEqual(S["parse_options"](["--app-id=org.example.App-2", "prog"]), ({"app_id": "org.example.App-2"}, ["prog"]))
+        for bad in ("--app-id=", "--app-id=a b", "--app-id=a/b", "--app-id=" + "x" * 256):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["parse_options"]([bad, "prog"])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["parse_options"](["--app-id", "prog"])
+
+    def test_the_security_context_gets_the_launcher_id_when_there_is_one_else_the_program_name(self):
+        S = self.S
+        run = f"{self.tmp}/runid"; os.makedirs(run)
+        open(f"{run}/wayland-0", "w").close()
+        S["runtime_dir"] = lambda: run
+        S["wl_supported"] = lambda p: True
+        def go(opts):
+            seen = []
+            S["wayland_context"] = lambda *a: seen.append(a) or None
+            with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ""}):
+                _, cmd, st = S["build"]("/bin/true", [], True, opts)
+            for f in st["keep"]: f.close()
+            for fd in st["fds"]:
+                try: os.close(fd)
+                except OSError: pass
+            return seen[0][2]
+        self.assertEqual(go({}), "true")                                    # as before: the program's name
+        self.assertEqual(go({"app_id": "my-launcher"}), "my-launcher")
+        self.assertEqual(go({"app_id": "my-launcher", "name": "other"}), "my-launcher")      # the home and settings name is a different thing
+
+    def test_a_launcher_made_by_desktop_tells_sbx_its_own_id_and_keeps_its_window_class(self):
+        rw = lambda t, i=None: self.S["rewrite_desktop"](t, "/usr/local/bin/sbx", i)[0].splitlines()
+        text = "[Desktop Entry]\nName=A\nExec=/usr/bin/a-stable %U\nStartupWMClass=a\n\n[Desktop Action w]\nExec=/usr/bin/a-stable --new-window\n"
+        out = rw(text, "a")
+        self.assertIn("Exec=/usr/local/bin/sbx --app-id=a /usr/bin/a-stable %U", out)
+        self.assertIn("Exec=/usr/local/bin/sbx --app-id=a /usr/bin/a-stable --new-window", out)      # its actions too
+        self.assertIn("StartupWMClass=a", out)                                                      # the class is never rewritten
+        self.assertIn("Exec=/usr/local/bin/sbx /usr/bin/a-stable %U", rw(text))                    # no id: as before
+        share = self._launcher_share(("a.desktop", text))
+        dest = f"{self.home}/.local/share/applications/a.desktop"
+        with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": share}), mock.patch.object(sys, "argv", ["/usr/local/bin/sbx"]), contextlib.redirect_stdout(io.StringIO()):
+            self.S["cmd_desktop"](["a"])
+            self.assertEqual(self.S["launcher_program"](dest), "a-stable")                         # still found by the program it starts
+            self.assertEqual(self.S["our_launchers"]("a-stable"), [dest])
+        with open(dest) as f: self.assertIn("--app-id=a ", f.read())
 
     def test_schema_lists_every_setting(self):
         sch = self.S["schema"]()
@@ -2941,6 +2985,11 @@ class Gui(unittest.TestCase):
             exec(compile(src, "sbx-gui", "exec"), ns)
         self.G = ns
         self.S = load_sbx()
+
+    def test_the_window_reads_the_program_of_a_launcher_made_with_an_app_id(self):
+        lp = self.G["launcher_program"]
+        self.assertEqual(lp("[Desktop Entry]\nExec=/usr/local/bin/sbx --app-id=my-app /usr/bin/x %U\n"), "x")
+        self.assertEqual(lp("[Desktop Entry]\nExec=/usr/local/bin/sbx /usr/bin/x %U\n"), "x")
 
     def test_inherited_folders_get_their_own_group_instead_of_a_note_on_every_row(self):
         G = self.G
