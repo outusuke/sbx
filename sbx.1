@@ -292,6 +292,19 @@ widgets and ask who is listening, but it cannot call anything else, so it cannot
 The program is told where the bus is with AT_SPI_BUS_ADDRESS, and QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 and GNOME_ACCESSIBILITY=1 are set so Qt and Firefox switch their accessibility support on. The
 reader itself runs outside the sandbox as usual. Needs xdg\-dbus\-proxy and a running accessibility bus (at\-spi2\-core, part of any desktop).
 .TP
+.B \-\-gnome\-shell
+Let the browser's GNOME Shell integration work: gnome\-browser\-connector runs inside the sandbox and talks to GNOME Shell over D\-Bus. With this switch the
+session bus proxy (xdg\-dbus\-proxy, also used by
+.BR \-\-portals " and " \-\-tray )
+allows only these calls on org.gnome.Shell.Extensions at /org/gnome/Shell: ListExtensions, GetExtensionInfo, GetExtensionErrors and InstallRemoteExtension (the Shell
+shows a confirmation dialog before it installs anything), reading the Shell's properties (its version), and the extension\-state signals. Nothing else of
+org.gnome.Shell is reachable, in particular not Eval. Works without
+.BR \-\-portals .
+.TP
+.B \-\-gnome\-shell\-manage
+Also allow EnableExtension, DisableExtension and UninstallExtension. Only used together with
+.BR \-\-gnome\-shell .
+.TP
 .B \-\-ssh\-agent
 Share your SSH agent socket. The program can sign as you while it runs.
 .TP
@@ -405,7 +418,7 @@ memory=2G
 .PP
 Switches take 0 or 1. Defaults: net=1, net_private=0, wayland=1, wayland_strict=automatic (1 where the compositor supports security contexts, else 0), x11=0, gpu=1, gpu_render_only=0, sound=1, portals=0, private=0,
 hostname=0, privacy=0, userns=1, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
-allow_sensitive=0, compat=0, tray=0, a11y=0, folder=0, single_instance=0, and the extra portals portal_screenshot, portal_screencast, portal_location,
+allow_sensitive=0, compat=0, tray=0, a11y=0, gnome_shell=0, gnome_shell_manage=0, folder=0, single_instance=0, and the extra portals portal_screenshot, portal_screencast, portal_location,
 portal_shortcuts, portal_wallpaper, portal_launcher, portal_remote_desktop, portal_input_capture,
 portal_secret and portal_background (all 0, and only used when portals=1), and portal_notification, portal_openuri, portal_print, portal_trash, portal_email, portal_inhibit and portal_network (all 1, also only used when portals=1). Anything else, such as net=maybe, is reported with its file
 and line number and ignored.

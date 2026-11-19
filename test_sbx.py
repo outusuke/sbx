@@ -53,6 +53,7 @@ SCENARIOS = [                                   # (title, program, flags, overri
                                 "--no-userns"], {}),
     ("x11", "firefox", ["--x11"], {}),
     ("screen reader", "firefox", ["--a11y"], {}),
+    ("GNOME Shell integration", "firefox", ["--gnome-shell"], {}),
     ("program inside your home", "/home/user/apps/foo/bin/foo", [], {}),
     ("shared folders, parent read-only", "firefox",
      [f"--whitelist={FIX}/a/b", f"--read-only={FIX}/a", f"--whitelist={FIX}/c", "--here"], {"share_dir": lambda d: f"{FIX}/a/b"}),
@@ -2761,6 +2762,48 @@ class Ported(unittest.TestCase):
         _, args, _ = S["build"]("/bin/true", [], False, {"ignore_config": True})
         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", args)
 
+    # -- GNOME Shell integration (gnome_shell, gnome_shell_manage)
+    def test_gnome_shell_rules_are_per_method_on_one_path_and_never_talk(self):
+        S = load_sbx(); R = S["gnome_shell_rules"]; E = "org.gnome.Shell.Extensions"; P = "org.freedesktop.DBus.Properties"
+        self.assertEqual(R(), []); self.assertEqual(R({"gnome_shell": False, "gnome_shell_manage": True}), [], "manage alone opens nothing")
+        r = R({"gnome_shell": True})
+        for m in ("ListExtensions", "GetExtensionInfo", "GetExtensionErrors", "InstallRemoteExtension"):
+            self.assertIn(f"--call=org.gnome.Shell={E}.{m}@/org/gnome/Shell", r)
+        self.assertIn(f"--call=org.gnome.Shell={P}.Get@/org/gnome/Shell", r); self.assertIn(f"--call=org.gnome.Shell={P}.GetAll@/org/gnome/Shell", r)
+        self.assertIn(f"--broadcast=org.gnome.Shell={E}.ExtensionStateChanged@/org/gnome/Shell", r)
+        self.assertIn(f"--broadcast=org.gnome.Shell={P}.PropertiesChanged@/org/gnome/Shell", r)
+        self.assertTrue(all(x.startswith(("--call=org.gnome.Shell=", "--broadcast=org.gnome.Shell=")) and x.endswith("@/org/gnome/Shell") for x in r),
+                        "every rule names org.gnome.Shell and the one object path")
+        self.assertFalse([x for x in r if x.startswith(("--talk", "--own", "--see"))], "never --talk to the Shell: that would open Eval")
+        self.assertFalse([x for x in r if any(w in x for w in ("Eval", "Enable", "Disable", "Uninstall", "Reload", "Prefs", ".Set@", "CheckForUpdates"))], r)
+        self.assertFalse([x for x in r if "=org.gnome.Shell." in x and f"={E}." not in x and f"={P}." not in x], "no other interface of the Shell")
+        m = R({"gnome_shell": True, "gnome_shell_manage": True})
+        self.assertEqual(sorted(set(m) - set(r)), sorted(f"--call=org.gnome.Shell={E}.{n}@/org/gnome/Shell" for n in ("EnableExtension", "DisableExtension", "UninstallExtension")))
+        self.assertIs(S["SCALARS"]["gnome_shell"], False); self.assertIs(S["SCALARS"]["gnome_shell_manage"], False)       # off unless asked for
+        self.assertEqual(S["parse_options"](["--gnome-shell", "--gnome-shell-manage", "x"])[0], {"gnome_shell": True, "gnome_shell_manage": True})
+
+    def test_gnome_shell_opens_the_session_proxy_without_portals_or_tray(self):
+        S = load_sbx(); rt = S["runtime_dir"]()
+        self.assertEqual(S["bus_rules"]({"portals": False, "tray": False, "gnome_shell": False}), [])
+        only = S["bus_rules"]({"portals": False, "gnome_shell": True})
+        self.assertEqual(only, S["gnome_shell_rules"]({"gnome_shell": True}))
+        self.assertNotIn("--talk=org.freedesktop.Notifications", only)                  # the Shell alone doesn't open the portals
+        both = S["bus_rules"]({"portals": True, "tray": True, "gnome_shell": True})
+        self.assertTrue(set(S["portal_rules"]()) <= set(both) and set(S["tray_rules"]()) <= set(both) and set(only) <= set(both))
+        _, args, _ = S["build"]("/bin/true", [], False, {"gnome_shell": True, "ignore_config": True})
+        self.assertIn(f"{rt}/bus", args); self.assertIn("DBUS_SESSION_BUS_ADDRESS", args); self.assertNotIn("GTK_USE_PORTAL", args)
+        _, args, _ = S["build"]("/bin/true", [], False, {"gnome_shell_manage": True, "ignore_config": True})
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", args, "the manage switch alone opens no bus")
+        seen = []
+        S["shutil"] = types.SimpleNamespace(which=lambda n: f"/fake/{n}")
+        class Proc: pass
+        def popen(cmd, **k): seen.append(cmd); os.write(int(cmd[1].split("=")[1]), b"x"); return Proc()
+        S["subprocess"] = types.SimpleNamespace(Popen=popen, DEVNULL=-3, TimeoutExpired=subprocess.TimeoutExpired, SubprocessError=subprocess.SubprocessError)
+        cfg = {"portals": False, "gnome_shell": True, "gnome_shell_manage": True}
+        self.assertIsNotNone(S["start_proxy"](f"{tempfile.mkdtemp()}/x/bus", cfg))
+        self.assertEqual(seen[0][seen[0].index("--filter") + 1:], S["bus_rules"](cfg))
+        self.assertIn("--call=org.gnome.Shell=org.gnome.Shell.Extensions.EnableExtension@/org/gnome/Shell", seen[0])
+
 
 class Hostile(unittest.TestCase):
     """Awkward and hostile input: odd program names, links that point at protected folders, malformed settings files, a build
@@ -4049,6 +4092,12 @@ class Gui(unittest.TestCase):
         G = self.G
         self.assertIn("a11y", [r[0] for r in dict(G["GROUPS"])["Desktop integration"]])
         self.assertIs(G["SWITCHES"]["a11y"][2], False); self.assertIn("a11y", G["SHORT"]); self.assertIn("a11y", dict(G["CAN"]))
+
+    def test_the_gnome_shell_switches_are_in_the_desktop_integration_group_off_by_default_and_manage_needs_the_first(self):
+        G = self.G; rows = [r[0] for r in dict(G["GROUPS"])["Desktop integration"]]
+        for k in ("gnome_shell", "gnome_shell_manage"):
+            self.assertIn(k, rows); self.assertIs(G["SWITCHES"][k][2], False); self.assertIn(k, G["SHORT"]); self.assertIn(k, self.S["SCALARS"])
+        self.assertIn("gnome_shell", dict(G["CAN"])); self.assertEqual(G["needs"]("gnome_shell_manage"), ("gnome_shell",))
 
     def test_the_folder_switch_has_wording_and_warns_when_the_folder_cannot_be_shared(self):
         G = self.G

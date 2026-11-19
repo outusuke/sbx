@@ -31,10 +31,34 @@ def tray_rules():
         f"--own=org.kde.StatusNotifierItem-{p}-{i}" for p in TRAY_PIDS for i in TRAY_IDS] + ["--own=org.mpris.MediaPlayer2.*"]
 
 
+# ---------------------------------------------------------------- GNOME Shell integration
+# The browser's GNOME Shell connector (gnome-browser-connector, run by the browser inside the sandbox) talks to the Shell as org.gnome.Shell at
+# /org/gnome/Shell, interface org.gnome.Shell.Extensions (not the org.gnome.Shell.Extensions name that gnome-extensions uses). The rules name that
+# interface and path only: org.gnome.Shell, the interface of Eval, stays closed, and nothing is --talk.
+GNOME_SHELL = "org.gnome.Shell"
+GNOME_SHELL_PATH = "/org/gnome/Shell"
+GNOME_SHELL_EXT = "org.gnome.Shell.Extensions"
+GNOME_SHELL_CALLS = ("ListExtensions", "GetExtensionInfo", "GetExtensionErrors", "InstallRemoteExtension")     # InstallRemoteExtension: the Shell asks you before it installs
+GNOME_SHELL_MANAGE = ("EnableExtension", "DisableExtension", "UninstallExtension")                             # gnome_shell_manage=1 adds these
+
+
+def gnome_shell_rules(cfg=None):
+    """Let the program list, inspect and (after your confirmation in the Shell) install GNOME Shell extensions, and read the Shell's version.
+    gnome_shell_manage=1 adds enabling, disabling and uninstalling. Properties.Get and GetAll are read-only (no Set, so UserExtensionsEnabled can't
+    be changed); the broadcasts are the signals the connector listens to. Nothing else of org.gnome.Shell is reachable."""
+    if not cfg or not cfg.get("gnome_shell"): return []
+    p = GNOME_SHELL_PATH; props = "org.freedesktop.DBus.Properties"
+    calls = GNOME_SHELL_CALLS + (GNOME_SHELL_MANAGE if cfg.get("gnome_shell_manage") else ())
+    return ([f"--call={GNOME_SHELL}={GNOME_SHELL_EXT}.{m}@{p}" for m in calls]
+            + [f"--call={GNOME_SHELL}={props}.Get@{p}", f"--call={GNOME_SHELL}={props}.GetAll@{p}"]
+            + [f"--broadcast={GNOME_SHELL}={GNOME_SHELL_EXT}.{s}@{p}" for s in ("ExtensionStateChanged", "ExtensionStatusChanged")]
+            + [f"--broadcast={GNOME_SHELL}={props}.PropertiesChanged@{p}"])
+
+
 def bus_rules(cfg=None):
-    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the tray rules."""
+    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the tray and GNOME Shell rules."""
     rules = portal_rules(cfg) if cfg is None or cfg.get("portals") else []
-    return rules + (tray_rules() if cfg and cfg.get("tray") else [])
+    return rules + (tray_rules() if cfg and cfg.get("tray") else []) + gnome_shell_rules(cfg)
 
 
 # ---------------------------------------------------------------- accessibility bus

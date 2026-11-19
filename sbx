@@ -68,7 +68,7 @@ A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, "tray": False, "a11y": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
+           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
@@ -813,10 +813,34 @@ def tray_rules():
         f"--own=org.kde.StatusNotifierItem-{p}-{i}" for p in TRAY_PIDS for i in TRAY_IDS] + ["--own=org.mpris.MediaPlayer2.*"]
 
 
+# ---------------------------------------------------------------- GNOME Shell integration
+# The browser's GNOME Shell connector (gnome-browser-connector, run by the browser inside the sandbox) talks to the Shell as org.gnome.Shell at
+# /org/gnome/Shell, interface org.gnome.Shell.Extensions (not the org.gnome.Shell.Extensions name that gnome-extensions uses). The rules name that
+# interface and path only: org.gnome.Shell, the interface of Eval, stays closed, and nothing is --talk.
+GNOME_SHELL = "org.gnome.Shell"
+GNOME_SHELL_PATH = "/org/gnome/Shell"
+GNOME_SHELL_EXT = "org.gnome.Shell.Extensions"
+GNOME_SHELL_CALLS = ("ListExtensions", "GetExtensionInfo", "GetExtensionErrors", "InstallRemoteExtension")     # InstallRemoteExtension: the Shell asks you before it installs
+GNOME_SHELL_MANAGE = ("EnableExtension", "DisableExtension", "UninstallExtension")                             # gnome_shell_manage=1 adds these
+
+
+def gnome_shell_rules(cfg=None):
+    """Let the program list, inspect and (after your confirmation in the Shell) install GNOME Shell extensions, and read the Shell's version.
+    gnome_shell_manage=1 adds enabling, disabling and uninstalling. Properties.Get and GetAll are read-only (no Set, so UserExtensionsEnabled can't
+    be changed); the broadcasts are the signals the connector listens to. Nothing else of org.gnome.Shell is reachable."""
+    if not cfg or not cfg.get("gnome_shell"): return []
+    p = GNOME_SHELL_PATH; props = "org.freedesktop.DBus.Properties"
+    calls = GNOME_SHELL_CALLS + (GNOME_SHELL_MANAGE if cfg.get("gnome_shell_manage") else ())
+    return ([f"--call={GNOME_SHELL}={GNOME_SHELL_EXT}.{m}@{p}" for m in calls]
+            + [f"--call={GNOME_SHELL}={props}.Get@{p}", f"--call={GNOME_SHELL}={props}.GetAll@{p}"]
+            + [f"--broadcast={GNOME_SHELL}={GNOME_SHELL_EXT}.{s}@{p}" for s in ("ExtensionStateChanged", "ExtensionStatusChanged")]
+            + [f"--broadcast={GNOME_SHELL}={props}.PropertiesChanged@{p}"])
+
+
 def bus_rules(cfg=None):
-    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the tray rules."""
+    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the tray and GNOME Shell rules."""
     rules = portal_rules(cfg) if cfg is None or cfg.get("portals") else []
-    return rules + (tray_rules() if cfg and cfg.get("tray") else [])
+    return rules + (tray_rules() if cfg and cfg.get("tray") else []) + gnome_shell_rules(cfg)
 
 
 # ---------------------------------------------------------------- accessibility bus
@@ -1698,7 +1722,7 @@ def build(prog, args, live=False, o=None):
     sa = os.environ.get("SSH_AUTH_SOCK", "")
     if cfg["ssh_agent"] and sa and os.path.exists(sa):     # the program can sign as you while it runs
         late += ["--ro-bind", sa, sa]; env["SSH_AUTH_SOCK"] = sa
-    if cfg["portals"] or cfg["tray"]:
+    if cfg["portals"] or cfg["tray"] or cfg["gnome_shell"]:
         sock = state["bus"]
         if live:
             state["proxy"] = start_proxy(sock, cfg, portal_app_id(name) if cfg["portals"] else None)
@@ -1995,7 +2019,7 @@ def run(prog, args, opts):
 FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
          "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
-         "--tray": ("tray", True), "--a11y": ("a11y", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
+         "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
@@ -2037,6 +2061,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --privacy     /etc/passwd without your real name or the other accounts; the Account portal is blocked too\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
          "  --a11y        screen reader and other assistive tools can see the program (filtered accessibility bus, xdg-dbus-proxy)\n"
+         "  --gnome-shell         the browser's GNOME Shell connector can list and install extensions (xdg-dbus-proxy); --gnome-shell-manage also enable, disable and uninstall them\n"
          "  --single-instance     a second launch hands its files to the running one (shares a private $TMPDIR per program)\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
@@ -2944,7 +2969,7 @@ def doctor():
         row("OK" if bwrap_has("--disable-userns") else "WARN", "userns=0 supported (bubblewrap 0.8+)")
     row("OK" if shutil.which("notify-send") else "WARN", "notify-send", "" if shutil.which("notify-send") else f"only needed for the failed-to-start popup: {install_hint('libnotify')}")
     px = shutil.which("xdg-dbus-proxy")
-    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1 and a11y=1: {install_hint('xdg-dbus-proxy')}")
+    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1, gnome_shell=1 and a11y=1: {install_hint('xdg-dbus-proxy')}")
     ps = shutil.which("pasta")
     row("OK" if ps else "WARN", "pasta", "" if ps else f"only needed for net_private=1: {install_hint('passt')}")
     sd = shutil.which("systemd-run")
