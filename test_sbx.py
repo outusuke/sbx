@@ -4414,7 +4414,7 @@ class Isolation(unittest.TestCase):
         r = self.sbx_run("desktop", "foo", env=env); self.assertEqual(r.returncode, 0, r.stdout + r.stderr)           # found by its short name
         mine = f"{self.home}/.local/share/applications/org.example.foo.desktop"
         with open(mine) as f: text = f.read()
-        self.assertRegex(text, r"Exec=\S*sbx foo %U"); self.assertIn("X-Sbx-Sandboxed=true", text); self.assertIn("DBusActivatable=false", text)
+        self.assertRegex(text, r"Exec=\S*sbx --app-id=org\.example\.foo foo %U"); self.assertIn("X-Sbx-Sandboxed=true", text); self.assertIn("DBusActivatable=false", text)
         self.assertEqual(self.sbx_run("desktop", "--remove", "org.example.foo").returncode, 0); self.assertFalse(os.path.exists(mine))
         with open(mine, "w") as f: f.write("[Desktop Entry]\nExec=foo\n")                                              # not ours: leave it alone
         self.assertNotEqual(self.sbx_run("desktop", "--remove", "org.example.foo").returncode, 0); self.assertTrue(os.path.exists(mine))
