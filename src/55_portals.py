@@ -58,10 +58,37 @@ def gnome_shell_rules(cfg=None):
             + [f"--broadcast={GNOME_SHELL}={props}.PropertiesChanged@{p}"])
 
 
+# ---------------------------------------------------------------- KDE Plasma browser integration
+# The browser's Plasma integration (plasma-browser-integration-host, run by the browser inside the sandbox) does four things on the session bus, and
+# nothing here is --talk: (1) it owns org.kde.plasma.browser_integration, where KRunner finds its tab and history runners (/TabsRunner, /HistoryRunner;
+# KRunner calls in, so no rule is needed for that) and, when that name is taken, the same name with -PID; (2) it owns org.mpris.MediaPlayer2.plasma-browser-integration
+# (the same -PID fallback) for the media controls; (3) it shows downloads as progress jobs: KUiServerV2JobTracker calls org.kde.JobViewServer.requestView, which
+# answers with an object path /org/kde/notificationmanager/jobs/JobView_N, then calls update and terminate on that object and listens to its
+# cancel, suspend and resume signals; (4) with "inhibit suspend while downloading" on in the extension (off in Chrome by default) KInhibitionJobTracker calls
+# Inhibit and UnInhibit on org.freedesktop.PowerManagement.Inhibit (Powerdevil; the portal is used only inside Flatpak or Snap, and sbx is neither).
+# The host's other plugins stay closed: KDE Connect (it can run commands you saved), the Purpose share menu, and the old org.kde.kuiserver and JobViewV2.
+KDE_NAMES = ("org.kde.plasma.browser_integration", "org.mpris.MediaPlayer2.plasma-browser-integration")
+KDE_JOBS = "org.kde.JobViewServer"
+KDE_JOB_PATH = "/org/kde/notificationmanager/jobs/*"
+KDE_INHIBIT = "org.freedesktop.PowerManagement.Inhibit"
+KDE_INHIBIT_PATH = "/org/freedesktop/PowerManagement/Inhibit"
+
+
+def kde_rules(cfg=None):
+    """Let the browser's Plasma integration show downloads as jobs in Plasma, answer KRunner and the media controls, and keep the computer awake
+    while it downloads. Per-method rules and the host's own names only: org.kde.JobViewServer is never --talk, and the object paths are the ones Plasma hands out."""
+    if not cfg or not cfg.get("kde"): return []
+    own = [f"--own={n}{s}" for n in KDE_NAMES for s in [""] + [f"-{p}" for p in TRAY_PIDS]]
+    jobs = [f"--call={KDE_JOBS}=org.kde.JobViewServerV2.requestView@/JobViewServer"]
+    jobs += [f"--call={KDE_JOBS}=org.kde.JobViewV3.{m}@{KDE_JOB_PATH}" for m in ("update", "terminate")]
+    jobs += [f"--broadcast={KDE_JOBS}=org.kde.JobViewV3.{s}@{KDE_JOB_PATH}" for s in ("updateRequested", "suspendRequested", "resumeRequested", "cancelRequested")]
+    return own + jobs + [f"--call={KDE_INHIBIT}={KDE_INHIBIT}.{m}@{KDE_INHIBIT_PATH}" for m in ("Inhibit", "UnInhibit")]
+
+
 def bus_rules(cfg=None):
-    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the tray and GNOME Shell rules."""
+    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the tray, GNOME Shell and KDE rules."""
     rules = portal_rules(cfg) if cfg is None or cfg.get("portals") else []
-    return rules + (tray_rules() if cfg and cfg.get("tray") else []) + gnome_shell_rules(cfg)
+    return rules + (tray_rules() if cfg and cfg.get("tray") else []) + gnome_shell_rules(cfg) + kde_rules(cfg)
 
 
 # ---------------------------------------------------------------- accessibility bus

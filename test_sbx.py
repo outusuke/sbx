@@ -54,6 +54,7 @@ SCENARIOS = [                                   # (title, program, flags, overri
     ("x11", "firefox", ["--x11"], {}),
     ("screen reader", "firefox", ["--a11y"], {}),
     ("GNOME Shell integration", "firefox", ["--gnome-shell"], {}),
+    ("KDE Plasma integration", "firefox", ["--kde"], {}),
     ("program inside your home", "/home/user/apps/foo/bin/foo", [], {}),
     ("shared folders, parent read-only", "firefox",
      [f"--whitelist={FIX}/a/b", f"--read-only={FIX}/a", f"--whitelist={FIX}/c", "--here"], {"share_dir": lambda d: f"{FIX}/a/b"}),
@@ -2806,6 +2807,47 @@ class Ported(unittest.TestCase):
         self.assertEqual(seen[0][seen[0].index("--filter") + 1:], S["bus_rules"](cfg))
         self.assertIn("--call=org.gnome.Shell=org.gnome.Shell.Extensions.EnableExtension@/org/gnome/Shell", seen[0])
 
+    # -- KDE Plasma integration (kde)
+    def test_kde_rules_are_per_method_never_talk_and_own_only_the_hosts_names(self):
+        S = load_sbx(); R = S["kde_rules"]; J = "org.kde.JobViewServer"; V = "org.kde.JobViewV3"; JP = "/org/kde/notificationmanager/jobs/*"
+        I = "org.freedesktop.PowerManagement.Inhibit"; IP = "/org/freedesktop/PowerManagement/Inhibit"
+        self.assertEqual(R(), []); self.assertEqual(R({"kde": False}), [])
+        r = R({"kde": True})
+        self.assertIn(f"--call={J}=org.kde.JobViewServerV2.requestView@/JobViewServer", r)
+        for m in ("update", "terminate"): self.assertIn(f"--call={J}={V}.{m}@{JP}", r)
+        for s in ("updateRequested", "suspendRequested", "resumeRequested", "cancelRequested"): self.assertIn(f"--broadcast={J}={V}.{s}@{JP}", r)
+        for m in ("Inhibit", "UnInhibit"): self.assertIn(f"--call={I}={I}.{m}@{IP}", r)
+        self.assertFalse([x for x in r if x.startswith(("--talk", "--see"))], "never --talk: it would open every method of the service")
+        self.assertFalse([x for x in r if "*" in x and not x.endswith("@" + JP)], "the only wildcard is the job object path")
+        self.assertEqual(sorted({x.split("=")[1] for x in r if x.startswith("--call")}), [I, J])
+        self.assertFalse([x for x in r if any(w in x for w in ("kuiserver", "kdeconnect", "JobViewV2", "JobViewServer.requestView", "HasInhibit", ".Set@", "Properties"))], r)
+        own = [x[len("--own="):] for x in r if x.startswith("--own=")]
+        names = ("org.kde.plasma.browser_integration", "org.mpris.MediaPlayer2.plasma-browser-integration")
+        self.assertEqual(sorted(own), sorted(n + s for n in names for s in [""] + [f"-{p}" for p in S["TRAY_PIDS"]]), "the two names, each with the -PID fallback")
+        self.assertFalse([x for x in own if "*" in x], "no wildcard names")
+        self.assertIs(S["SCALARS"]["kde"], False)                                          # off unless asked for
+        self.assertEqual(S["parse_options"](["--kde", "x"])[0], {"kde": True})
+
+    def test_kde_opens_the_session_proxy_without_portals_or_tray(self):
+        S = load_sbx(); rt = S["runtime_dir"]()
+        self.assertEqual(S["bus_rules"]({"portals": False, "tray": False, "kde": False}), [])
+        only = S["bus_rules"]({"portals": False, "kde": True})
+        self.assertEqual(only, S["kde_rules"]({"kde": True}))
+        self.assertNotIn("--talk=org.freedesktop.Notifications", only)                  # KDE alone doesn't open the portals
+        both = S["bus_rules"]({"portals": True, "tray": True, "gnome_shell": True, "kde": True})
+        self.assertTrue(set(S["portal_rules"]()) <= set(both) and set(S["tray_rules"]()) <= set(both) and set(only) <= set(both))
+        _, args, _ = S["build"]("/bin/true", [], False, {"kde": True, "ignore_config": True})
+        self.assertIn(f"{rt}/bus", args); self.assertIn("DBUS_SESSION_BUS_ADDRESS", args); self.assertNotIn("GTK_USE_PORTAL", args)
+        seen = []
+        S["shutil"] = types.SimpleNamespace(which=lambda n: f"/fake/{n}")
+        class Proc: pass
+        def popen(cmd, **k): seen.append(cmd); os.write(int(cmd[1].split("=")[1]), b"x"); return Proc()
+        S["subprocess"] = types.SimpleNamespace(Popen=popen, DEVNULL=-3, TimeoutExpired=subprocess.TimeoutExpired, SubprocessError=subprocess.SubprocessError)
+        cfg = {"portals": False, "kde": True}
+        self.assertIsNotNone(S["start_proxy"](f"{tempfile.mkdtemp()}/x/bus", cfg))
+        self.assertEqual(seen[0][seen[0].index("--filter") + 1:], S["bus_rules"](cfg))
+        self.assertIn("--call=org.kde.JobViewServer=org.kde.JobViewServerV2.requestView@/JobViewServer", seen[0])
+
 
 class Hostile(unittest.TestCase):
     """Awkward and hostile input: odd program names, links that point at protected folders, malformed settings files, a build
@@ -4100,6 +4142,11 @@ class Gui(unittest.TestCase):
         for k in ("gnome_shell", "gnome_shell_manage"):
             self.assertIn(k, rows); self.assertIs(G["SWITCHES"][k][2], False); self.assertIn(k, G["SHORT"]); self.assertIn(k, self.S["SCALARS"])
         self.assertIn("gnome_shell", dict(G["CAN"])); self.assertEqual(G["needs"]("gnome_shell_manage"), ("gnome_shell",))
+
+    def test_the_kde_switch_is_in_the_desktop_integration_group_and_off_by_default(self):
+        G = self.G
+        self.assertIn("kde", [r[0] for r in dict(G["GROUPS"])["Desktop integration"]])
+        self.assertIs(G["SWITCHES"]["kde"][2], False); self.assertIn("kde", G["SHORT"]); self.assertIn("kde", self.S["SCALARS"]); self.assertIn("kde", dict(G["CAN"]))
 
     def test_the_folder_switch_has_wording_and_warns_when_the_folder_cannot_be_shared(self):
         G = self.G
