@@ -836,7 +836,7 @@ def doctor():
         row("OK" if bwrap_has("--disable-userns") else "WARN", "userns=0 supported (bubblewrap 0.8+)")
     row("OK" if shutil.which("notify-send") else "WARN", "notify-send", "" if shutil.which("notify-send") else f"only needed for the failed-to-start popup: {install_hint('libnotify')}")
     px = shutil.which("xdg-dbus-proxy")
-    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1, gnome_shell=1 and a11y=1: {install_hint('xdg-dbus-proxy')}")
+    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1, gnome_shell=1, kde=1 and a11y=1: {install_hint('xdg-dbus-proxy')}")
     ps = shutil.which("pasta")
     row("OK" if ps else "WARN", "pasta", "" if ps else f"only needed for net_private=1: {install_hint('passt')}")
     sd = shutil.which("systemd-run")

@@ -5,7 +5,7 @@
 FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
          "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
-         "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
+         "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
@@ -48,6 +48,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
          "  --a11y        screen reader and other assistive tools can see the program (filtered accessibility bus, xdg-dbus-proxy)\n"
          "  --gnome-shell         the browser's GNOME Shell connector can list and install extensions (xdg-dbus-proxy); --gnome-shell-manage also enable, disable and uninstall them\n"
+         "  --kde         the browser's Plasma integration: downloads as Plasma jobs, KRunner tabs and history, media controls, keep awake while downloading (xdg-dbus-proxy)\n"
          "  --single-instance     a second launch hands its files to the running one (shares a private $TMPDIR per program)\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"

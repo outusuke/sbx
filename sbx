@@ -68,7 +68,7 @@ A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
+           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
@@ -840,10 +840,37 @@ def gnome_shell_rules(cfg=None):
             + [f"--broadcast={GNOME_SHELL}={props}.PropertiesChanged@{p}"])
 
 
+# ---------------------------------------------------------------- KDE Plasma browser integration
+# The browser's Plasma integration (plasma-browser-integration-host, run by the browser inside the sandbox) does four things on the session bus, and
+# nothing here is --talk: (1) it owns org.kde.plasma.browser_integration, where KRunner finds its tab and history runners (/TabsRunner, /HistoryRunner;
+# KRunner calls in, so no rule is needed for that) and, when that name is taken, the same name with -PID; (2) it owns org.mpris.MediaPlayer2.plasma-browser-integration
+# (the same -PID fallback) for the media controls; (3) it shows downloads as progress jobs: KUiServerV2JobTracker calls org.kde.JobViewServer.requestView, which
+# answers with an object path /org/kde/notificationmanager/jobs/JobView_N, then calls update and terminate on that object and listens to its
+# cancel, suspend and resume signals; (4) with "inhibit suspend while downloading" on in the extension (off in Chrome by default) KInhibitionJobTracker calls
+# Inhibit and UnInhibit on org.freedesktop.PowerManagement.Inhibit (Powerdevil; the portal is used only inside Flatpak or Snap, and sbx is neither).
+# The host's other plugins stay closed: KDE Connect (it can run commands you saved), the Purpose share menu, and the old org.kde.kuiserver and JobViewV2.
+KDE_NAMES = ("org.kde.plasma.browser_integration", "org.mpris.MediaPlayer2.plasma-browser-integration")
+KDE_JOBS = "org.kde.JobViewServer"
+KDE_JOB_PATH = "/org/kde/notificationmanager/jobs/*"
+KDE_INHIBIT = "org.freedesktop.PowerManagement.Inhibit"
+KDE_INHIBIT_PATH = "/org/freedesktop/PowerManagement/Inhibit"
+
+
+def kde_rules(cfg=None):
+    """Let the browser's Plasma integration show downloads as jobs in Plasma, answer KRunner and the media controls, and keep the computer awake
+    while it downloads. Per-method rules and the host's own names only: org.kde.JobViewServer is never --talk, and the object paths are the ones Plasma hands out."""
+    if not cfg or not cfg.get("kde"): return []
+    own = [f"--own={n}{s}" for n in KDE_NAMES for s in [""] + [f"-{p}" for p in TRAY_PIDS]]
+    jobs = [f"--call={KDE_JOBS}=org.kde.JobViewServerV2.requestView@/JobViewServer"]
+    jobs += [f"--call={KDE_JOBS}=org.kde.JobViewV3.{m}@{KDE_JOB_PATH}" for m in ("update", "terminate")]
+    jobs += [f"--broadcast={KDE_JOBS}=org.kde.JobViewV3.{s}@{KDE_JOB_PATH}" for s in ("updateRequested", "suspendRequested", "resumeRequested", "cancelRequested")]
+    return own + jobs + [f"--call={KDE_INHIBIT}={KDE_INHIBIT}.{m}@{KDE_INHIBIT_PATH}" for m in ("Inhibit", "UnInhibit")]
+
+
 def bus_rules(cfg=None):
-    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the tray and GNOME Shell rules."""
+    """What the proxy lets through: the portal rules when portals is on (also when nothing is said), plus the tray, GNOME Shell and KDE rules."""
     rules = portal_rules(cfg) if cfg is None or cfg.get("portals") else []
-    return rules + (tray_rules() if cfg and cfg.get("tray") else []) + gnome_shell_rules(cfg)
+    return rules + (tray_rules() if cfg and cfg.get("tray") else []) + gnome_shell_rules(cfg) + kde_rules(cfg)
 
 
 # ---------------------------------------------------------------- accessibility bus
@@ -1725,7 +1752,7 @@ def build(prog, args, live=False, o=None):
     sa = os.environ.get("SSH_AUTH_SOCK", "")
     if cfg["ssh_agent"] and sa and os.path.exists(sa):     # the program can sign as you while it runs
         late += ["--ro-bind", sa, sa]; env["SSH_AUTH_SOCK"] = sa
-    if cfg["portals"] or cfg["tray"] or cfg["gnome_shell"]:
+    if cfg["portals"] or cfg["tray"] or cfg["gnome_shell"] or cfg["kde"]:
         sock = state["bus"]
         if live:
             state["proxy"] = start_proxy(sock, cfg, portal_app_id(name) if cfg["portals"] else None)
@@ -2022,7 +2049,7 @@ def run(prog, args, opts):
 FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
          "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
-         "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
+         "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
@@ -2065,6 +2092,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
          "  --a11y        screen reader and other assistive tools can see the program (filtered accessibility bus, xdg-dbus-proxy)\n"
          "  --gnome-shell         the browser's GNOME Shell connector can list and install extensions (xdg-dbus-proxy); --gnome-shell-manage also enable, disable and uninstall them\n"
+         "  --kde         the browser's Plasma integration: downloads as Plasma jobs, KRunner tabs and history, media controls, keep awake while downloading (xdg-dbus-proxy)\n"
          "  --single-instance     a second launch hands its files to the running one (shares a private $TMPDIR per program)\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
@@ -2972,7 +3000,7 @@ def doctor():
         row("OK" if bwrap_has("--disable-userns") else "WARN", "userns=0 supported (bubblewrap 0.8+)")
     row("OK" if shutil.which("notify-send") else "WARN", "notify-send", "" if shutil.which("notify-send") else f"only needed for the failed-to-start popup: {install_hint('libnotify')}")
     px = shutil.which("xdg-dbus-proxy")
-    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1, gnome_shell=1 and a11y=1: {install_hint('xdg-dbus-proxy')}")
+    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1, gnome_shell=1, kde=1 and a11y=1: {install_hint('xdg-dbus-proxy')}")
     ps = shutil.which("pasta")
     row("OK" if ps else "WARN", "pasta", "" if ps else f"only needed for net_private=1: {install_hint('passt')}")
     sd = shutil.which("systemd-run")
