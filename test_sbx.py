@@ -249,7 +249,7 @@ class Units(unittest.TestCase):
     # -- extra portals
     def test_extra_portals_are_blocked_until_their_switch_is_on(self):
         S = self.S
-        self.assertEqual(sorted(S["PORTAL_EXTRA"].values()), ["Background", "DynamicLauncher", "InputCapture", "RemoteDesktop", "Secret"])
+        self.assertEqual(sorted(S["PORTAL_EXTRA"].values()), ["Background", "DynamicLauncher", "InputCapture", "RemoteDesktop"])
         base = " ".join(S["portal_rules"]({k: False for k in S["PORTAL_EXTRA"]}))
         for name in S["PORTAL_EXTRA"].values(): self.assertNotIn(f"portal.{name}.*", base)
         on = " ".join(S["portal_rules"]({"portal_remote_desktop": True, "portal_secret": True}))
@@ -271,7 +271,7 @@ class Units(unittest.TestCase):
 
     def test_default_on_portals_can_be_switched_off_one_by_one(self):
         S = self.S
-        self.assertEqual(sorted(S["PORTAL_DEFAULT_ON"].values()), ["Clipboard", "GlobalShortcuts", "Location", "ScreenCast", "Screenshot", "Usb", "Wallpaper"])
+        self.assertEqual(sorted(S["PORTAL_DEFAULT_ON"].values()), ["Clipboard", "GlobalShortcuts", "Location", "ScreenCast", "Screenshot", "Secret", "Usb", "Wallpaper"])
         for k, name in S["PORTAL_DEFAULT_ON"].items():
             flag = k.replace("_", "-")
             self.assertIs(S["SCALARS"][k], True, k)
@@ -1895,7 +1895,7 @@ class Units(unittest.TestCase):
     def test_widening_lists_what_a_settings_file_opens_up(self):
         w = self.S["widening"]
         self.assertEqual(w("ssh_agent=1\nnet=0\nprivate=1\nhostname=yes\nwhitelist=~/Docs  # mine\nx11=0\n# camera=1\nmemory=2G\n"), ["ssh_agent=1", "whitelist=~/Docs"])
-        self.assertEqual(w("portal_secret=on\nsetenv=A=b\nallow_syscall=io_uring\nnet=maybe\n"), ["portal_secret=1", "setenv=A=b", "allow_syscall=io_uring"])
+        self.assertEqual(w("portal_background=on\nsetenv=A=b\nallow_syscall=io_uring\nnet=maybe\n"), ["portal_background=1", "setenv=A=b", "allow_syscall=io_uring"])
         self.assertEqual(w(""), [])
 
     def test_import_names_the_settings_that_open_a_program_up(self):

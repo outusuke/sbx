@@ -51,10 +51,10 @@ COMPAT_PREFIXES = ("MESA_", "RADV_")
 ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    # env= and setenv= can't touch these
 # Extra portals that stay off until their switch is on (only with portals=1).
 PORTAL_EXTRA = {"portal_remote_desktop": "RemoteDesktop", "portal_input_capture": "InputCapture",
-                "portal_launcher": "DynamicLauncher", "portal_secret": "Secret", "portal_background": "Background"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
+                "portal_launcher": "DynamicLauncher", "portal_background": "Background"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
 # Extra portals that are on with portals=1 unless portal_*=0 (portal_file_transfer too).
 PORTAL_DEFAULT_ON = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenCast", "portal_location": "Location",
-                     "portal_shortcuts": "GlobalShortcuts", "portal_usb": "Usb", "portal_clipboard": "Clipboard", "portal_wallpaper": "Wallpaper"}
+                     "portal_shortcuts": "GlobalShortcuts", "portal_usb": "Usb", "portal_clipboard": "Clipboard", "portal_wallpaper": "Wallpaper", "portal_secret": "Secret"}
 # Tray icon (tray=1). The proxy can only name a bus name exactly or with a "*" at the end after a dot, so the names an app
 # may own are listed: org.kde.StatusNotifierItem-PID-ID. The PID is the one inside the sandbox (it has its own PID
 # namespace), so it is small. An app whose main process has a higher PID gets no tray icon; the range can be raised here.
@@ -2166,11 +2166,11 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --single-instance     a second launch hands its files to the running one (shares a private $TMPDIR per program)\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
-         "  --portal-remote-desktop --portal-input-capture --portal-launcher --portal-secret --portal-background    one more desktop portal each (off by default; needs --portals)\n"
+         "  --portal-remote-desktop --portal-input-capture --portal-launcher --portal-background    one more desktop portal each (off by default; needs --portals)\n"
          "  --no-portal-notification --no-portal-openuri --no-portal-print --no-portal-trash --no-portal-email --no-portal-inhibit --no-portal-network\n"
-         "  --no-portal-file-transfer --no-portal-screenshot --no-portal-screencast --no-portal-location --no-portal-shortcuts --no-portal-usb --no-portal-clipboard --no-portal-wallpaper\n"
+         "  --no-portal-file-transfer --no-portal-screenshot --no-portal-screencast --no-portal-location --no-portal-shortcuts --no-portal-usb --no-portal-clipboard --no-portal-wallpaper --no-portal-secret\n"
          "                switch one portal off (with --portals; all on by default): notifications, links and files, print dialog, trash, email, keep-awake, network state,\n"
-         "                dragged-in files, screenshots, screen sharing, location, global shortcuts, USB, shared clipboard, wallpaper\n"
+         "                dragged-in files, screenshots, screen sharing, location, global shortcuts, USB, shared clipboard, wallpaper, program secret\n"
          "  --compat      pass graphics/toolkit variables (WGPU_*, MESA_*, SDL_*, QT_QPA_*...) that are set; nothing else\n"
          "  --wayland-strict       no Wayland at all if the compositor can't restrict it\n"
          "  --whitelist=PATH       share a file or folder (read-write); can be repeated\n"

@@ -71,7 +71,7 @@ GROUPS = [
         ("portal_clipboard", "Clipboard in remote control", "Also lets a remote-control session read and set your clipboard. Normal copy and paste is not affected, and with X11 on the program can read your clipboard anyway.", True),
         ("portal_background", "Run in the background", "Lets the program ask to keep running when closed or to start at login. The autostart it registers runs outside the sandbox.", False),
         ("portal_usb", "USB devices", "Lets the program ask to use a USB device. The desktop shows its own prompt.", True),
-        ("portal_secret", "Program secret", "Lets the program keep one secret of its own, such as the key that encrypts its saved logins (Chrome and Electron use it). It can't read your keyring or other programs' secrets.", False)]),
+        ("portal_secret", "Program secret", "Lets the program keep one secret of its own, such as the key that encrypts its saved logins (Chrome and Electron use it). It can't read your keyring or other programs' secrets.", True)]),
     ("Hardening", [
         ("private", "Temporary home", "Everything the program saves in its private home is erased when it closes. Shared folders are not affected.", False),
         ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),

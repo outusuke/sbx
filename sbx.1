@@ -348,10 +348,10 @@ Turn one more desktop portal on, WHAT being remote\-desktop, input\-capture, lau
 .BR \-\-portals .
 file\-transfer lets the program receive files you drag in from other programs (without it a browser logs "Failed to call RetrieveFiles on FileTransfer portal"); it opens only the FileTransfer interface of the Documents portal, nothing else on it.
 .TP
-.B \-\-no\-portal\-notification, \-\-no\-portal\-openuri, \-\-no\-portal\-print, \-\-no\-portal\-trash, \-\-no\-portal\-email, \-\-no\-portal\-inhibit, \-\-no\-portal\-network, \-\-no\-portal\-file\-transfer, \-\-no\-portal\-screenshot, \-\-no\-portal\-screencast, \-\-no\-portal\-location, \-\-no\-portal\-shortcuts, \-\-no\-portal\-usb, \-\-no\-portal\-clipboard, \-\-no\-portal\-wallpaper
-Switch one desktop portal off while portals are on: notifications, links and files (openuri), the print dialog, trash, email, keeping the screen awake (inhibit), network state and proxy, dragged\-in files, screenshots, screen sharing, location, global shortcuts, USB, the shared clipboard and wallpaper. The file chooser and settings (dark mode) stay on. Settings: portal_notification=0 and so on (all default to 1, and are only used when
+.B \-\-no\-portal\-notification, \-\-no\-portal\-openuri, \-\-no\-portal\-print, \-\-no\-portal\-trash, \-\-no\-portal\-email, \-\-no\-portal\-inhibit, \-\-no\-portal\-network, \-\-no\-portal\-file\-transfer, \-\-no\-portal\-screenshot, \-\-no\-portal\-screencast, \-\-no\-portal\-location, \-\-no\-portal\-shortcuts, \-\-no\-portal\-usb, \-\-no\-portal\-clipboard, \-\-no\-portal\-wallpaper, \-\-no\-portal\-secret
+Switch one desktop portal off while portals are on: notifications, links and files (openuri), the print dialog, trash, email, keeping the screen awake (inhibit), network state and proxy, dragged\-in files, screenshots, screen sharing, location, global shortcuts, USB, the shared clipboard, the program's own secret and wallpaper. The file chooser and settings (dark mode) stay on. Settings: portal_notification=0 and so on (all default to 1, and are only used when
 .BR portals=1 ).
-The extra portals are on by default because the desktop shows its own prompt and the rules open only that portal's interface (wallpaper can only change the wallpaper); the far\-reaching ones (remote\-desktop, input\-capture, secret, background, launcher) stay off.
+The extra portals are on by default because the desktop shows its own prompt and the rules open only that portal's interface (wallpaper can only change the wallpaper); the far\-reaching ones (remote\-desktop, input\-capture, background, launcher) stay off.
 .TP
 .B \-\-single\-instance
 Bind one private folder per program from $XDG_RUNTIME_DIR into every sandbox of it and point TMPDIR there, so a second launch can find the first (Chrome's singleton socket, for opening a file in the running browser). /tmp stays private. Only sandboxes of the same program name share the folder.
@@ -439,9 +439,9 @@ memory=2G
 .PP
 Switches take 0 or 1. Defaults: net=1, net_private=0, wayland=1, wayland_strict=automatic (1 where the compositor supports security contexts, else 0), x11=0, gpu=1, gpu_render_only=0, sound=1, portals=0, private=0,
 hostname=0, privacy=0, userns=1, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
-allow_sensitive=0, compat=0, tray=0, a11y=0, gnome_shell=0, gnome_shell_manage=0, kde=0, folder=0, single_instance=0, bluetooth=0, battery=0, avahi=0, and the extra portals portal_launcher, portal_remote_desktop, portal_input_capture,
-portal_secret and portal_background (all 0, and only used when portals=1), and portal_notification, portal_openuri, portal_print, portal_trash, portal_email, portal_inhibit,
-portal_network, portal_file_transfer (drag and drop of files from other programs), portal_screenshot, portal_screencast, portal_location, portal_shortcuts, portal_usb, portal_clipboard and portal_wallpaper (all 1, also only used when portals=1). Anything else, such as net=maybe, is reported with its file
+allow_sensitive=0, compat=0, tray=0, a11y=0, gnome_shell=0, gnome_shell_manage=0, kde=0, folder=0, single_instance=0, bluetooth=0, battery=0, avahi=0, and the extra portals portal_launcher, portal_remote_desktop, portal_input_capture
+and portal_background (all 0, and only used when portals=1), and portal_notification, portal_openuri, portal_print, portal_trash, portal_email, portal_inhibit,
+portal_network, portal_file_transfer (drag and drop of files from other programs), portal_screenshot, portal_screencast, portal_location, portal_shortcuts, portal_usb, portal_clipboard, portal_wallpaper and portal_secret (all 1, also only used when portals=1). Anything else, such as net=maybe, is reported with its file
 and line number and ignored.
 .PP
 .B folder=1

@@ -39,10 +39,10 @@ COMPAT_PREFIXES = ("MESA_", "RADV_")
 ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    # env= and setenv= can't touch these
 # Extra portals that stay off until their switch is on (only with portals=1).
 PORTAL_EXTRA = {"portal_remote_desktop": "RemoteDesktop", "portal_input_capture": "InputCapture",
-                "portal_launcher": "DynamicLauncher", "portal_secret": "Secret", "portal_background": "Background"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
+                "portal_launcher": "DynamicLauncher", "portal_background": "Background"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
 # Extra portals that are on with portals=1 unless portal_*=0 (portal_file_transfer too).
 PORTAL_DEFAULT_ON = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenCast", "portal_location": "Location",
-                     "portal_shortcuts": "GlobalShortcuts", "portal_usb": "Usb", "portal_clipboard": "Clipboard", "portal_wallpaper": "Wallpaper"}
+                     "portal_shortcuts": "GlobalShortcuts", "portal_usb": "Usb", "portal_clipboard": "Clipboard", "portal_wallpaper": "Wallpaper", "portal_secret": "Secret"}
 # Tray icon (tray=1). The proxy can only name a bus name exactly or with a "*" at the end after a dot, so the names an app
 # may own are listed: org.kde.StatusNotifierItem-PID-ID. The PID is the one inside the sandbox (it has its own PID
 # namespace), so it is small. An app whose main process has a higher PID gets no tray icon; the range can be raised here.

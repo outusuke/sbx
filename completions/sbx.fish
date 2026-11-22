@@ -90,6 +90,7 @@ complete -c sbx -n $c -l no-portal-screencast -d "Switch the screen sharing port
 complete -c sbx -n $c -l no-portal-location -d "Switch the location portal off (with --portals)"
 complete -c sbx -n $c -l no-portal-shortcuts -d "Switch the global shortcuts portal off (with --portals)"
 complete -c sbx -n $c -l no-portal-usb -d "Switch the USB portal off (with --portals)"
+complete -c sbx -n $c -l no-portal-secret -d "Switch the program secret portal off (with --portals)"
 complete -c sbx -n $c -l no-portal-clipboard -d "Switch the clipboard portal off (with --portals)"
 complete -c sbx -n $c -l no-portal-wallpaper -d "Switch the wallpaper portal off (with --portals)"
 complete -c sbx -n $c -l whitelist -r -F -d "Share a file or folder (read-write)"
