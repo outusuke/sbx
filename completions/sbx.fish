@@ -70,7 +70,7 @@ complete -c sbx -n $c -l compat -d "Pass graphics and toolkit variables"
 complete -c sbx -n $c -l single-instance -d "Second launch hands files to the running one"
 complete -c sbx -n $c -l ignore-config -d "Ignore the settings files for this run"
 complete -c sbx -n $c -l rebind -d "This file is the same program, just moved"
-for p in screenshot screencast location shortcuts remote-desktop input-capture wallpaper launcher secret background
+for p in screenshot screencast location shortcuts remote-desktop input-capture wallpaper launcher secret background usb clipboard
     complete -c sbx -n $c -l portal-$p -d "One more desktop portal (needs --portals)"
 end
 complete -c sbx -n $c -l portal-file-transfer -d "Take files dragged in from other programs (needs --portals)"

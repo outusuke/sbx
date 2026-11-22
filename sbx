@@ -54,7 +54,7 @@ PORTAL_EXTRA = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenC
                 "portal_shortcuts": "GlobalShortcuts", "portal_remote_desktop": "RemoteDesktop",
                 "portal_input_capture": "InputCapture", "portal_wallpaper": "Wallpaper",
                 "portal_launcher": "DynamicLauncher", "portal_secret": "Secret",
-                "portal_background": "Background"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
+                "portal_background": "Background", "portal_usb": "Usb", "portal_clipboard": "Clipboard"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
 # Tray icon (tray=1). The proxy can only name a bus name exactly or with a "*" at the end after a dot, so the names an app
 # may own are listed: org.kde.StatusNotifierItem-PID-ID. The PID is the one inside the sandbox (it has its own PID
 # namespace), so it is small. An app whose main process has a higher PID gets no tray icon; the range can be raised here.
@@ -2110,7 +2110,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
          "  --portal-screenshot --portal-screencast --portal-location --portal-shortcuts --portal-remote-desktop\n"
-         "  --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret --portal-background    one more desktop portal each (needs --portals)\n"
+         "  --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret --portal-background --portal-usb --portal-clipboard    one more desktop portal each (needs --portals)\n"
          "  --portal-file-transfer    take files dragged in from other programs (Documents portal, FileTransfer only; needs --portals)\n"
          "  --no-portal-notification --no-portal-openuri --no-portal-print --no-portal-trash --no-portal-email --no-portal-inhibit --no-portal-network\n"
          "                switch one basic portal off (with --portals): notifications, links and files, print dialog, trash, email, keep-awake, network state\n"

@@ -47,6 +47,8 @@ GROUPS = [
         ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access.", False),
         ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access.", False),
         ("portal_background", "Run in the background", "Lets the program ask to keep running when closed or to start at login. The autostart it registers runs outside the sandbox.", False),
+        ("portal_usb", "USB devices", "Lets the program ask to use a USB device. The desktop shows its own prompt.", False),
+        ("portal_clipboard", "Shared clipboard", "Lets a remote-desktop session read and set your clipboard (needs Remote desktop and input control).", False),
         ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access.", False)]),
     ("Hardening", [
         ("private", "Temporary home", "Everything the program saves in its private home is erased when it closes. Shared folders are not affected.", False),
@@ -59,7 +61,7 @@ GROUPS = [
 ]
 WL_RESTRICTED = False      # can this desktop restrict Wayland programs (wp_security_context_v1)? Learned from `sbx schema`; wayland_strict is on by default only where it can
 GROUP_INFO = {"What can this program use?": "Changes apply the next time the program starts. Everything else on your computer stays hidden from it."}      # a line under a group's title
-ADVANCED = ("portal_file_transfer", "portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network", "portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret", "portal_background")      # shown in one collapsed row, "More desktop services"
+ADVANCED = ("portal_file_transfer", "portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network", "portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret", "portal_background", "portal_usb", "portal_clipboard")      # shown in one collapsed row, "More desktop services"
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces",
@@ -68,7 +70,7 @@ SHORT = {"net": "network", "net_private": "this computer private", "wayland": "W
          "portal_notification": "notifications", "portal_openuri": "open links", "portal_print": "print dialog", "portal_trash": "trash",
          "portal_email": "email", "portal_inhibit": "keep awake", "portal_network": "network state", "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",
          "tray": "tray icon", "a11y": "screen reader", "gnome_shell": "GNOME Shell extensions", "gnome_shell_manage": "manage extensions", "kde": "KDE Plasma integration", "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
-         "folder": "own folder", "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets", "portal_background": "background", "portal_file_transfer": "drag and drop"}
+         "folder": "own folder", "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets", "portal_background": "background", "portal_usb": "USB devices", "portal_clipboard": "shared clipboard", "portal_file_transfer": "drag and drop"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
 SOURCE_RANK = {"System": 0, "Downloaded": 2}   # same order as `sbx list --all`: of the programs only run from the terminal, System first, Downloaded last

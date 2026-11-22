@@ -345,7 +345,7 @@ setting
 .TP
 .BR \-\-portal\- \fIWHAT\fR
 One more desktop portal each, WHAT being screenshot, screencast, location, shortcuts, wallpaper, launcher,
-remote\-desktop, input\-capture, secret, background or file\-transfer (settings: portal_screenshot=1 and so on). They need
+remote\-desktop, input\-capture, secret, background, usb, clipboard or file\-transfer (settings: portal_screenshot=1 and so on). They need
 .BR \-\-portals .
 file\-transfer lets the program receive files you drag in from other programs (without it a browser logs "Failed to call RetrieveFiles on FileTransfer portal"); it opens only the FileTransfer interface of the Documents portal, nothing else on it.
 .TP
@@ -431,7 +431,7 @@ Switches take 0 or 1. Defaults: net=1, net_private=0, wayland=1, wayland_strict=
 hostname=0, privacy=0, userns=1, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
 allow_sensitive=0, compat=0, tray=0, a11y=0, gnome_shell=0, gnome_shell_manage=0, kde=0, folder=0, single_instance=0, and the extra portals portal_screenshot, portal_screencast, portal_location,
 portal_shortcuts, portal_wallpaper, portal_launcher, portal_remote_desktop, portal_input_capture,
-portal_secret, portal_background and portal_file_transfer (drag and drop of files from other programs; all 0, and only used when portals=1), and portal_notification, portal_openuri, portal_print, portal_trash, portal_email, portal_inhibit and portal_network (all 1, also only used when portals=1). Anything else, such as net=maybe, is reported with its file
+portal_secret, portal_background, portal_usb, portal_clipboard and portal_file_transfer (drag and drop of files from other programs; all 0, and only used when portals=1), and portal_notification, portal_openuri, portal_print, portal_trash, portal_email, portal_inhibit and portal_network (all 1, also only used when portals=1). Anything else, such as net=maybe, is reported with its file
 and line number and ignored.
 .PP
 .B folder=1

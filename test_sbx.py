@@ -268,6 +268,16 @@ class Units(unittest.TestCase):
         self.assertNotIn("portal.Background.*", " ".join(S["portal_rules"]({"portal_secret": True})))
         self.assertIn("portal.Background.*", " ".join(S["portal_rules"]({"portal_background": True})))
 
+    def test_usb_and_clipboard_portals_are_opt_in(self):
+        S = self.S
+        for k, name in (("portal_usb", "Usb"), ("portal_clipboard", "Clipboard")):
+            self.assertEqual(S["PORTAL_EXTRA"][k], name)
+            self.assertIs(S["SCALARS"][k], False)
+            self.assertEqual(S["FLAGS"]["--" + k.replace("_", "-")], (k, True))
+            self.assertNotIn(f"portal.{name}.*", " ".join(S["portal_rules"]({})))
+            self.assertIn(f"portal.{name}.*", " ".join(S["portal_rules"]({k: True})))
+        self.assertNotIn("portal.Clipboard.*", " ".join(S["portal_rules"]({"portal_usb": True})))
+
     def test_file_transfer_portal_is_opt_in_and_narrow(self):
         S = self.S
         self.assertIs(S["SCALARS"]["portal_file_transfer"], False)
