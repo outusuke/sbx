@@ -31,6 +31,7 @@ GROUPS = [
         ("portal_email", "Compose email", "Let the program open your mail program with a new message", True),
         ("portal_inhibit", "Keep screen awake", "Let the program stop the screen from sleeping or locking", True),
         ("portal_network", "Network state", "Let the program ask whether you are online and which proxy to use", True),
+        ("portal_file_transfer", "Drag and drop files", "Lets the program receive files you drag in from other programs (browsers print a FileTransfer error without it). Only files you drop on it, through the Documents portal.", False),
         ("portal_screenshot", "Screenshots", "Let the program ask the desktop for a screenshot. The desktop shows its own prompt.", False),
         ("portal_screencast", "Screen sharing", "Let the program ask to share your screen or a window (Discord, Teams, Slack). The desktop shows its own picker.", False),
         ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)", False),
@@ -58,7 +59,7 @@ GROUPS = [
 ]
 WL_RESTRICTED = False      # can this desktop restrict Wayland programs (wp_security_context_v1)? Learned from `sbx schema`; wayland_strict is on by default only where it can
 GROUP_INFO = {"What can this program use?": "Changes apply the next time the program starts. Everything else on your computer stays hidden from it."}      # a line under a group's title
-ADVANCED = ("portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network", "portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret", "portal_background")      # shown in one collapsed row, "More desktop services"
+ADVANCED = ("portal_file_transfer", "portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network", "portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret", "portal_background")      # shown in one collapsed row, "More desktop services"
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces",
@@ -67,7 +68,7 @@ SHORT = {"net": "network", "net_private": "this computer private", "wayland": "W
          "portal_notification": "notifications", "portal_openuri": "open links", "portal_print": "print dialog", "portal_trash": "trash",
          "portal_email": "email", "portal_inhibit": "keep awake", "portal_network": "network state", "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",
          "tray": "tray icon", "a11y": "screen reader", "gnome_shell": "GNOME Shell extensions", "gnome_shell_manage": "manage extensions", "kde": "KDE Plasma integration", "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
-         "folder": "own folder", "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets", "portal_background": "background"}
+         "folder": "own folder", "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets", "portal_background": "background", "portal_file_transfer": "drag and drop"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
 SOURCE_RANK = {"System": 0, "Downloaded": 2}   # same order as `sbx list --all`: of the programs only run from the terminal, System first, Downloaded last

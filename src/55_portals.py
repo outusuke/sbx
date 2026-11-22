@@ -10,6 +10,8 @@ def portal_rules(cfg=None):
     off = {i for k, v in PORTAL_TOGGLES.items() if not on(k) for i in v}
     basic = [i for i in PORTAL_BASIC if i not in off and not (i == "Account" and cfg and cfg.get("privacy"))]     # Account hands out the real name
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in basic + extra]
+    if cfg and cfg.get("portal_file_transfer"):
+        rules += [f"--see={PORTAL_DOCS_NAME}", f"--call={PORTAL_DOCS_NAME}=org.freedesktop.portal.FileTransfer.*@{PORTAL_DOCS_PATH}"]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
               f"--call={PORTAL_NAME}=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*",   # screencast etc. sessions
               f"--call={PORTAL_NAME}=org.freedesktop.DBus.Properties.*@/org/freedesktop/portal/desktop",

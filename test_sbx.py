@@ -268,6 +268,19 @@ class Units(unittest.TestCase):
         self.assertNotIn("portal.Background.*", " ".join(S["portal_rules"]({"portal_secret": True})))
         self.assertIn("portal.Background.*", " ".join(S["portal_rules"]({"portal_background": True})))
 
+    def test_file_transfer_portal_is_opt_in_and_narrow(self):
+        S = self.S
+        self.assertIs(S["SCALARS"]["portal_file_transfer"], False)
+        self.assertEqual(S["FLAGS"]["--portal-file-transfer"], ("portal_file_transfer", True))
+        for cfg in (None, {}, {"portal_secret": True}):
+            self.assertNotIn("portal.Documents", " ".join(S["portal_rules"](cfg)))
+        on = S["portal_rules"]({"portal_file_transfer": True})
+        self.assertIn("--see=org.freedesktop.portal.Documents", on)
+        self.assertIn("--call=org.freedesktop.portal.Documents=org.freedesktop.portal.FileTransfer.*@/org/freedesktop/portal/documents", on)
+        docs = [r for r in on if "portal.Documents" in r]
+        self.assertEqual(len(docs), 2)
+        self.assertFalse(any(r.startswith("--talk=org.freedesktop.portal.Documents") for r in on))
+
     def test_account_portal_is_dropped_with_privacy(self):
         S = self.S
         self.assertIn("portal.Account.*", " ".join(S["portal_rules"]({"privacy": False})))

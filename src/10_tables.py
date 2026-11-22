@@ -56,7 +56,7 @@ A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
+           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, "portal_file_transfer": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
@@ -88,6 +88,9 @@ THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local
 # Desktop portals a program may call when portals=1 (through xdg-dbus-proxy, which runs outside the sandbox).
 # Everything else (Documents, ...) stays blocked, and so do the PORTAL_EXTRA ones until their own switch (portal_*=1) is on.
 PORTAL_NAME = "org.freedesktop.portal.Desktop"
+# FileTransfer (drag and drop from other programs) is served by the Documents portal, under another bus name and path.
+PORTAL_DOCS_NAME = "org.freedesktop.portal.Documents"
+PORTAL_DOCS_PATH = "/org/freedesktop/portal/documents"
 PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Account",
                 "Email", "Trash", "NetworkMonitor", "ProxyResolver", "GameMode", "MemoryMonitor",
                 "PowerProfileMonitor", "Realtime")
