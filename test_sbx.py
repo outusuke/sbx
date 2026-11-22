@@ -249,13 +249,14 @@ class Units(unittest.TestCase):
     # -- extra portals
     def test_extra_portals_are_blocked_until_their_switch_is_on(self):
         S = self.S
+        self.assertEqual(sorted(S["PORTAL_EXTRA"].values()), ["Background", "DynamicLauncher", "InputCapture", "RemoteDesktop", "Secret"])
         base = " ".join(S["portal_rules"]({k: False for k in S["PORTAL_EXTRA"]}))
         for name in S["PORTAL_EXTRA"].values(): self.assertNotIn(f"portal.{name}.*", base)
-        on = " ".join(S["portal_rules"]({"portal_screencast": True, "portal_secret": True}))
-        self.assertIn("portal.ScreenCast.*", on); self.assertIn("portal.Secret.*", on)
-        self.assertNotIn("portal.Screenshot.*", on)
-        o, _ = S["parse_options"](["--portal-remote-desktop", "--portal-screenshot", "x"])
-        self.assertEqual(o, {"portal_remote_desktop": True, "portal_screenshot": True})
+        on = " ".join(S["portal_rules"]({"portal_remote_desktop": True, "portal_secret": True}))
+        self.assertIn("portal.RemoteDesktop.*", on); self.assertIn("portal.Secret.*", on)
+        self.assertNotIn("portal.InputCapture.*", on)
+        o, _ = S["parse_options"](["--portal-remote-desktop", "--portal-secret", "x"])
+        self.assertEqual(o, {"portal_remote_desktop": True, "portal_secret": True})
         self.assertFalse(any(S["SCALARS"][k] for k in S["PORTAL_EXTRA"]))
 
     def test_background_portal_is_opt_in(self):
@@ -268,28 +269,37 @@ class Units(unittest.TestCase):
         self.assertNotIn("portal.Background.*", " ".join(S["portal_rules"]({"portal_secret": True})))
         self.assertIn("portal.Background.*", " ".join(S["portal_rules"]({"portal_background": True})))
 
-    def test_usb_and_clipboard_portals_are_opt_in(self):
+    def test_default_on_portals_can_be_switched_off_one_by_one(self):
         S = self.S
-        for k, name in (("portal_usb", "Usb"), ("portal_clipboard", "Clipboard")):
-            self.assertEqual(S["PORTAL_EXTRA"][k], name)
-            self.assertIs(S["SCALARS"][k], False)
-            self.assertEqual(S["FLAGS"]["--" + k.replace("_", "-")], (k, True))
-            self.assertNotIn(f"portal.{name}.*", " ".join(S["portal_rules"]({})))
-            self.assertIn(f"portal.{name}.*", " ".join(S["portal_rules"]({k: True})))
-        self.assertNotIn("portal.Clipboard.*", " ".join(S["portal_rules"]({"portal_usb": True})))
+        self.assertEqual(sorted(S["PORTAL_DEFAULT_ON"].values()), ["Clipboard", "GlobalShortcuts", "Location", "ScreenCast", "Screenshot", "Usb", "Wallpaper"])
+        for k, name in S["PORTAL_DEFAULT_ON"].items():
+            flag = k.replace("_", "-")
+            self.assertIs(S["SCALARS"][k], True, k)
+            self.assertEqual(S["FLAGS"]["--no-" + flag], (k, False))
+            self.assertEqual(S["FLAGS"]["--" + flag], (k, True))
+            for cfg in (None, {}, dict(S["SCALARS"])): self.assertIn(f"portal.{name}.*", " ".join(S["portal_rules"](cfg)), k)
+            off = " ".join(S["portal_rules"](dict(S["SCALARS"], **{k: False})))
+            self.assertNotIn(f"portal.{name}.*", off, k)
+            self.assertIn("portal.FileChooser.*", off, k)
+        self.assertEqual(S["parse_options"](["--no-portal-usb", "x"])[0], {"portal_usb": False})
+        with_usb = " ".join(S["portal_rules"](dict(S["SCALARS"], portal_clipboard=False)))
+        self.assertIn("portal.Usb.*", with_usb)
 
-    def test_file_transfer_portal_is_opt_in_and_narrow(self):
+    def test_file_transfer_portal_is_on_by_default_and_narrow(self):
         S = self.S
-        self.assertIs(S["SCALARS"]["portal_file_transfer"], False)
+        self.assertIs(S["SCALARS"]["portal_file_transfer"], True)
+        self.assertEqual(S["FLAGS"]["--no-portal-file-transfer"], ("portal_file_transfer", False))
         self.assertEqual(S["FLAGS"]["--portal-file-transfer"], ("portal_file_transfer", True))
         for cfg in (None, {}, {"portal_secret": True}):
-            self.assertNotIn("portal.Documents", " ".join(S["portal_rules"](cfg)))
-        on = S["portal_rules"]({"portal_file_transfer": True})
+            self.assertIn("--see=org.freedesktop.portal.Documents", S["portal_rules"](cfg))
+        on = S["portal_rules"](dict(S["SCALARS"], portals=True))
         self.assertIn("--see=org.freedesktop.portal.Documents", on)
         self.assertIn("--call=org.freedesktop.portal.Documents=org.freedesktop.portal.FileTransfer.*@/org/freedesktop/portal/documents", on)
         docs = [r for r in on if "portal.Documents" in r]
         self.assertEqual(len(docs), 2)
         self.assertFalse(any(r.startswith("--talk=org.freedesktop.portal.Documents") for r in on))
+        off = S["portal_rules"](dict(S["SCALARS"], portal_file_transfer=False))
+        self.assertFalse(any("portal.Documents" in r for r in off))
 
     def test_account_portal_is_dropped_with_privacy(self):
         S = self.S

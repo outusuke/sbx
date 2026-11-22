@@ -239,6 +239,11 @@ def desktop_hidden(scope, key, desktop=None):
     return bool(want and have and want not in have and not is_on(scope, key))
 
 
+def clipboard_hidden(scope):
+    """True while neither remote-control switch is on: the Clipboard portal does nothing without one."""
+    return not (is_on(scope, "portal_remote_desktop") or is_on(scope, "portal_input_capture"))
+
+
 DESKTOP_FOLD = 3      # a desktop with more rows than this gets an expander of its own; with fewer they stay at the top level
 
 

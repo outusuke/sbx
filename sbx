@@ -49,12 +49,12 @@ COMPAT_ENV = ("WGPU_BACKEND", "WGPU_ADAPTER_NAME", "WGPU_POWER_PREF", "ICED_BACK
               "GDK_SCALE", "MOZ_ENABLE_WAYLAND")
 COMPAT_PREFIXES = ("MESA_", "RADV_")
 ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    # env= and setenv= can't touch these
-# Extra desktop portals, each its own switch (all off). They only count when portals=1.
-PORTAL_EXTRA = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenCast", "portal_location": "Location",
-                "portal_shortcuts": "GlobalShortcuts", "portal_remote_desktop": "RemoteDesktop",
-                "portal_input_capture": "InputCapture", "portal_wallpaper": "Wallpaper",
-                "portal_launcher": "DynamicLauncher", "portal_secret": "Secret",
-                "portal_background": "Background", "portal_usb": "Usb", "portal_clipboard": "Clipboard"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
+# Extra portals that stay off until their switch is on (only with portals=1).
+PORTAL_EXTRA = {"portal_remote_desktop": "RemoteDesktop", "portal_input_capture": "InputCapture",
+                "portal_launcher": "DynamicLauncher", "portal_secret": "Secret", "portal_background": "Background"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
+# Extra portals that are on with portals=1 unless portal_*=0 (portal_file_transfer too).
+PORTAL_DEFAULT_ON = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenCast", "portal_location": "Location",
+                     "portal_shortcuts": "GlobalShortcuts", "portal_usb": "Usb", "portal_clipboard": "Clipboard", "portal_wallpaper": "Wallpaper"}
 # Tray icon (tray=1). The proxy can only name a bus name exactly or with a "*" at the end after a dot, so the names an app
 # may own are listed: org.kde.StatusNotifierItem-PID-ID. The PID is the one inside the sandbox (it has its own PID
 # namespace), so it is small. An app whose main process has a higher PID gets no tray icon; the range can be raised here.
@@ -68,7 +68,7 @@ A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, "portal_file_transfer": False, **{k: False for k in PORTAL_EXTRA}}
+           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
@@ -111,7 +111,7 @@ PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "
 PORTAL_TOGGLES = {"portal_notification": ("Notification",), "portal_openuri": ("OpenURI",), "portal_print": ("Print",),
                   "portal_trash": ("Trash",), "portal_email": ("Email",), "portal_inhibit": ("Inhibit",),
                   "portal_network": ("NetworkMonitor", "ProxyResolver")}
-SCALARS.update({k: True for k in PORTAL_TOGGLES})
+SCALARS.update({k: True for k in (*PORTAL_TOGGLES, *PORTAL_DEFAULT_ON, "portal_file_transfer")})
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # a program name run from here may move between them
 NIX_LINKS = ("/run/current-system", "/run/booted-system", "/run/opengl-driver", "/run/opengl-driver-32")   # NixOS and Guix
 
@@ -788,14 +788,14 @@ def wayland_context(display, sock_path, app_id, instance):
 
 # ---------------------------------------------------------------- portals
 def portal_rules(cfg=None):
-    on = lambda k: not cfg or cfg.get(k, True)          # a switch in PORTAL_TOGGLES: on unless the settings say 0
+    on = lambda k: not cfg or cfg.get(k, True)          # a default-on switch: on unless the settings say 0
     rules = (["--talk=org.freedesktop.Notifications"] if on("portal_notification") else []) + [f"--see={PORTAL_NAME}"]
-    extra = [i for k, i in PORTAL_EXTRA.items() if cfg and cfg.get(k)]
+    extra = [i for k, i in PORTAL_EXTRA.items() if cfg and cfg.get(k)] + [i for k, i in PORTAL_DEFAULT_ON.items() if on(k)]
     if cfg and cfg.get("camera"): extra.append("Camera")          # the Camera portal follows the camera switch
     off = {i for k, v in PORTAL_TOGGLES.items() if not on(k) for i in v}
     basic = [i for i in PORTAL_BASIC if i not in off and not (i == "Account" and cfg and cfg.get("privacy"))]     # Account hands out the real name
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in basic + extra]
-    if cfg and cfg.get("portal_file_transfer"):
+    if on("portal_file_transfer"):
         rules += [f"--see={PORTAL_DOCS_NAME}", f"--call={PORTAL_DOCS_NAME}=org.freedesktop.portal.FileTransfer.*@{PORTAL_DOCS_PATH}"]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
               f"--call={PORTAL_NAME}=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*",   # screencast etc. sessions
@@ -1795,7 +1795,7 @@ def build(prog, args, live=False, o=None):
             env.update(A11Y_ENV)
     if cfg["portals"]:      # the files you pick in a chooser appear here, only this program's own (bind-try: nothing when there is no document portal)
         a += ["--bind-try", f"{runtime_dir()}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
-    if live and not cfg["portals"] and any(cfg[k] for k in (*PORTAL_EXTRA, "portal_file_transfer")):
+    if live and not cfg["portals"] and any(cfg[k] for k in PORTAL_EXTRA):
         warn("portal_* settings need portals=1; ignored")
     # Hide the real home and other users: empty the folder that holds your home, then put the private home in its place.
     parent = os.path.dirname(HOME)
@@ -2065,9 +2065,8 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
-         "--portal-file-transfer": ("portal_file_transfer", True),
-         **{"--" + k.replace("_", "-"): (k, True) for k in PORTAL_EXTRA},
-         **{"--no-" + k.replace("_", "-"): (k, False) for k in PORTAL_TOGGLES}}
+         **{"--" + k.replace("_", "-"): (k, True) for k in (*PORTAL_EXTRA, *PORTAL_DEFAULT_ON, "portal_file_transfer")},
+         **{"--no-" + k.replace("_", "-"): (k, False) for k in (*PORTAL_TOGGLES, *PORTAL_DEFAULT_ON, "portal_file_transfer")}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
                "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
                "--loader": "loader", "--app-id": "app_id"}
@@ -2109,11 +2108,11 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --single-instance     a second launch hands its files to the running one (shares a private $TMPDIR per program)\n"
          "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
-         "  --portal-screenshot --portal-screencast --portal-location --portal-shortcuts --portal-remote-desktop\n"
-         "  --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret --portal-background --portal-usb --portal-clipboard    one more desktop portal each (needs --portals)\n"
-         "  --portal-file-transfer    take files dragged in from other programs (Documents portal, FileTransfer only; needs --portals)\n"
+         "  --portal-remote-desktop --portal-input-capture --portal-launcher --portal-secret --portal-background    one more desktop portal each (off by default; needs --portals)\n"
          "  --no-portal-notification --no-portal-openuri --no-portal-print --no-portal-trash --no-portal-email --no-portal-inhibit --no-portal-network\n"
-         "                switch one basic portal off (with --portals): notifications, links and files, print dialog, trash, email, keep-awake, network state\n"
+         "  --no-portal-file-transfer --no-portal-screenshot --no-portal-screencast --no-portal-location --no-portal-shortcuts --no-portal-usb --no-portal-clipboard --no-portal-wallpaper\n"
+         "                switch one portal off (with --portals; all on by default): notifications, links and files, print dialog, trash, email, keep-awake, network state,\n"
+         "                dragged-in files, screenshots, screen sharing, location, global shortcuts, USB, shared clipboard, wallpaper\n"
          "  --compat      pass graphics/toolkit variables (WGPU_*, MESA_*, SDL_*, QT_QPA_*...) that are set; nothing else\n"
          "  --wayland-strict       no Wayland at all if the compositor can't restrict it\n"
          "  --whitelist=PATH       share a file or folder (read-write); can be repeated\n"

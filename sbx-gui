@@ -29,7 +29,7 @@ GROUPS = [
         ("sound", "Audio", "Play sound. Also allows microphone access.", True),
         ("wayland", "Wayland", "Lets graphical programs open a window", True),
         ("wayland_strict", "Wayland only if restricted", "No Wayland at all when the compositor can't limit what the program may do", False),
-        ("x11", "X11 compatibility", "Only for programs that won't start otherwise. Weaker isolation.", False),
+        ("x11", "X11 compatibility", "Only for programs that won't start otherwise. Weaker isolation: the program can read your clipboard at any time.", False),
         ("printing", "Printing", "Talk to the print service (CUPS)", False),
         ("ssh_agent", "SSH agent", "Use your SSH keys without seeing them. The program can sign in as you.", False)]),
     ("Devices", [
@@ -50,24 +50,24 @@ GROUPS = [
         ("portal_email", "Compose email", "Let the program open your mail program with a new message", True),
         ("portal_inhibit", "Keep screen awake", "Let the program stop the screen from sleeping or locking", True),
         ("portal_network", "Network state", "Let the program ask whether you are online and which proxy to use", True),
-        ("portal_file_transfer", "Drag and drop files", "Lets the program receive files you drag in from other programs (browsers print a FileTransfer error without it). Only files you drop on it, through the Documents portal.", False),
-        ("portal_screenshot", "Screenshots", "Let the program ask the desktop for a screenshot. The desktop shows its own prompt.", False),
-        ("portal_screencast", "Screen sharing", "Let the program ask to share your screen or a window (Discord, Teams, Slack). The desktop shows its own picker.", False),
+        ("portal_file_transfer", "Drag and drop files", "Lets the program receive files you drag in from other programs (browsers print a FileTransfer error without it). Only files you drop on it, through the Documents portal.", True),
+        ("portal_screenshot", "Screenshots", "Let the program ask the desktop for a screenshot. The desktop shows its own prompt.", True),
+        ("portal_screencast", "Screen sharing", "Let the program ask to share your screen or a window (Discord, Teams, Slack). The desktop shows its own picker.", True),
         ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)", False),
         ("a11y", "Screen reader support", "Let a screen reader such as Orca read the program (needs xdg-dbus-proxy)", False),
         ("gnome_shell", "GNOME Shell integration", "Let the browser's GNOME Shell connector list and install extensions (the Shell asks you first; needs xdg-dbus-proxy)", False),
         ("gnome_shell_manage", "Manage GNOME Shell extensions", "Also let it enable, disable and uninstall extensions (needs GNOME Shell integration)", False),
         ("kde", "KDE Plasma integration", "Let the browser's Plasma integration show downloads as Plasma jobs, answer KRunner and the media controls, and keep the computer awake while it downloads (needs xdg-dbus-proxy)", False),
         ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and GTK settings, so the program looks like your desktop", True),
-        ("portal_location", "Location", "Lets the program ask the desktop where you are.", False),
-        ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window.", False),
-        ("portal_wallpaper", "Wallpaper", "Lets the program ask to change your desktop wallpaper.", False),
+        ("portal_location", "Location", "Lets the program ask the desktop where you are.", True),
+        ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window.", True),
+        ("portal_wallpaper", "Wallpaper", "Lets the program ask to change your desktop wallpaper.", True),
         ("portal_launcher", "Create launchers", "Lets the program ask to add its own entries to your app menu.", False),
         ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access.", False),
         ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access.", False),
+        ("portal_clipboard", "Clipboard in remote control", "Also lets a remote-control session read and set your clipboard. Normal copy and paste is not affected, and with X11 on the program can read your clipboard anyway.", True),
         ("portal_background", "Run in the background", "Lets the program ask to keep running when closed or to start at login. The autostart it registers runs outside the sandbox.", False),
-        ("portal_usb", "USB devices", "Lets the program ask to use a USB device. The desktop shows its own prompt.", False),
-        ("portal_clipboard", "Shared clipboard", "Lets a remote-desktop session read and set your clipboard (needs Remote desktop and input control).", False),
+        ("portal_usb", "USB devices", "Lets the program ask to use a USB device. The desktop shows its own prompt.", True),
         ("portal_secret", "Secrets", "Lets the program ask the desktop for stored secrets (keyring). Far-reaching access.", False)]),
     ("Hardening", [
         ("private", "Temporary home", "Everything the program saves in its private home is erased when it closes. Shared folders are not affected.", False),
@@ -408,6 +408,11 @@ def desktop_hidden(scope, key, desktop=None):
     want = DESKTOP_ONLY.get(key)
     have = {w.upper() for w in re.split(r"[:;]", os.environ.get("XDG_CURRENT_DESKTOP", "") if desktop is None else desktop)} & {"GNOME", "KDE"}
     return bool(want and have and want not in have and not is_on(scope, key))
+
+
+def clipboard_hidden(scope):
+    """True while neither remote-control switch is on: the Clipboard portal does nothing without one."""
+    return not (is_on(scope, "portal_remote_desktop") or is_on(scope, "portal_input_capture"))
 
 
 DESKTOP_FOLD = 3      # a desktop with more rows than this gets an expander of its own; with fewer they stay at the top level
@@ -1447,6 +1452,7 @@ class Win(Adw.ApplicationWindow):
                 shown = 0
                 for r, key in members:
                     hit = all(w in f"{r.get_title()} {r.get_subtitle() or ''} {key}".lower() for w in words)
+                    hit = hit and not (key == "portal_clipboard" and clipboard_hidden(scope))
                     r.set_visible(hit); shown += hit
                     if key in holder and hit and words: holder[key].set_expanded(True)      # a match inside a collapsed row opens it
                 g.set_visible(shown > 0)
@@ -1715,6 +1721,7 @@ class Win(Adw.ApplicationWindow):
             row.set_subtitle(sub + (f"\n⚠ {prob}" if prob else ""))      # an overridden switch shows the undo button; a folder that can't be shared says why
             undo.set_visible(own)                                           # on the defaults page it goes back to the built-in value
             undo.set_tooltip_text("Back to the " + ("default" if scope is not None else "built-in setting") + ": " + ("on" if inherited(dsc) else "off"))
+            if key == "portal_clipboard": row.set_visible(not clipboard_hidden(scope))
             why = blocked()
             can_undo = own
             if why:                         # greying the row greys its undo button too, so a row holding an override stays usable
@@ -1745,7 +1752,7 @@ class Win(Adw.ApplicationWindow):
             changed()
         row.connect("notify::active", toggled)
         undo.connect("clicked", lambda *_: (set_key(scope, key, None), changed()))
-        if page_rows is not None and needs(key): page_rows.append(show)
+        if page_rows is not None and (needs(key) or key == "portal_clipboard"): page_rows.append(show)
         show()
         return row
 

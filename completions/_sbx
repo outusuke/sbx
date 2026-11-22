@@ -13,6 +13,7 @@ _sbx() {
           --ignore-config --rebind --portal-screenshot --portal-screencast --portal-location --portal-shortcuts
           --portal-remote-desktop --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret --portal-background --portal-usb --portal-clipboard --portal-file-transfer
           --no-portal-notification --no-portal-openuri --no-portal-print --no-portal-trash --no-portal-email --no-portal-inhibit --no-portal-network
+          --no-portal-file-transfer --no-portal-screenshot --no-portal-screencast --no-portal-location --no-portal-shortcuts --no-portal-usb --no-portal-clipboard --no-portal-wallpaper
           --whitelist= --read-only= --env= --setenv= --allow-syscall= --memory= --tasks= --cpu= --gtk-portal= --name= --app-id= --loader=)
     local i word
     # the first word that isn't an option is the command or the program

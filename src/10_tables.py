@@ -37,12 +37,12 @@ COMPAT_ENV = ("WGPU_BACKEND", "WGPU_ADAPTER_NAME", "WGPU_POWER_PREF", "ICED_BACK
               "GDK_SCALE", "MOZ_ENABLE_WAYLAND")
 COMPAT_PREFIXES = ("MESA_", "RADV_")
 ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    # env= and setenv= can't touch these
-# Extra desktop portals, each its own switch (all off). They only count when portals=1.
-PORTAL_EXTRA = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenCast", "portal_location": "Location",
-                "portal_shortcuts": "GlobalShortcuts", "portal_remote_desktop": "RemoteDesktop",
-                "portal_input_capture": "InputCapture", "portal_wallpaper": "Wallpaper",
-                "portal_launcher": "DynamicLauncher", "portal_secret": "Secret",
-                "portal_background": "Background", "portal_usb": "Usb", "portal_clipboard": "Clipboard"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
+# Extra portals that stay off until their switch is on (only with portals=1).
+PORTAL_EXTRA = {"portal_remote_desktop": "RemoteDesktop", "portal_input_capture": "InputCapture",
+                "portal_launcher": "DynamicLauncher", "portal_secret": "Secret", "portal_background": "Background"}      # Background: RequestBackground can register an autostart that runs outside the sandbox
+# Extra portals that are on with portals=1 unless portal_*=0 (portal_file_transfer too).
+PORTAL_DEFAULT_ON = {"portal_screenshot": "Screenshot", "portal_screencast": "ScreenCast", "portal_location": "Location",
+                     "portal_shortcuts": "GlobalShortcuts", "portal_usb": "Usb", "portal_clipboard": "Clipboard", "portal_wallpaper": "Wallpaper"}
 # Tray icon (tray=1). The proxy can only name a bus name exactly or with a "*" at the end after a dot, so the names an app
 # may own are listed: org.kde.StatusNotifierItem-PID-ID. The PID is the one inside the sandbox (it has its own PID
 # namespace), so it is small. An app whose main process has a higher PID gets no tray icon; the range can be raised here.
@@ -56,7 +56,7 @@ A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, "portal_file_transfer": False, **{k: False for k in PORTAL_EXTRA}}
+           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
@@ -99,6 +99,6 @@ PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "
 PORTAL_TOGGLES = {"portal_notification": ("Notification",), "portal_openuri": ("OpenURI",), "portal_print": ("Print",),
                   "portal_trash": ("Trash",), "portal_email": ("Email",), "portal_inhibit": ("Inhibit",),
                   "portal_network": ("NetworkMonitor", "ProxyResolver")}
-SCALARS.update({k: True for k in PORTAL_TOGGLES})
+SCALARS.update({k: True for k in (*PORTAL_TOGGLES, *PORTAL_DEFAULT_ON, "portal_file_transfer")})
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # a program name run from here may move between them
 NIX_LINKS = ("/run/current-system", "/run/booted-system", "/run/opengl-driver", "/run/opengl-driver-32")   # NixOS and Guix

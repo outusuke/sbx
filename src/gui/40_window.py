@@ -381,6 +381,7 @@ class Win(Adw.ApplicationWindow):
                 shown = 0
                 for r, key in members:
                     hit = all(w in f"{r.get_title()} {r.get_subtitle() or ''} {key}".lower() for w in words)
+                    hit = hit and not (key == "portal_clipboard" and clipboard_hidden(scope))
                     r.set_visible(hit); shown += hit
                     if key in holder and hit and words: holder[key].set_expanded(True)      # a match inside a collapsed row opens it
                 g.set_visible(shown > 0)
@@ -649,6 +650,7 @@ class Win(Adw.ApplicationWindow):
             row.set_subtitle(sub + (f"\n⚠ {prob}" if prob else ""))      # an overridden switch shows the undo button; a folder that can't be shared says why
             undo.set_visible(own)                                           # on the defaults page it goes back to the built-in value
             undo.set_tooltip_text("Back to the " + ("default" if scope is not None else "built-in setting") + ": " + ("on" if inherited(dsc) else "off"))
+            if key == "portal_clipboard": row.set_visible(not clipboard_hidden(scope))
             why = blocked()
             can_undo = own
             if why:                         # greying the row greys its undo button too, so a row holding an override stays usable
@@ -679,7 +681,7 @@ class Win(Adw.ApplicationWindow):
             changed()
         row.connect("notify::active", toggled)
         undo.connect("clicked", lambda *_: (set_key(scope, key, None), changed()))
-        if page_rows is not None and needs(key): page_rows.append(show)
+        if page_rows is not None and (needs(key) or key == "portal_clipboard"): page_rows.append(show)
         show()
         return row
 
