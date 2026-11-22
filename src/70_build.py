@@ -170,7 +170,7 @@ def build(prog, args, live=False, o=None):
     sa = os.environ.get("SSH_AUTH_SOCK", "")
     if cfg["ssh_agent"] and sa and os.path.exists(sa):     # the program can sign as you while it runs
         late += ["--ro-bind", sa, sa]; env["SSH_AUTH_SOCK"] = sa
-    if cfg["portals"] or any(cfg[k] for k, _ in BUS_INTEGRATIONS):
+    if cfg["portals"] or cfg["talk"] or any(cfg[k] for k, _ in BUS_INTEGRATIONS):
         sock = state["bus"]
         if live:
             state["proxy"] = start_proxy(sock, cfg, portal_app_id(name) if cfg["portals"] else None)

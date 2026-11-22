@@ -69,7 +69,7 @@ SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
            "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
-LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall")
+LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall", "talk")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
 LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%", "gtk_portal": r"auto|0|1"}
@@ -872,6 +872,19 @@ def kde_rules(cfg=None):
     return own + jobs + [f"--call={KDE_INHIBIT}={KDE_INHIBIT}.{m}@{KDE_INHIBIT_PATH}" for m in ("Inhibit", "UnInhibit")]
 
 
+# ---------------------------------------------------------------- extra session-bus names (talk=)
+TALK_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*(\.\*)?")     # no empty parts: "org..x" is not a name
+
+
+def talk_ok(n):
+    """A plain D-Bus name, or NAME.* with three parts before the .*: 'org.*' and 'org.freedesktop.*' would reach secrets, systemd and more."""
+    return bool(TALK_RE.fullmatch(n)) and (not n.endswith(".*") or n.count(".") >= 3)
+
+
+def talk_rules(cfg):
+    return [f"--talk={n}" for n in cfg["talk"] if talk_ok(n)]
+
+
 # Every switch that opens the session-bus proxy, with the function that gives its rules. A new integration is one line here: bus_rules() and the
 # check that starts the proxy (70_build.py) both read this list, so the switch can't be added without the proxy starting for it.
 BUS_INTEGRATIONS = (("tray", lambda cfg: tray_rules()), ("gnome_shell", gnome_shell_rules), ("kde", kde_rules))
@@ -882,6 +895,7 @@ def bus_rules(cfg=None):
     rules = portal_rules(cfg) if cfg is None or cfg.get("portals") else []
     for key, fn in BUS_INTEGRATIONS:
         if cfg and cfg.get(key): rules = rules + fn(cfg)
+    if cfg and cfg.get("talk"): rules = rules + talk_rules(cfg)      # a list, not a switch, so it is not in BUS_INTEGRATIONS
     return rules
 
 
@@ -1081,6 +1095,7 @@ def parse_conf(path):
             elif k == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): warn(f"{at}: setenv needs NAME=value, ignored")
             elif k == "allow_syscall" and not syscall_ok(v): warn(f"{at}: can't allow '{v}': not one of {', '.join(sorted(EXTRA_SYSCALLS))}, io_uring")
             elif not v: warn(f"{at}: {k} has no value, ignored")
+            elif k == "talk" and not talk_ok(v): warn(f"{at}: '{v}' is not a usable D-Bus name (a wildcard needs three parts first, like org.example.App.*), ignored")
             else: ls[k].append(v)
         elif k in SCALARS:
             b = parse_bool(v)
@@ -1113,7 +1128,7 @@ def effective(name, o):
     cfg, src = load_conf(name, o.get("ignore_config"))
     for k in list(SCALARS) + list(LIMITS):
         if k in o: cfg[k], src[k] = o[k], "flag"
-    for k in ("env", "setenv", "allow_syscall"):
+    for k in ("env", "setenv", "allow_syscall", "talk"):
         for v in o.get(k, []):
             if v not in cfg[k]: cfg[k].append(v); src[(k, v)] = "flag"
     return cfg, src
@@ -1764,7 +1779,7 @@ def build(prog, args, live=False, o=None):
     sa = os.environ.get("SSH_AUTH_SOCK", "")
     if cfg["ssh_agent"] and sa and os.path.exists(sa):     # the program can sign as you while it runs
         late += ["--ro-bind", sa, sa]; env["SSH_AUTH_SOCK"] = sa
-    if cfg["portals"] or any(cfg[k] for k, _ in BUS_INTEGRATIONS):
+    if cfg["portals"] or cfg["talk"] or any(cfg[k] for k, _ in BUS_INTEGRATIONS):
         sock = state["bus"]
         if live:
             state["proxy"] = start_proxy(sock, cfg, portal_app_id(name) if cfg["portals"] else None)
@@ -2068,7 +2083,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          **{"--" + k.replace("_", "-"): (k, True) for k in (*PORTAL_EXTRA, *PORTAL_DEFAULT_ON, "portal_file_transfer")},
          **{"--no-" + k.replace("_", "-"): (k, False) for k in (*PORTAL_TOGGLES, *PORTAL_DEFAULT_ON, "portal_file_transfer")}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
-               "--allow-syscall": "allow_syscall", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
+               "--allow-syscall": "allow_syscall", "--talk": "talk", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
                "--loader": "loader", "--app-id": "app_id"}
 APP_ID = r"[A-Za-z0-9._+-]{1,255}"       # what a desktop file name (without .desktop) may hold; a window id for the compositor
 COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind", "export", "import", "install", "uninstall")
@@ -2120,6 +2135,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --allow-sensitive      allow sharing ~/.ssh, ~/.gnupg and other secret folders\n"
          "  --env=NAME             pass a variable through     --setenv=NAME=VALUE   set a variable\n"
          "  --allow-syscall=NAME   turn a blocked system call back on (io_uring, userfaultfd, kcmp, ...)\n"
+         "  --talk=NAME            let the program call this session-bus name, e.g. org.freedesktop.FileManager1 (xdg-dbus-proxy)\n"
          "  --memory=2G --tasks=512 --cpu=200%   limits (systemd-run --user)\n"
          "  --gtk-portal=auto|1|0  tell GTK programs to use the file chooser portal (with --portals): auto does, except where the host's cursor size is 0\n"
          "  --name=NAME            use another private home and settings name than the program's\n"
@@ -2162,6 +2178,7 @@ def parse_options(a):
                 if key == "env" and not env_name_ok(v): die(f"{k}: '{v}' is not a variable name")
                 if key == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): die(f"{k}: use NAME=VALUE")
                 if key == "allow_syscall" and not syscall_ok(v): die(f"{k}: '{v}' can't be allowed; choose from {', '.join(sorted(EXTRA_SYSCALLS))}, io_uring")
+                if key == "talk" and not talk_ok(v): die(f"{k}: '{v}' is not a usable D-Bus name (a wildcard needs three parts first, like org.example.App.*)")
                 o.setdefault(key, []).append(v)
         elif k in VALUE_FLAGS: die(f"{k} needs a value: {k}=...")
         elif eq and k in FLAGS: die(f"{k} doesn't take a value")

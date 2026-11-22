@@ -398,6 +398,7 @@ class Win(Adw.ApplicationWindow):
         page.add(self.limits_group(scope, refresh_tech))
         for grp in self.folders_group(scope, refresh_tech): page.add(grp)
         page.add(self.env_group(scope, refresh_tech))
+        page.add(self.talk_group(scope, refresh_tech))
         if scope is not None: page.add(self.storage_group(scope))
         page.add(tech)
         dg = Adw.PreferencesGroup()
@@ -885,6 +886,33 @@ class Win(Adw.ApplicationWindow):
                                     tooltip_text=f"Remove {v.partition('=')[0]}")
                     rm.connect("clicked", lambda _b, key=key, v=v: (remove_item(scope, key, v), GLib.idle_add(refill), on_change and on_change()))
                     r.add_suffix(rm); g.add(r); rows.append(r)
+        refill()
+        return g
+
+    def talk_group(self, scope, on_change=None):
+        g = Adw.PreferencesGroup(title="D-Bus services",
+                                 description="Extra session-bus names the program may talk to (advanced). A name gives it full access to that service.")
+        rows = []
+
+        def add(row):
+            v = row.get_text().strip()
+            bad = talk_problem(v)
+            if bad: return self.alert("Can't use that", bad)
+            add_item(scope, "talk", v)
+            GLib.idle_add(refill)
+            if on_change: on_change()
+
+        def refill():
+            for r in rows: g.remove(r)
+            rows.clear()
+            new = Adw.EntryRow(title="New service (e.g. org.freedesktop.FileManager1)", show_apply_button=True)
+            new.connect("apply", add)
+            g.add(new); rows.append(new)
+            for v in raw_list(scope, "talk"):
+                r = Adw.ActionRow(title=v, use_markup=False)
+                rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Remove {v}")
+                rm.connect("clicked", lambda _b, v=v: (remove_item(scope, "talk", v), GLib.idle_add(refill), on_change and on_change()))
+                r.add_suffix(rm); g.add(r); rows.append(r)
         refill()
         return g
 

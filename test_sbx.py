@@ -593,6 +593,21 @@ class Units(unittest.TestCase):
         for bad in (["--nope"], ["--memory=lots"], ["--env=1x"], ["--setenv=NOVALUE"], ["--allow-syscall=bpf"], ["--tasks="]):
             with self.assertRaises(SystemExit, msg=bad), contextlib.redirect_stderr(io.StringIO()): parse(bad)
 
+    def test_talk_names_are_checked_the_same_in_the_file_and_on_the_command_line(self):
+        S = self.S
+        good = ["org.example.App", "org.example.App.*", "org.freedesktop.FileManager1", "a"]
+        bad = ["org.*", "org.freedesktop.*", "*", "org..x", ".org", "org.example.", "1org.x", "org x", "org.x;y"]
+        for n in good + bad: self.assertEqual(S["talk_ok"](n), n in good, n)
+        sc, ls, _ = S["parse_conf"](self.write("t.conf", "".join(f"talk={n}\n" for n in good + bad) + "talk=\n"))
+        self.assertEqual(ls["talk"], good)
+        self.assertEqual(len([w for w in self.warned if "D-Bus name" in w]), len(bad))
+        o, _ = S["parse_options"](["--talk=org.example.App", "--talk=org.example.App.*", "prog"])
+        self.assertEqual(o, {"talk": ["org.example.App", "org.example.App.*"]})
+        for n in bad:
+            with self.assertRaises(SystemExit, msg=n), contextlib.redirect_stderr(io.StringIO()): S["parse_options"]([f"--talk={n}"])
+        cfg, src = S["effective"]("app", {"ignore_config": True, "talk": ["org.x.Y"]})
+        self.assertEqual((cfg["talk"], src[("talk", "org.x.Y")]), (["org.x.Y"], "flag"))
+
     # -- paths
     def test_program_share(self):
         ps = self.S["program_share"]
@@ -2343,7 +2358,7 @@ class Units(unittest.TestCase):
     def test_schema_lists_every_setting(self):
         sch = self.S["schema"]()
         self.assertEqual(sch["switches"], self.S["SCALARS"])
-        self.assertEqual(set(sch["lists"]), {"whitelist", "read_only", "env", "setenv", "allow_syscall"})
+        self.assertEqual(set(sch["lists"]), {"whitelist", "read_only", "env", "setenv", "allow_syscall", "talk"})
         self.assertIn(".ssh", sch["sensitive"])
 
 
@@ -2793,6 +2808,18 @@ class Ported(unittest.TestCase):
         rt = S["runtime_dir"]()
         _, args, _ = S["build"]("/bin/true", [], False, {"tray": True, "ignore_config": True})
         self.assertIn(f"{rt}/bus", args); self.assertIn("DBUS_SESSION_BUS_ADDRESS", args)
+        _, args, _ = S["build"]("/bin/true", [], False, {"ignore_config": True})
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", args)
+
+    # -- extra session-bus names (talk)
+    def test_talk_names_open_the_session_proxy_without_portals_or_tray(self):
+        S = load_sbx(); rt = S["runtime_dir"]()
+        self.assertEqual(S["bus_rules"]({"portals": False, "talk": []}), [])
+        self.assertEqual(S["bus_rules"]({"portals": False, "talk": ["org.example.App", "org.*"]}), ["--talk=org.example.App"])      # a name that slipped past the parser is dropped here
+        both = S["bus_rules"]({"portals": True, "tray": True, "talk": ["org.example.App"]})
+        self.assertTrue(set(S["portal_rules"]()) <= set(both) and set(S["tray_rules"]()) <= set(both) and "--talk=org.example.App" in both)
+        _, args, _ = S["build"]("/bin/true", [], False, {"talk": ["org.example.App"], "ignore_config": True})
+        self.assertIn(f"{rt}/bus", args); self.assertIn("DBUS_SESSION_BUS_ADDRESS", args); self.assertNotIn("GTK_USE_PORTAL", args)
         _, args, _ = S["build"]("/bin/true", [], False, {"ignore_config": True})
         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", args)
 
@@ -4159,6 +4186,15 @@ class Gui(unittest.TestCase):
             else: self.assertIn(key, self.S["SCALARS"]); self.assertIsInstance(want, bool)
             self.assertTrue(title and why)
             for k in needs: self.assertIn(k, self.S["SCALARS"])
+
+    def test_the_window_accepts_the_same_talk_names_as_sbx(self):
+        G, S = self.G, self.S
+        for n in ("org.example.App", "org.example.App.*", "org.*", "org.freedesktop.*", "org..x", "a b", "*", ""):
+            self.assertEqual(G["talk_problem"](n) is None, S["talk_ok"](n), n)
+        self.assertTrue(G["add_item"]("app", "talk", "org.freedesktop.FileManager1"))
+        self.assertEqual(G["raw_list"]("app", "talk"), ["org.freedesktop.FileManager1"])
+        G["remove_item"]("app", "talk", "org.freedesktop.FileManager1")
+        self.assertEqual(G["raw_list"]("app", "talk"), [])
 
     def test_environment_variables_can_be_added_replaced_and_removed_from_the_window(self):
         G, S = self.G, self.S

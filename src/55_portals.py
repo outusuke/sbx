@@ -87,6 +87,19 @@ def kde_rules(cfg=None):
     return own + jobs + [f"--call={KDE_INHIBIT}={KDE_INHIBIT}.{m}@{KDE_INHIBIT_PATH}" for m in ("Inhibit", "UnInhibit")]
 
 
+# ---------------------------------------------------------------- extra session-bus names (talk=)
+TALK_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*(\.\*)?")     # no empty parts: "org..x" is not a name
+
+
+def talk_ok(n):
+    """A plain D-Bus name, or NAME.* with three parts before the .*: 'org.*' and 'org.freedesktop.*' would reach secrets, systemd and more."""
+    return bool(TALK_RE.fullmatch(n)) and (not n.endswith(".*") or n.count(".") >= 3)
+
+
+def talk_rules(cfg):
+    return [f"--talk={n}" for n in cfg["talk"] if talk_ok(n)]
+
+
 # Every switch that opens the session-bus proxy, with the function that gives its rules. A new integration is one line here: bus_rules() and the
 # check that starts the proxy (70_build.py) both read this list, so the switch can't be added without the proxy starting for it.
 BUS_INTEGRATIONS = (("tray", lambda cfg: tray_rules()), ("gnome_shell", gnome_shell_rules), ("kde", kde_rules))
@@ -97,6 +110,7 @@ def bus_rules(cfg=None):
     rules = portal_rules(cfg) if cfg is None or cfg.get("portals") else []
     for key, fn in BUS_INTEGRATIONS:
         if cfg and cfg.get(key): rules = rules + fn(cfg)
+    if cfg and cfg.get("talk"): rules = rules + talk_rules(cfg)      # a list, not a switch, so it is not in BUS_INTEGRATIONS
     return rules
 
 

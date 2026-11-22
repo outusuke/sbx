@@ -187,6 +187,16 @@ def env_problem(name, value=None):
     return None
 
 
+TALK_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*(\.\*)?")      # same as in sbx
+
+
+def talk_problem(n):
+    """Why this can't go into talk=, or None; the same names sbx accepts."""
+    if not TALK_RE.fullmatch(n): return "A service name is words joined by dots, like org.freedesktop.FileManager1."
+    if n.endswith(".*") and n.count(".") < 3: return "A wildcard needs three parts before the .*, like org.example.App.*"
+    return None
+
+
 def parse_env_entry(text):
     """(list key, value, problem) for what is typed in a variable row: NAME=value sets a variable (setenv=), a bare NAME passes
     your own value through (env=). The problem is None when it can be stored."""

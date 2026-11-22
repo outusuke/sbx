@@ -114,6 +114,8 @@ A program that reads or creates files in the folder it starts in needs `folder=1
 
 Environment variables: `setenv=NAME=value` sets one for the program, `env=NAME` passes your own value through (also `--setenv=NAME=value`). `sbx-gui` has a list for both on each program's page.
 
+D-Bus names: `talk=org.freedesktop.FileManager1` (or `--talk=NAME`) lets the program call that session-bus name through `xdg-dbus-proxy`. It gives full access to that service, so list only what the program needs. A wildcard needs three parts before the `.*` (`org.example.App.*`). `sbx-gui` has a list for it.
+
 `sbx show NAME` lists every setting. Flags beat files and can only make things stricter.
 
 Back up or move settings with `sbx export -o FILE` and `sbx import FILE` (`--force` replaces settings that differ); `sbx-gui` has the same buttons.

@@ -83,7 +83,7 @@ LIMIT_ROWS = (("memory", "Memory limit (MB)", "The program can't use more memory
 LIMIT_PATTERNS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%"}
 HINT_LISTS = ("setenv",)        # lists a troubleshooting hint may add to
 ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    # same as in sbx: env= and setenv= can't touch these
-# The window edits whitelist, read_only, setenv and env; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
+# The window edits whitelist, read_only, setenv, env and talk; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
        ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("a11y", "screen reader"), ("gnome_shell", "GNOME Shell extensions"), ("kde", "KDE Plasma integration"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))

@@ -377,6 +377,11 @@ Set a variable. HOME, USER, LOGNAME, XDG_RUNTIME_DIR and SBX_ACTIVE are protecte
 Turn one of the extra blocked system calls back on: io_uring, userfaultfd, process_vm_readv, process_vm_writev,
 kcmp, pidfd_getfd, open_tree, move_mount, fsopen, fsconfig, fsmount, fspick, mount_setattr.
 .TP
+.BI \-\-talk= NAME
+Let the program call this session\-bus name, for example org.freedesktop.FileManager1. The name gives full access to that
+service. A wildcard needs three parts before the .*, like org.example.App.*; org.* and org.freedesktop.* are refused.
+Needs xdg\-dbus\-proxy.
+.TP
 .BR \-\-memory=2G ", " \-\-tasks=512 ", " \-\-cpu=200%
 Resource limits, through
 .BR "systemd\-run \-\-user" .
@@ -448,7 +453,7 @@ If folder is not set anywhere, a program whose folder name starts with the progr
 e.g. G\-Diffuser\-v1.2.3\-linux\-x64 for G\-Diffuser) gets folder=1 automatically, with the same limits, and sbx says so
 on start. folder=0 turns that off.
 .PP
-Lists that add up across the two files: whitelist, read_only, env, setenv, allow_syscall. Limits: memory, tasks,
+Lists that add up across the two files: whitelist, read_only, env, setenv, allow_syscall, talk. Limits: memory, tasks,
 cpu (and gtk_portal, which takes auto, 1 or 0); an empty value in a program's file cancels the default's. Command\-line flags beat the files.
 .PP
 .B sbx show
