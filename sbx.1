@@ -382,10 +382,10 @@ Let the program call this session\-bus name, for example org.freedesktop.FileMan
 service. A wildcard needs three parts before the .*, like org.example.App.*; org.* and org.freedesktop.* are refused.
 Needs xdg\-dbus\-proxy.
 .TP
-.BI \-\-system\-talk= NAME
-The same on the system bus, which reaches services that run for the whole computer: org.bluez (Bluetooth),
-org.freedesktop.UPower (battery) or org.freedesktop.Avahi (network discovery, Cast). The names follow the same rules as
-.BR \-\-talk .
+.BR \-\-bluetooth ", " \-\-battery ", " \-\-avahi
+Let the program use org.bluez (Bluetooth), org.freedesktop.UPower (battery and power state) or org.freedesktop.Avahi
+(network service discovery, Cast) on the system bus, through xdg\-dbus\-proxy. Each opens that one name and nothing else.
+Bluetooth can reach nearby devices even with net=0, and Avahi lists the names of services on your local network.
 .TP
 .BR \-\-memory=2G ", " \-\-tasks=512 ", " \-\-cpu=200%
 Resource limits, through
@@ -439,7 +439,7 @@ memory=2G
 .PP
 Switches take 0 or 1. Defaults: net=1, net_private=0, wayland=1, wayland_strict=automatic (1 where the compositor supports security contexts, else 0), x11=0, gpu=1, gpu_render_only=0, sound=1, portals=0, private=0,
 hostname=0, privacy=0, userns=1, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
-allow_sensitive=0, compat=0, tray=0, a11y=0, gnome_shell=0, gnome_shell_manage=0, kde=0, folder=0, single_instance=0, and the extra portals portal_launcher, portal_remote_desktop, portal_input_capture,
+allow_sensitive=0, compat=0, tray=0, a11y=0, gnome_shell=0, gnome_shell_manage=0, kde=0, folder=0, single_instance=0, bluetooth=0, battery=0, avahi=0, and the extra portals portal_launcher, portal_remote_desktop, portal_input_capture,
 portal_secret and portal_background (all 0, and only used when portals=1), and portal_notification, portal_openuri, portal_print, portal_trash, portal_email, portal_inhibit,
 portal_network, portal_file_transfer (drag and drop of files from other programs), portal_screenshot, portal_screencast, portal_location, portal_shortcuts, portal_usb, portal_clipboard and portal_wallpaper (all 1, also only used when portals=1). Anything else, such as net=maybe, is reported with its file
 and line number and ignored.
@@ -458,7 +458,7 @@ If folder is not set anywhere, a program whose folder name starts with the progr
 e.g. G\-Diffuser\-v1.2.3\-linux\-x64 for G\-Diffuser) gets folder=1 automatically, with the same limits, and sbx says so
 on start. folder=0 turns that off.
 .PP
-Lists that add up across the two files: whitelist, read_only, env, setenv, allow_syscall, talk, system_talk. Limits: memory, tasks,
+Lists that add up across the two files: whitelist, read_only, env, setenv, allow_syscall, talk. Limits: memory, tasks,
 cpu (and gtk_portal, which takes auto, 1 or 0); an empty value in a program's file cancels the default's. Command\-line flags beat the files.
 .PP
 .B sbx show

@@ -40,6 +40,9 @@ GROUPS = [
         ("alsa", "ALSA sound devices", "/dev/snd, for programs that don't use PipeWire or PulseAudio", False),
         ("rocm", "AMD compute (ROCm)", "/dev/kfd", False),
         ("kvm", "Virtual machines", "/dev/kvm", False),
+        ("bluetooth", "Bluetooth", "Scan for and talk to Bluetooth devices (Web Bluetooth), through the system bus. Reaches nearby devices even without Internet. Needs xdg-dbus-proxy.", False),
+        ("battery", "Battery and power state", "Read battery level and power source (the browser's battery API), through the system bus. Needs xdg-dbus-proxy.", False),
+        ("avahi", "Network discovery (Avahi)", "Find printers, Cast devices and other services on your local network by name, through the system bus. Needs xdg-dbus-proxy.", False),
         ("compat", "Pass graphics and toolkit settings", "For programs that draw wrongly or won't start. Copies the graphics and toolkit variables of your session that are set (WGPU_*, MESA_*, SDL_*, QT_QPA_* and similar). Never tokens or other variables.", False)]),
     ("Desktop integration", [
         ("portals", "Notifications and portals", "Notifications, opening links, the file chooser, dark mode (needs xdg-dbus-proxy)", False),
@@ -84,7 +87,7 @@ ADVANCED = ("portal_file_transfer", "portal_notification", "portal_openuri", "po
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces",
-         "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm",
+         "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm", "bluetooth": "Bluetooth", "battery": "battery state", "avahi": "network discovery",
          "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
          "portal_notification": "notifications", "portal_openuri": "open links", "portal_print": "print dialog", "portal_trash": "trash",
          "portal_email": "email", "portal_inhibit": "keep awake", "portal_network": "network state", "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",
@@ -102,10 +105,10 @@ LIMIT_ROWS = (("memory", "Memory limit (MB)", "The program can't use more memory
 LIMIT_PATTERNS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%"}
 HINT_LISTS = ("setenv",)        # lists a troubleshooting hint may add to
 ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    # same as in sbx: env= and setenv= can't touch these
-# The window edits whitelist, read_only, setenv, env, talk and system_talk; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
+# The window edits whitelist, read_only, setenv, env and talk; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
-       ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("a11y", "screen reader"), ("gnome_shell", "GNOME Shell extensions"), ("kde", "KDE Plasma integration"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))
+       ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("a11y", "screen reader"), ("gnome_shell", "GNOME Shell extensions"), ("kde", "KDE Plasma integration"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("bluetooth", "Bluetooth"), ("battery", "battery state"), ("avahi", "network discovery"), ("ssh_agent", "your SSH agent"))
 DESKTOP_NAMES = {"GNOME": "GNOME Shell", "KDE": "KDE Plasma"}      # desktop -> the title of its expander; a new desktop is one line here and one in DESKTOP_ONLY
 DESKTOP_ONLY = {"gnome_shell": "GNOME", "gnome_shell_manage": "GNOME", "kde": "KDE"}      # switch -> the desktop it is for; hidden on the other one (see desktop_hidden())
 NEEDS = {"gnome_shell_manage": ("gnome_shell",), "net_private": ("net",), "gpu_render_only": ("gpu", "rocm"), "wayland_strict": ("wayland",)}      # key -> switches of which one must be on for it to do anything (portal_* need portals, see needs())
@@ -362,7 +365,7 @@ TALK_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*(\.\*)?")      #
 
 
 def talk_problem(n):
-    """Why this can't go into talk= or system_talk=, or None; the same names sbx accepts."""
+    """Why this can't go into talk=, or None; the same names sbx accepts."""
     if not TALK_RE.fullmatch(n): return "A service name is words joined by dots, like org.freedesktop.FileManager1."
     if n.endswith(".*") and n.count(".") < 3: return "A wildcard needs three parts before the .*, like org.example.App.*"
     return None
@@ -1479,9 +1482,7 @@ class Win(Adw.ApplicationWindow):
         page.add(self.limits_group(scope, refresh_tech))
         for grp in self.folders_group(scope, refresh_tech): page.add(grp)
         page.add(self.env_group(scope, refresh_tech))
-        page.add(self.talk_group(scope, "talk", "D-Bus services", "Extra session-bus names the program may talk to (advanced). A name gives it full access to that service.", refresh_tech))
-        page.add(self.talk_group(scope, "system_talk", "System bus services",
-                                 "Names on the system bus, such as org.bluez (Bluetooth), org.freedesktop.UPower (battery) or org.freedesktop.Avahi (network discovery). Advanced.", refresh_tech))
+        page.add(self.talk_group(scope, refresh_tech))
         if scope is not None: page.add(self.storage_group(scope))
         page.add(tech)
         dg = Adw.PreferencesGroup()
@@ -1972,15 +1973,16 @@ class Win(Adw.ApplicationWindow):
         refill()
         return g
 
-    def talk_group(self, scope, key, title, description, on_change=None):
-        g = Adw.PreferencesGroup(title=title, description=description)
+    def talk_group(self, scope, on_change=None):
+        g = Adw.PreferencesGroup(title="D-Bus services",
+                                 description="Extra session-bus names the program may talk to (advanced). A name gives it full access to that service.")
         rows = []
 
         def add(row):
             v = row.get_text().strip()
             bad = talk_problem(v)
             if bad: return self.alert("Can't use that", bad)
-            add_item(scope, key, v)
+            add_item(scope, "talk", v)
             GLib.idle_add(refill)
             if on_change: on_change()
 
@@ -1990,10 +1992,10 @@ class Win(Adw.ApplicationWindow):
             new = Adw.EntryRow(title="New service (e.g. org.freedesktop.FileManager1)", show_apply_button=True)
             new.connect("apply", add)
             g.add(new); rows.append(new)
-            for v in raw_list(scope, key):
+            for v in raw_list(scope, "talk"):
                 r = Adw.ActionRow(title=v, use_markup=False)
                 rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Remove {v}")
-                rm.connect("clicked", lambda _b, v=v: (remove_item(scope, key, v), GLib.idle_add(refill), on_change and on_change()))
+                rm.connect("clicked", lambda _b, v=v: (remove_item(scope, "talk", v), GLib.idle_add(refill), on_change and on_change()))
                 r.add_suffix(rm); g.add(r); rows.append(r)
         refill()
         return g

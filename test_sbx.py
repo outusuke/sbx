@@ -434,11 +434,11 @@ class Units(unittest.TestCase):
         def popen(cmd, **k):
             seen.append(cmd); os.write(int(cmd[1].split("=")[1]), b"x"); return Proc()
         S["subprocess"] = types.SimpleNamespace(Popen=popen, DEVNULL=-3, TimeoutExpired=subprocess.TimeoutExpired, SubprocessError=subprocess.SubprocessError)
-        cfg = {"system_talk": ["org.bluez", "org.*", "org.freedesktop.UPower"]}
+        cfg = {"bluetooth": True, "battery": False, "avahi": True}
         with mock.patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/x/system_bus_socket"}):
             px = S["start_system_proxy"](sock, cfg)
         self.assertEqual(seen[0][2:5], ["unix:path=/x/system_bus_socket", sock, "--filter"])
-        self.assertEqual(seen[0][5:], ["--talk=org.bluez", "--talk=org.freedesktop.UPower"])               # nothing but the valid names
+        self.assertEqual(seen[0][5:], ["--talk=org.bluez", "--talk=org.freedesktop.Avahi"])               # only the switches that are on
         S["stop_proxy"](px, sock)
         seen.clear(); self.warned.clear()
         with mock.patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": ""}), mock.patch.object(os.path, "exists", lambda p: False):
@@ -455,10 +455,10 @@ class Units(unittest.TestCase):
                 self.assertEqual(S["system_bus_address"](), "unix:path=/run/dbus/system_bus_socket")
             with mock.patch.object(os.path, "exists", lambda p: False): self.assertIsNone(S["system_bus_address"]())
 
-    def test_system_talk_binds_the_filtered_system_bus_and_leaves_the_session_bus_closed(self):
+    def test_a_system_bus_switch_binds_the_filtered_system_bus_and_leaves_the_session_bus_closed(self):
         S = self.S; rt = f"{self.tmp}/run"; S["runtime_dir"] = lambda: rt
         def env_of(a): return {a[j + 1]: a[j + 2] for j, x in enumerate(a) if x == "--setenv"}
-        a = S["build"]("/bin/true", [], False, {"system_talk": ["org.bluez"], "name": "tool", "ignore_config": True})[1]
+        a = S["build"]("/bin/true", [], False, {"bluetooth": True, "name": "tool", "ignore_config": True})[1]
         i = a.index("/run/dbus/system_bus_socket")
         self.assertEqual(a[i - 2], "--ro-bind"); self.assertTrue(a[i - 1].endswith(".system"), a[i - 1])
         self.assertEqual(env_of(a)["DBUS_SYSTEM_BUS_ADDRESS"], "unix:path=/run/dbus/system_bus_socket")
@@ -469,10 +469,10 @@ class Units(unittest.TestCase):
             with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}), mock.patch.object(shutil, "which", lambda x: f"/usr/bin/{x}"):
                 return S["build"]("/bin/true", [], True, {"name": "tool", "ignore_config": True, **extra})
         S["start_system_proxy"] = lambda sock, cfg: ("proxy", -1)
-        _, a, st = live({"system_talk": ["org.bluez"]})
+        _, a, st = live({"battery": True})
         self.assertEqual(st["system"], ("proxy", -1)); self.assertTrue(st["system_bus"].endswith(f"{os.getpid()}.system")); self.assertIn("/run/dbus/system_bus_socket", a)
         S["start_system_proxy"] = lambda sock, cfg: None                                                  # the proxy did not start: the program gets no system bus
-        _, a, st = live({"system_talk": ["org.bluez"]})
+        _, a, st = live({"battery": True})
         self.assertIsNone(st["system"]); self.assertNotIn("/run/dbus/system_bus_socket", a); self.assertNotIn("DBUS_SYSTEM_BUS_ADDRESS", env_of(a))
 
     def test_teardown_stops_the_a11y_proxy_and_removes_its_socket(self):
@@ -658,15 +658,13 @@ class Units(unittest.TestCase):
         cfg, src = S["effective"]("app", {"ignore_config": True, "talk": ["org.x.Y"]})
         self.assertEqual((cfg["talk"], src[("talk", "org.x.Y")]), (["org.x.Y"], "flag"))
 
-    def test_system_talk_takes_the_same_names_from_the_file_and_the_flag_and_stays_apart_from_talk(self):
+    def test_system_bus_switches_are_off_by_default_and_come_from_the_file_and_the_flags(self):
         S = self.S
-        sc, ls, _ = S["parse_conf"](self.write("s.conf", "system_talk=org.bluez\nsystem_talk=org.*\ntalk=org.example.App\n"))
-        self.assertEqual((ls["system_talk"], ls["talk"]), (["org.bluez"], ["org.example.App"]))
-        self.assertEqual(len([w for w in self.warned if "D-Bus name" in w]), 1)
-        self.assertEqual(S["parse_options"](["--system-talk=org.bluez", "prog"])[0], {"system_talk": ["org.bluez"]})
-        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()): S["parse_options"](["--system-talk=org.freedesktop.*"])
-        cfg, src = S["effective"]("app", {"ignore_config": True, "system_talk": ["org.bluez"]})
-        self.assertEqual((cfg["system_talk"], cfg["talk"], src[("system_talk", "org.bluez")]), (["org.bluez"], [], "flag"))
+        for k in ("bluetooth", "battery", "avahi"): self.assertIs(S["SCALARS"][k], False, k)
+        sc, _, _ = S["parse_conf"](self.write("s.conf", "bluetooth=1\navahi=maybe\n"))
+        self.assertEqual(sc, {"bluetooth": True}); self.assertTrue(any("avahi=maybe" in w for w in self.warned))
+        self.assertEqual(S["parse_options"](["--bluetooth", "--battery", "--avahi", "prog"])[0], {"bluetooth": True, "battery": True, "avahi": True})
+        self.assertEqual(S["SYSTEM_BUS_NAMES"], {"bluetooth": "org.bluez", "battery": "org.freedesktop.UPower", "avahi": "org.freedesktop.Avahi"})
 
     # -- paths
     def test_program_share(self):
@@ -2418,7 +2416,7 @@ class Units(unittest.TestCase):
     def test_schema_lists_every_setting(self):
         sch = self.S["schema"]()
         self.assertEqual(sch["switches"], self.S["SCALARS"])
-        self.assertEqual(set(sch["lists"]), {"whitelist", "read_only", "env", "setenv", "allow_syscall", "talk", "system_talk"})
+        self.assertEqual(set(sch["lists"]), {"whitelist", "read_only", "env", "setenv", "allow_syscall", "talk"})
         self.assertIn(".ssh", sch["sensitive"])
 
 
@@ -4255,8 +4253,7 @@ class Gui(unittest.TestCase):
         self.assertEqual(G["raw_list"]("app", "talk"), ["org.freedesktop.FileManager1"])
         G["remove_item"]("app", "talk", "org.freedesktop.FileManager1")
         self.assertEqual(G["raw_list"]("app", "talk"), [])
-        self.assertTrue(G["add_item"]("app", "system_talk", "org.bluez")); self.assertEqual(G["raw_list"]("app", "system_talk"), ["org.bluez"])
-        self.assertEqual(G["raw_list"]("app", "talk"), [])
+
 
     def test_environment_variables_can_be_added_replaced_and_removed_from_the_window(self):
         G, S = self.G, self.S
@@ -4327,6 +4324,15 @@ class Gui(unittest.TestCase):
             self.assertIn(key, rows, key); self.assertIn(desktop, G["DESKTOP_NAMES"], key)     # every desktop has an expander title
         src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "70_build.py")).read()
         self.assertIn("BUS_INTEGRATIONS", src)                                                  # the proxy start reads the list, not a hand-written condition
+
+    def test_every_system_bus_switch_is_wired_in_every_place(self):
+        G, S = self.G, self.S; rows = [r[0] for _t, rs in G["GROUPS"] for r in rs]
+        for key, name in S["SYSTEM_BUS_NAMES"].items():
+            self.assertIn(key, rows, key); self.assertIn(key, G["SHORT"], key); self.assertIn(key, S["SCALARS"], key); self.assertIn(key, dict(G["CAN"]), key)
+            self.assertEqual(S["FLAGS"]["--" + key], (key, True)); self.assertEqual(S["system_bus_rules"]({key: True}), [f"--talk={name}"])
+            self.assertEqual(S["system_bus_rules"]({key: False}), [], key)
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "70_build.py")).read()
+        self.assertIn("SYSTEM_BUS_NAMES", src)                                                  # the proxy start reads the table, not a hand-written condition
 
     def test_a_desktop_folds_into_an_expander_only_when_it_has_more_than_three_rows(self):
         F = self.G["folded_desktops"]; n = self.G["DESKTOP_FOLD"]; self.assertEqual(n, 3)

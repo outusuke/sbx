@@ -199,7 +199,7 @@ def build(prog, args, live=False, o=None):
         if sock:
             a += ["--ro-bind", sock, f"{rt}/at-spi/bus"]; env["AT_SPI_BUS_ADDRESS"] = f"unix:path={rt}/at-spi/bus"
             env.update(A11Y_ENV)
-    if cfg["system_talk"]:
+    if any(cfg[k] for k in SYSTEM_BUS_NAMES):
         sock = state["system_bus"]
         if live:
             state["system"] = start_system_proxy(sock, cfg)

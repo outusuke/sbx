@@ -191,7 +191,7 @@ TALK_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*(\.\*)?")      #
 
 
 def talk_problem(n):
-    """Why this can't go into talk= or system_talk=, or None; the same names sbx accepts."""
+    """Why this can't go into talk=, or None; the same names sbx accepts."""
     if not TALK_RE.fullmatch(n): return "A service name is words joined by dots, like org.freedesktop.FileManager1."
     if n.endswith(".*") and n.count(".") < 3: return "A wildcard needs three parts before the .*, like org.example.App.*"
     return None

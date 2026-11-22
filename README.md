@@ -14,7 +14,7 @@ sbx --net=none --here python3 script.py
 ## Install
 
 Needs Linux, Python 3.8+ and `bubblewrap` (0.8+ for `userns=0`).
-Optional: GTK 4 + libadwaita 1.5 + PyGObject (GUI), `xdg-dbus-proxy` (`portals`, `tray`, `a11y`, `gnome_shell`, `kde`), `pasta` (`net_private`), `systemd-run` (limits).
+Optional: GTK 4 + libadwaita 1.5 + PyGObject (GUI), `xdg-dbus-proxy` (`portals`, `tray`, `a11y`, `gnome_shell`, `kde`, `talk`, `bluetooth`, `battery`, `avahi`), `pasta` (`net_private`), `systemd-run` (limits).
 
 ```
 sudo apt install bubblewrap         # or your distro's equivalent
@@ -116,7 +116,7 @@ Environment variables: `setenv=NAME=value` sets one for the program, `env=NAME` 
 
 D-Bus names: `talk=org.freedesktop.FileManager1` (or `--talk=NAME`) lets the program call that session-bus name through `xdg-dbus-proxy`. It gives full access to that service, so list only what the program needs. A wildcard needs three parts before the `.*` (`org.example.App.*`). `sbx-gui` has a list for it.
 
-`system_talk=NAME` (or `--system-talk=NAME`) is the same for the system bus, which reaches services that run for the whole computer: `org.bluez` (Bluetooth), `org.freedesktop.UPower` (battery), `org.freedesktop.Avahi` (network discovery, Cast). Off unless listed; the program gets a filtered copy of the bus that lets through only those names.
+`bluetooth=1`, `battery=1` and `avahi=1` (or `--bluetooth`, `--battery`, `--avahi`) open one system-bus name each: `org.bluez`, `org.freedesktop.UPower`, `org.freedesktop.Avahi` (Web Bluetooth, the battery API, Cast and network discovery in Chrome). The program gets a filtered copy of the system bus with only those names. Bluetooth reaches nearby devices even with `net=0`, and Avahi lists the services on your local network.
 
 `sbx show NAME` lists every setting. Flags beat files and can only make things stricter.
 

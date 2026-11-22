@@ -96,8 +96,8 @@ def talk_ok(n):
     return bool(TALK_RE.fullmatch(n)) and (not n.endswith(".*") or n.count(".") >= 3)
 
 
-def talk_rules(cfg, key="talk"):
-    return [f"--talk={n}" for n in cfg[key] if talk_ok(n)]
+def talk_rules(cfg):
+    return [f"--talk={n}" for n in cfg["talk"] if talk_ok(n)]
 
 
 # Every switch that opens the session-bus proxy, with the function that gives its rules. A new integration is one line here: bus_rules() and the
@@ -192,9 +192,10 @@ def start_a11y_proxy(sock):
     return start_filter_proxy(px, addr, sock, a11y_rules(), "a11y", "the accessibility bus")
 
 
-# ---------------------------------------------------------------- system bus (system_talk=)
-# Names here are root services (Bluetooth, power, network discovery), so nothing is open unless listed.
+# ---------------------------------------------------------------- system bus (bluetooth, battery, avahi)
+# Services that run for the whole computer: each switch opens one fixed name, and there is no free-form list on purpose.
 SYSTEM_BUS_SOCKET = "/run/dbus/system_bus_socket"
+SYSTEM_BUS_NAMES = {"bluetooth": "org.bluez", "battery": "org.freedesktop.UPower", "avahi": "org.freedesktop.Avahi"}
 
 
 def system_bus_address():
@@ -204,17 +205,21 @@ def system_bus_address():
     return f"unix:path={SYSTEM_BUS_SOCKET}" if os.path.exists(SYSTEM_BUS_SOCKET) else None
 
 
+def system_bus_rules(cfg):
+    return [f"--talk={n}" for k, n in SYSTEM_BUS_NAMES.items() if cfg.get(k)]
+
+
 def start_system_proxy(sock, cfg):
-    """Start xdg-dbus-proxy on the system bus with one --talk for each system_talk name, listening on SOCK. Returns (process, pipe) or None."""
+    """Start xdg-dbus-proxy on the system bus with one --talk for each switch that is on, listening on SOCK. Returns (process, pipe) or None."""
     px = shutil.which("xdg-dbus-proxy")
     if not px:
-        warn(f"xdg-dbus-proxy missing, so system_talk is off: {install_hint('xdg-dbus-proxy')}")
+        warn(f"xdg-dbus-proxy missing, so Bluetooth, battery and Avahi are off: {install_hint('xdg-dbus-proxy')}")
         return None
     addr = system_bus_address()
     if not addr:
-        warn("system_talk is set, but the system bus was not found; running without it")
+        warn("a system bus switch is on, but the system bus was not found; running without it")
         return None
-    return start_filter_proxy(px, addr, sock, talk_rules(cfg, "system_talk"), "system_talk", "the system bus")
+    return start_filter_proxy(px, addr, sock, system_bus_rules(cfg), "the system bus switches", "the system bus")
 
 
 PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")

@@ -68,8 +68,8 @@ A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": True, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, **{k: False for k in PORTAL_EXTRA}}
-LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall", "talk", "system_talk")
+           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, "bluetooth": False, "battery": False, "avahi": False, **{k: False for k in PORTAL_EXTRA}}
+LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall", "talk")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
 LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%", "gtk_portal": r"auto|0|1"}
@@ -881,8 +881,8 @@ def talk_ok(n):
     return bool(TALK_RE.fullmatch(n)) and (not n.endswith(".*") or n.count(".") >= 3)
 
 
-def talk_rules(cfg, key="talk"):
-    return [f"--talk={n}" for n in cfg[key] if talk_ok(n)]
+def talk_rules(cfg):
+    return [f"--talk={n}" for n in cfg["talk"] if talk_ok(n)]
 
 
 # Every switch that opens the session-bus proxy, with the function that gives its rules. A new integration is one line here: bus_rules() and the
@@ -977,9 +977,10 @@ def start_a11y_proxy(sock):
     return start_filter_proxy(px, addr, sock, a11y_rules(), "a11y", "the accessibility bus")
 
 
-# ---------------------------------------------------------------- system bus (system_talk=)
-# Names here are root services (Bluetooth, power, network discovery), so nothing is open unless listed.
+# ---------------------------------------------------------------- system bus (bluetooth, battery, avahi)
+# Services that run for the whole computer: each switch opens one fixed name, and there is no free-form list on purpose.
 SYSTEM_BUS_SOCKET = "/run/dbus/system_bus_socket"
+SYSTEM_BUS_NAMES = {"bluetooth": "org.bluez", "battery": "org.freedesktop.UPower", "avahi": "org.freedesktop.Avahi"}
 
 
 def system_bus_address():
@@ -989,17 +990,21 @@ def system_bus_address():
     return f"unix:path={SYSTEM_BUS_SOCKET}" if os.path.exists(SYSTEM_BUS_SOCKET) else None
 
 
+def system_bus_rules(cfg):
+    return [f"--talk={n}" for k, n in SYSTEM_BUS_NAMES.items() if cfg.get(k)]
+
+
 def start_system_proxy(sock, cfg):
-    """Start xdg-dbus-proxy on the system bus with one --talk for each system_talk name, listening on SOCK. Returns (process, pipe) or None."""
+    """Start xdg-dbus-proxy on the system bus with one --talk for each switch that is on, listening on SOCK. Returns (process, pipe) or None."""
     px = shutil.which("xdg-dbus-proxy")
     if not px:
-        warn(f"xdg-dbus-proxy missing, so system_talk is off: {install_hint('xdg-dbus-proxy')}")
+        warn(f"xdg-dbus-proxy missing, so Bluetooth, battery and Avahi are off: {install_hint('xdg-dbus-proxy')}")
         return None
     addr = system_bus_address()
     if not addr:
-        warn("system_talk is set, but the system bus was not found; running without it")
+        warn("a system bus switch is on, but the system bus was not found; running without it")
         return None
-    return start_filter_proxy(px, addr, sock, talk_rules(cfg, "system_talk"), "system_talk", "the system bus")
+    return start_filter_proxy(px, addr, sock, system_bus_rules(cfg), "the system bus switches", "the system bus")
 
 
 PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")
@@ -1125,7 +1130,7 @@ def parse_conf(path):
             elif k == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): warn(f"{at}: setenv needs NAME=value, ignored")
             elif k == "allow_syscall" and not syscall_ok(v): warn(f"{at}: can't allow '{v}': not one of {', '.join(sorted(EXTRA_SYSCALLS))}, io_uring")
             elif not v: warn(f"{at}: {k} has no value, ignored")
-            elif k in ("talk", "system_talk") and not talk_ok(v): warn(f"{at}: '{v}' is not a usable D-Bus name (a wildcard needs three parts first, like org.example.App.*), ignored")
+            elif k == "talk" and not talk_ok(v): warn(f"{at}: '{v}' is not a usable D-Bus name (a wildcard needs three parts first, like org.example.App.*), ignored")
             else: ls[k].append(v)
         elif k in SCALARS:
             b = parse_bool(v)
@@ -1158,7 +1163,7 @@ def effective(name, o):
     cfg, src = load_conf(name, o.get("ignore_config"))
     for k in list(SCALARS) + list(LIMITS):
         if k in o: cfg[k], src[k] = o[k], "flag"
-    for k in ("env", "setenv", "allow_syscall", "talk", "system_talk"):
+    for k in ("env", "setenv", "allow_syscall", "talk"):
         for v in o.get(k, []):
             if v not in cfg[k]: cfg[k].append(v); src[(k, v)] = "flag"
     return cfg, src
@@ -1838,7 +1843,7 @@ def build(prog, args, live=False, o=None):
         if sock:
             a += ["--ro-bind", sock, f"{rt}/at-spi/bus"]; env["AT_SPI_BUS_ADDRESS"] = f"unix:path={rt}/at-spi/bus"
             env.update(A11Y_ENV)
-    if cfg["system_talk"]:
+    if any(cfg[k] for k in SYSTEM_BUS_NAMES):
         sock = state["system_bus"]
         if live:
             state["system"] = start_system_proxy(sock, cfg)
@@ -2114,14 +2119,14 @@ def run(prog, args, opts):
 FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
          "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
-         "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
+         "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--bluetooth": ("bluetooth", True), "--battery": ("battery", True), "--avahi": ("avahi", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-userns": ("userns", False), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
          **{"--" + k.replace("_", "-"): (k, True) for k in (*PORTAL_EXTRA, *PORTAL_DEFAULT_ON, "portal_file_transfer")},
          **{"--no-" + k.replace("_", "-"): (k, False) for k in (*PORTAL_TOGGLES, *PORTAL_DEFAULT_ON, "portal_file_transfer")}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
-               "--allow-syscall": "allow_syscall", "--talk": "talk", "--system-talk": "system_talk", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
+               "--allow-syscall": "allow_syscall", "--talk": "talk", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
                "--loader": "loader", "--app-id": "app_id"}
 APP_ID = r"[A-Za-z0-9._+-]{1,255}"       # what a desktop file name (without .desktop) may hold; a window id for the compositor
 COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind", "export", "import", "install", "uninstall")
@@ -2174,7 +2179,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --env=NAME             pass a variable through     --setenv=NAME=VALUE   set a variable\n"
          "  --allow-syscall=NAME   turn a blocked system call back on (io_uring, userfaultfd, kcmp, ...)\n"
          "  --talk=NAME            let the program call this session-bus name, e.g. org.freedesktop.FileManager1 (xdg-dbus-proxy)\n"
-         "  --system-talk=NAME     the same on the system bus, e.g. org.bluez (Bluetooth), org.freedesktop.UPower (battery), org.freedesktop.Avahi\n"
+         "  --bluetooth --battery --avahi   Bluetooth (org.bluez), battery and power state (UPower), network service discovery (Avahi): through the system bus (xdg-dbus-proxy)\n"
          "  --memory=2G --tasks=512 --cpu=200%   limits (systemd-run --user)\n"
          "  --gtk-portal=auto|1|0  tell GTK programs to use the file chooser portal (with --portals): auto does, except where the host's cursor size is 0\n"
          "  --name=NAME            use another private home and settings name than the program's\n"
@@ -2217,7 +2222,7 @@ def parse_options(a):
                 if key == "env" and not env_name_ok(v): die(f"{k}: '{v}' is not a variable name")
                 if key == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): die(f"{k}: use NAME=VALUE")
                 if key == "allow_syscall" and not syscall_ok(v): die(f"{k}: '{v}' can't be allowed; choose from {', '.join(sorted(EXTRA_SYSCALLS))}, io_uring")
-                if key in ("talk", "system_talk") and not talk_ok(v): die(f"{k}: '{v}' is not a usable D-Bus name (a wildcard needs three parts first, like org.example.App.*)")
+                if key == "talk" and not talk_ok(v): die(f"{k}: '{v}' is not a usable D-Bus name (a wildcard needs three parts first, like org.example.App.*)")
                 o.setdefault(key, []).append(v)
         elif k in VALUE_FLAGS: die(f"{k} needs a value: {k}=...")
         elif eq and k in FLAGS: die(f"{k} doesn't take a value")
@@ -3069,7 +3074,7 @@ def doctor():
         row("OK" if bwrap_has("--disable-userns") else "WARN", "userns=0 supported (bubblewrap 0.8+)")
     row("OK" if shutil.which("notify-send") else "WARN", "notify-send", "" if shutil.which("notify-send") else f"only needed for the failed-to-start popup: {install_hint('libnotify')}")
     px = shutil.which("xdg-dbus-proxy")
-    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1, gnome_shell=1, kde=1, a11y=1, talk= and system_talk=: {install_hint('xdg-dbus-proxy')}")
+    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1, gnome_shell=1, kde=1, a11y=1, talk=, bluetooth=1, battery=1 and avahi=1: {install_hint('xdg-dbus-proxy')}")
     ps = shutil.which("pasta")
     row("OK" if ps else "WARN", "pasta", "" if ps else f"only needed for net_private=1: {install_hint('passt')}")
     sd = shutil.which("systemd-run")
