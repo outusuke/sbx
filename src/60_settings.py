@@ -35,7 +35,7 @@ def parse_conf(path):
             elif k == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): warn(f"{at}: setenv needs NAME=value, ignored")
             elif k == "allow_syscall" and not syscall_ok(v): warn(f"{at}: can't allow '{v}': not one of {', '.join(sorted(EXTRA_SYSCALLS))}, io_uring")
             elif not v: warn(f"{at}: {k} has no value, ignored")
-            elif k == "talk" and not talk_ok(v): warn(f"{at}: '{v}' is not a usable D-Bus name (a wildcard needs three parts first, like org.example.App.*), ignored")
+            elif k in ("talk", "system_talk") and not talk_ok(v): warn(f"{at}: '{v}' is not a usable D-Bus name (a wildcard needs three parts first, like org.example.App.*), ignored")
             else: ls[k].append(v)
         elif k in SCALARS:
             b = parse_bool(v)
@@ -68,7 +68,7 @@ def effective(name, o):
     cfg, src = load_conf(name, o.get("ignore_config"))
     for k in list(SCALARS) + list(LIMITS):
         if k in o: cfg[k], src[k] = o[k], "flag"
-    for k in ("env", "setenv", "allow_syscall", "talk"):
+    for k in ("env", "setenv", "allow_syscall", "talk", "system_talk"):
         for v in o.get(k, []):
             if v not in cfg[k]: cfg[k].append(v); src[(k, v)] = "flag"
     return cfg, src

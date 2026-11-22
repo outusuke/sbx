@@ -102,7 +102,7 @@ LIMIT_ROWS = (("memory", "Memory limit (MB)", "The program can't use more memory
 LIMIT_PATTERNS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%"}
 HINT_LISTS = ("setenv",)        # lists a troubleshooting hint may add to
 ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    # same as in sbx: env= and setenv= can't touch these
-# The window edits whitelist, read_only, setenv, env and talk; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
+# The window edits whitelist, read_only, setenv, env, talk and system_talk; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
        ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("a11y", "screen reader"), ("gnome_shell", "GNOME Shell extensions"), ("kde", "KDE Plasma integration"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("ssh_agent", "your SSH agent"))
@@ -362,7 +362,7 @@ TALK_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*(\.\*)?")      #
 
 
 def talk_problem(n):
-    """Why this can't go into talk=, or None; the same names sbx accepts."""
+    """Why this can't go into talk= or system_talk=, or None; the same names sbx accepts."""
     if not TALK_RE.fullmatch(n): return "A service name is words joined by dots, like org.freedesktop.FileManager1."
     if n.endswith(".*") and n.count(".") < 3: return "A wildcard needs three parts before the .*, like org.example.App.*"
     return None
@@ -1479,7 +1479,9 @@ class Win(Adw.ApplicationWindow):
         page.add(self.limits_group(scope, refresh_tech))
         for grp in self.folders_group(scope, refresh_tech): page.add(grp)
         page.add(self.env_group(scope, refresh_tech))
-        page.add(self.talk_group(scope, refresh_tech))
+        page.add(self.talk_group(scope, "talk", "D-Bus services", "Extra session-bus names the program may talk to (advanced). A name gives it full access to that service.", refresh_tech))
+        page.add(self.talk_group(scope, "system_talk", "System bus services",
+                                 "Names on the system bus, such as org.bluez (Bluetooth), org.freedesktop.UPower (battery) or org.freedesktop.Avahi (network discovery). Advanced.", refresh_tech))
         if scope is not None: page.add(self.storage_group(scope))
         page.add(tech)
         dg = Adw.PreferencesGroup()
@@ -1970,16 +1972,15 @@ class Win(Adw.ApplicationWindow):
         refill()
         return g
 
-    def talk_group(self, scope, on_change=None):
-        g = Adw.PreferencesGroup(title="D-Bus services",
-                                 description="Extra session-bus names the program may talk to (advanced). A name gives it full access to that service.")
+    def talk_group(self, scope, key, title, description, on_change=None):
+        g = Adw.PreferencesGroup(title=title, description=description)
         rows = []
 
         def add(row):
             v = row.get_text().strip()
             bad = talk_problem(v)
             if bad: return self.alert("Can't use that", bad)
-            add_item(scope, "talk", v)
+            add_item(scope, key, v)
             GLib.idle_add(refill)
             if on_change: on_change()
 
@@ -1989,10 +1990,10 @@ class Win(Adw.ApplicationWindow):
             new = Adw.EntryRow(title="New service (e.g. org.freedesktop.FileManager1)", show_apply_button=True)
             new.connect("apply", add)
             g.add(new); rows.append(new)
-            for v in raw_list(scope, "talk"):
+            for v in raw_list(scope, key):
                 r = Adw.ActionRow(title=v, use_markup=False)
                 rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text=f"Remove {v}")
-                rm.connect("clicked", lambda _b, v=v: (remove_item(scope, "talk", v), GLib.idle_add(refill), on_change and on_change()))
+                rm.connect("clicked", lambda _b, v=v: (remove_item(scope, key, v), GLib.idle_add(refill), on_change and on_change()))
                 r.add_suffix(rm); g.add(r); rows.append(r)
         refill()
         return g

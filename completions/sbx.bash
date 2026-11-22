@@ -7,7 +7,7 @@ _sbx() {
         --portal-input-capture --portal-wallpaper --portal-launcher --portal-secret --portal-background --portal-usb --portal-clipboard --portal-file-transfer
         --no-portal-notification --no-portal-openuri --no-portal-print --no-portal-trash --no-portal-email --no-portal-inhibit --no-portal-network
         --no-portal-file-transfer --no-portal-screenshot --no-portal-screencast --no-portal-location --no-portal-shortcuts --no-portal-usb --no-portal-clipboard --no-portal-wallpaper
-        --whitelist= --read-only= --env= --setenv= --allow-syscall= --talk= --memory= --tasks= --cpu= --gtk-portal= --name= --app-id= --loader="
+        --whitelist= --read-only= --env= --setenv= --allow-syscall= --talk= --system-talk= --memory= --tasks= --cpu= --gtk-portal= --name= --app-id= --loader="
     # the first word that isn't an option is the command or the program
     for ((i = 1; i < COMP_CWORD; i++)); do
         word=${COMP_WORDS[i]}

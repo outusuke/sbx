@@ -12,7 +12,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          **{"--" + k.replace("_", "-"): (k, True) for k in (*PORTAL_EXTRA, *PORTAL_DEFAULT_ON, "portal_file_transfer")},
          **{"--no-" + k.replace("_", "-"): (k, False) for k in (*PORTAL_TOGGLES, *PORTAL_DEFAULT_ON, "portal_file_transfer")}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
-               "--allow-syscall": "allow_syscall", "--talk": "talk", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
+               "--allow-syscall": "allow_syscall", "--talk": "talk", "--system-talk": "system_talk", "--memory": "memory", "--tasks": "tasks", "--cpu": "cpu", "--gtk-portal": "gtk_portal", "--name": "name",
                "--loader": "loader", "--app-id": "app_id"}
 APP_ID = r"[A-Za-z0-9._+-]{1,255}"       # what a desktop file name (without .desktop) may hold; a window id for the compositor
 COMMANDS = ("preview", "show", "doctor", "clean", "reset", "link", "desktop", "open", "schema", "list", "stop", "rebind", "export", "import", "install", "uninstall")
@@ -65,6 +65,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --env=NAME             pass a variable through     --setenv=NAME=VALUE   set a variable\n"
          "  --allow-syscall=NAME   turn a blocked system call back on (io_uring, userfaultfd, kcmp, ...)\n"
          "  --talk=NAME            let the program call this session-bus name, e.g. org.freedesktop.FileManager1 (xdg-dbus-proxy)\n"
+         "  --system-talk=NAME     the same on the system bus, e.g. org.bluez (Bluetooth), org.freedesktop.UPower (battery), org.freedesktop.Avahi\n"
          "  --memory=2G --tasks=512 --cpu=200%   limits (systemd-run --user)\n"
          "  --gtk-portal=auto|1|0  tell GTK programs to use the file chooser portal (with --portals): auto does, except where the host's cursor size is 0\n"
          "  --name=NAME            use another private home and settings name than the program's\n"
@@ -107,7 +108,7 @@ def parse_options(a):
                 if key == "env" and not env_name_ok(v): die(f"{k}: '{v}' is not a variable name")
                 if key == "setenv" and ("=" not in v or not env_name_ok(v.partition("=")[0])): die(f"{k}: use NAME=VALUE")
                 if key == "allow_syscall" and not syscall_ok(v): die(f"{k}: '{v}' can't be allowed; choose from {', '.join(sorted(EXTRA_SYSCALLS))}, io_uring")
-                if key == "talk" and not talk_ok(v): die(f"{k}: '{v}' is not a usable D-Bus name (a wildcard needs three parts first, like org.example.App.*)")
+                if key in ("talk", "system_talk") and not talk_ok(v): die(f"{k}: '{v}' is not a usable D-Bus name (a wildcard needs three parts first, like org.example.App.*)")
                 o.setdefault(key, []).append(v)
         elif k in VALUE_FLAGS: die(f"{k} needs a value: {k}=...")
         elif eq and k in FLAGS: die(f"{k} doesn't take a value")

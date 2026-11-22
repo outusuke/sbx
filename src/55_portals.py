@@ -96,8 +96,8 @@ def talk_ok(n):
     return bool(TALK_RE.fullmatch(n)) and (not n.endswith(".*") or n.count(".") >= 3)
 
 
-def talk_rules(cfg):
-    return [f"--talk={n}" for n in cfg["talk"] if talk_ok(n)]
+def talk_rules(cfg, key="talk"):
+    return [f"--talk={n}" for n in cfg[key] if talk_ok(n)]
 
 
 # Every switch that opens the session-bus proxy, with the function that gives its rules. A new integration is one line here: bus_rules() and the
@@ -157,6 +157,28 @@ def a11y_bus_address():
     return f"unix:path={socks[0]}" if socks else None
 
 
+def start_filter_proxy(px, addr, sock, rules, what, where):
+    """Run xdg-dbus-proxy PX on the bus at ADDR with RULES, listening on SOCK. Returns (process, pipe) or None (a warning says why)."""
+    os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
+    r, w = os.pipe()
+    try:
+        proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + rules, pass_fds=[w],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        os.close(r); os.close(w)
+        stop_proxy(None, sock)
+        warn(f"could not start xdg-dbus-proxy ({e}); running without {what}")
+        return None
+    os.close(w)
+    ok = False
+    try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
+    except OSError: pass
+    if ok: return proc, r
+    stop_proxy((proc, r), sock)
+    warn(f"could not start xdg-dbus-proxy on {where}; running without {what}")
+    return None
+
+
 def start_a11y_proxy(sock):
     """Start xdg-dbus-proxy on your accessibility bus with the a11y rules, listening on SOCK. Returns (process, pipe) or None (a warning says why)."""
     px = shutil.which("xdg-dbus-proxy")
@@ -167,24 +189,32 @@ def start_a11y_proxy(sock):
     if not addr:
         warn("a11y=1, but your accessibility bus was not found (is at-spi2-core installed and a desktop session running?); running without it")
         return None
-    os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
-    r, w = os.pipe()
-    try:
-        proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + a11y_rules(), pass_fds=[w],
-                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except OSError as e:
-        os.close(r); os.close(w)
-        stop_proxy(None, sock)
-        warn(f"could not start xdg-dbus-proxy ({e}); running without a11y")
+    return start_filter_proxy(px, addr, sock, a11y_rules(), "a11y", "the accessibility bus")
+
+
+# ---------------------------------------------------------------- system bus (system_talk=)
+# Names here are root services (Bluetooth, power, network discovery), so nothing is open unless listed.
+SYSTEM_BUS_SOCKET = "/run/dbus/system_bus_socket"
+
+
+def system_bus_address():
+    """$DBUS_SYSTEM_BUS_ADDRESS if it is a unix address, else the standard socket if it exists, else None."""
+    addr = os.environ.get("DBUS_SYSTEM_BUS_ADDRESS", "")
+    if addr.startswith("unix:"): return addr
+    return f"unix:path={SYSTEM_BUS_SOCKET}" if os.path.exists(SYSTEM_BUS_SOCKET) else None
+
+
+def start_system_proxy(sock, cfg):
+    """Start xdg-dbus-proxy on the system bus with one --talk for each system_talk name, listening on SOCK. Returns (process, pipe) or None."""
+    px = shutil.which("xdg-dbus-proxy")
+    if not px:
+        warn(f"xdg-dbus-proxy missing, so system_talk is off: {install_hint('xdg-dbus-proxy')}")
         return None
-    os.close(w)
-    ok = False
-    try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
-    except OSError: pass
-    if ok: return proc, r
-    stop_proxy((proc, r), sock)
-    warn("could not start xdg-dbus-proxy on the accessibility bus; running without a11y")
-    return None
+    addr = system_bus_address()
+    if not addr:
+        warn("system_talk is set, but the system bus was not found; running without it")
+        return None
+    return start_filter_proxy(px, addr, sock, talk_rules(cfg, "system_talk"), "system_talk", "the system bus")
 
 
 PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")

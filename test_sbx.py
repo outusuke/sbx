@@ -425,6 +425,56 @@ class Units(unittest.TestCase):
         _, a, st = live({"a11y": True})
         self.assertIsNone(st["a11y"]); self.assertNotIn(f"{rt}/at-spi/bus", a); self.assertNotIn("AT_SPI_BUS_ADDRESS", env_of(a))
 
+    def test_the_system_proxy_filters_the_system_bus_to_the_listed_names(self):
+        S = self.S; sock = f"{self.tmp}/run/sbx/1.system"; seen = []
+        S["shutil"] = types.SimpleNamespace(which=lambda n: f"/fake/{n}")
+        class Proc:
+            def terminate(self): seen.append("terminated")
+            def wait(self, t=None): return 0
+        def popen(cmd, **k):
+            seen.append(cmd); os.write(int(cmd[1].split("=")[1]), b"x"); return Proc()
+        S["subprocess"] = types.SimpleNamespace(Popen=popen, DEVNULL=-3, TimeoutExpired=subprocess.TimeoutExpired, SubprocessError=subprocess.SubprocessError)
+        cfg = {"system_talk": ["org.bluez", "org.*", "org.freedesktop.UPower"]}
+        with mock.patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/x/system_bus_socket"}):
+            px = S["start_system_proxy"](sock, cfg)
+        self.assertEqual(seen[0][2:5], ["unix:path=/x/system_bus_socket", sock, "--filter"])
+        self.assertEqual(seen[0][5:], ["--talk=org.bluez", "--talk=org.freedesktop.UPower"])               # nothing but the valid names
+        S["stop_proxy"](px, sock)
+        seen.clear(); self.warned.clear()
+        with mock.patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": ""}), mock.patch.object(os.path, "exists", lambda p: False):
+            self.assertIsNone(S["start_system_proxy"](sock, cfg))
+        self.assertEqual(seen, []); self.assertTrue(any("system bus was not found" in w for w in self.warned), self.warned)
+        S["shutil"] = types.SimpleNamespace(which=lambda n: None); self.warned.clear()
+        self.assertIsNone(S["start_system_proxy"](sock, cfg)); self.assertTrue(any("xdg-dbus-proxy missing" in w for w in self.warned), self.warned)
+
+    def test_system_bus_address_comes_from_the_environment_then_the_standard_socket(self):
+        S = self.S
+        with mock.patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/mine"}): self.assertEqual(S["system_bus_address"](), "unix:path=/mine")
+        with mock.patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": ""}):
+            with mock.patch.object(os.path, "exists", lambda p: p == "/run/dbus/system_bus_socket"):
+                self.assertEqual(S["system_bus_address"](), "unix:path=/run/dbus/system_bus_socket")
+            with mock.patch.object(os.path, "exists", lambda p: False): self.assertIsNone(S["system_bus_address"]())
+
+    def test_system_talk_binds_the_filtered_system_bus_and_leaves_the_session_bus_closed(self):
+        S = self.S; rt = f"{self.tmp}/run"; S["runtime_dir"] = lambda: rt
+        def env_of(a): return {a[j + 1]: a[j + 2] for j, x in enumerate(a) if x == "--setenv"}
+        a = S["build"]("/bin/true", [], False, {"system_talk": ["org.bluez"], "name": "tool", "ignore_config": True})[1]
+        i = a.index("/run/dbus/system_bus_socket")
+        self.assertEqual(a[i - 2], "--ro-bind"); self.assertTrue(a[i - 1].endswith(".system"), a[i - 1])
+        self.assertEqual(env_of(a)["DBUS_SYSTEM_BUS_ADDRESS"], "unix:path=/run/dbus/system_bus_socket")
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", env_of(a)); self.assertNotIn(f"{rt}/bus", a)
+        a = S["build"]("/bin/true", [], False, {"name": "tool", "ignore_config": True})[1]
+        self.assertNotIn("DBUS_SYSTEM_BUS_ADDRESS", env_of(a)); self.assertNotIn("/run/dbus/system_bus_socket", a)
+        def live(extra):
+            with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}), mock.patch.object(shutil, "which", lambda x: f"/usr/bin/{x}"):
+                return S["build"]("/bin/true", [], True, {"name": "tool", "ignore_config": True, **extra})
+        S["start_system_proxy"] = lambda sock, cfg: ("proxy", -1)
+        _, a, st = live({"system_talk": ["org.bluez"]})
+        self.assertEqual(st["system"], ("proxy", -1)); self.assertTrue(st["system_bus"].endswith(f"{os.getpid()}.system")); self.assertIn("/run/dbus/system_bus_socket", a)
+        S["start_system_proxy"] = lambda sock, cfg: None                                                  # the proxy did not start: the program gets no system bus
+        _, a, st = live({"system_talk": ["org.bluez"]})
+        self.assertIsNone(st["system"]); self.assertNotIn("/run/dbus/system_bus_socket", a); self.assertNotIn("DBUS_SYSTEM_BUS_ADDRESS", env_of(a))
+
     def test_teardown_stops_the_a11y_proxy_and_removes_its_socket(self):
         S = self.S; sock = f"{self.tmp}/run/1.a11y"; seen = []
         os.makedirs(os.path.dirname(sock)); open(sock, "w").close()
@@ -607,6 +657,16 @@ class Units(unittest.TestCase):
             with self.assertRaises(SystemExit, msg=n), contextlib.redirect_stderr(io.StringIO()): S["parse_options"]([f"--talk={n}"])
         cfg, src = S["effective"]("app", {"ignore_config": True, "talk": ["org.x.Y"]})
         self.assertEqual((cfg["talk"], src[("talk", "org.x.Y")]), (["org.x.Y"], "flag"))
+
+    def test_system_talk_takes_the_same_names_from_the_file_and_the_flag_and_stays_apart_from_talk(self):
+        S = self.S
+        sc, ls, _ = S["parse_conf"](self.write("s.conf", "system_talk=org.bluez\nsystem_talk=org.*\ntalk=org.example.App\n"))
+        self.assertEqual((ls["system_talk"], ls["talk"]), (["org.bluez"], ["org.example.App"]))
+        self.assertEqual(len([w for w in self.warned if "D-Bus name" in w]), 1)
+        self.assertEqual(S["parse_options"](["--system-talk=org.bluez", "prog"])[0], {"system_talk": ["org.bluez"]})
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()): S["parse_options"](["--system-talk=org.freedesktop.*"])
+        cfg, src = S["effective"]("app", {"ignore_config": True, "system_talk": ["org.bluez"]})
+        self.assertEqual((cfg["system_talk"], cfg["talk"], src[("system_talk", "org.bluez")]), (["org.bluez"], [], "flag"))
 
     # -- paths
     def test_program_share(self):
@@ -1981,7 +2041,7 @@ class Units(unittest.TestCase):
             try: os.kill(dead, 0); dead += 1
             except ProcessLookupError: break
             except PermissionError: dead += 1
-        names = {f"{dead}.bus": False, f"{dead}.a11y": False, f"{dead}.xauth": False, f"{dead}.wl": False, f"{dead}.boot_id": False, f"{dead}.hostname": False, f"{dead}.hosts": False, f"{dead}.resolv.conf": False, f"{dead}.seccomp": False, f"{os.getpid()}.wl": True, "notes.txt": True, f"{dead}.other": True}
+        names = {f"{dead}.bus": False, f"{dead}.a11y": False, f"{dead}.system": False, f"{dead}.xauth": False, f"{dead}.wl": False, f"{dead}.boot_id": False, f"{dead}.hostname": False, f"{dead}.hosts": False, f"{dead}.resolv.conf": False, f"{dead}.seccomp": False, f"{os.getpid()}.wl": True, "notes.txt": True, f"{dead}.other": True}
         for n in names: open(f"{d}/{n}", "w").close()
         self.S["sweep_stale"]()
         for n, kept in names.items(): self.assertEqual(os.path.exists(f"{d}/{n}"), kept, n)
@@ -2358,7 +2418,7 @@ class Units(unittest.TestCase):
     def test_schema_lists_every_setting(self):
         sch = self.S["schema"]()
         self.assertEqual(sch["switches"], self.S["SCALARS"])
-        self.assertEqual(set(sch["lists"]), {"whitelist", "read_only", "env", "setenv", "allow_syscall", "talk"})
+        self.assertEqual(set(sch["lists"]), {"whitelist", "read_only", "env", "setenv", "allow_syscall", "talk", "system_talk"})
         self.assertIn(".ssh", sch["sensitive"])
 
 
@@ -4194,6 +4254,8 @@ class Gui(unittest.TestCase):
         self.assertTrue(G["add_item"]("app", "talk", "org.freedesktop.FileManager1"))
         self.assertEqual(G["raw_list"]("app", "talk"), ["org.freedesktop.FileManager1"])
         G["remove_item"]("app", "talk", "org.freedesktop.FileManager1")
+        self.assertEqual(G["raw_list"]("app", "talk"), [])
+        self.assertTrue(G["add_item"]("app", "system_talk", "org.bluez")); self.assertEqual(G["raw_list"]("app", "system_talk"), ["org.bluez"])
         self.assertEqual(G["raw_list"]("app", "talk"), [])
 
     def test_environment_variables_can_be_added_replaced_and_removed_from_the_window(self):

@@ -55,7 +55,7 @@ def build(prog, args, live=False, o=None):
     rt = runtime_dir()
     tag = f"{rt}/sbx/{os.getpid() if live else 'PID'}"
     inst = f"{rt}/.flatpak/{os.getpid() if live else 'PID'}"      # the portal looks the program up here, by the pid in bwrapinfo.json (as it does for a flatpak)
-    state = {"proxy": None, "bus": tag + ".bus", "a11y": None, "a11y_bus": tag + ".a11y", "files": [], "fds": [], "keep": [], "wl": None, "cleanup": [], "prefix": [], "wrap": []}
+    state = {"proxy": None, "bus": tag + ".bus", "a11y": None, "a11y_bus": tag + ".a11y", "system": None, "system_bus": tag + ".system", "files": [], "fds": [], "keep": [], "wl": None, "cleanup": [], "prefix": [], "wrap": []}
     wrapfiles = []          # files the shell in front of bwrap opens as descriptors when pasta is used, which closes inherited ones: (descriptor, "<" or ">", path)
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": sandbox_path(), "XDG_RUNTIME_DIR": rt, "SBX_ACTIVE": "1"}
     for k in ENV_KEEP:
@@ -199,6 +199,13 @@ def build(prog, args, live=False, o=None):
         if sock:
             a += ["--ro-bind", sock, f"{rt}/at-spi/bus"]; env["AT_SPI_BUS_ADDRESS"] = f"unix:path={rt}/at-spi/bus"
             env.update(A11Y_ENV)
+    if cfg["system_talk"]:
+        sock = state["system_bus"]
+        if live:
+            state["system"] = start_system_proxy(sock, cfg)
+            if not state["system"]: sock = None
+        if sock:
+            a += ["--ro-bind", sock, SYSTEM_BUS_SOCKET]; env["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={SYSTEM_BUS_SOCKET}"
     if cfg["portals"]:      # the files you pick in a chooser appear here, only this program's own (bind-try: nothing when there is no document portal)
         a += ["--bind-try", f"{runtime_dir()}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
     if live and not cfg["portals"] and any(cfg[k] for k in PORTAL_EXTRA):

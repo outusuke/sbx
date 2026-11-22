@@ -116,6 +116,8 @@ Environment variables: `setenv=NAME=value` sets one for the program, `env=NAME` 
 
 D-Bus names: `talk=org.freedesktop.FileManager1` (or `--talk=NAME`) lets the program call that session-bus name through `xdg-dbus-proxy`. It gives full access to that service, so list only what the program needs. A wildcard needs three parts before the `.*` (`org.example.App.*`). `sbx-gui` has a list for it.
 
+`system_talk=NAME` (or `--system-talk=NAME`) is the same for the system bus, which reaches services that run for the whole computer: `org.bluez` (Bluetooth), `org.freedesktop.UPower` (battery), `org.freedesktop.Avahi` (network discovery, Cast). Off unless listed; the program gets a filtered copy of the bus that lets through only those names.
+
 `sbx show NAME` lists every setting. Flags beat files and can only make things stricter.
 
 Back up or move settings with `sbx export -o FILE` and `sbx import FILE` (`--force` replaces settings that differ); `sbx-gui` has the same buttons.
