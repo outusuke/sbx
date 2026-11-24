@@ -91,12 +91,10 @@ def install_with_popup(args, src):
     me = os.path.realpath(sys.argv[0]) if os.path.isfile(sys.argv[0]) else shutil.which("sbx")
     if not me: notify("sbx not found"); sys.exit(1)
     pr = subprocess.Popen([sys.executable, me, "install", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
-    ns, err, title = shutil.which("notify-send"), [], f"Installing {os.path.basename(src.rstrip('/'))}"
+    err, title = [], f"Installing {os.path.basename(src.rstrip('/'))}"
     for line in pr.stderr:                                                 # the install's progress lines: one notification, updated in place
         err.append(line); sys.stderr.write(line)
-        if ns and not line.startswith("sbx:"):
-            try: subprocess.run([ns, "-a", "sbx", "-i", "system-software-install", "-h", "string:x-canonical-private-synchronous:sbx-install", title, line.strip()[:200]], timeout=5, stdin=subprocess.DEVNULL)
-            except (OSError, subprocess.TimeoutExpired): pass
+        if not line.startswith("sbx:"): send_notification(title, line.strip()[:200], "system-software-install", "sbx-install")
     out = pr.communicate()[0]
     r = subprocess.CompletedProcess(pr.args, pr.wait(), out, "".join(err))
     got = re.search(r"^program is in (\S+)", r.stdout, re.M)

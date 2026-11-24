@@ -655,13 +655,33 @@ def cmd_desktop(a):
 
 
 # ---------------------------------------------------------------- opening downloaded programs
+NOTIFY_IDS = {}
+
+
+def send_notification(title, body, icon, replace=None):
+    """Show a notification. With REPLACE, a later one with the same key takes the place of the earlier one: by id (-r), which
+    GNOME needs, plus the hint other desktops use. A notify-send too old for -p/-r gets the hint only."""
+    ns = shutil.which("notify-send")
+    if not ns: return
+    base = [ns, "-a", "sbx", "-i", icon]
+    try:
+        if replace:
+            hint = ["-h", f"string:x-canonical-private-synchronous:{replace}"]
+            r = subprocess.run([*base, *hint, "-p", *(["-r", str(NOTIFY_IDS[replace])] if replace in NOTIFY_IDS else []), title, body],
+                               capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+            if r.returncode == 0:
+                if r.stdout.strip().isdigit(): NOTIFY_IDS[replace] = int(r.stdout.strip())
+                return
+            subprocess.run([*base, *hint, title, body], timeout=5, stdin=subprocess.DEVNULL)
+        else:
+            subprocess.run([*base, title, body], timeout=5, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired): pass
+
+
 def notify(title, body="", icon="dialog-error", replace=None):
     """A desktop notification (there is no terminal to print to when started from a file manager). Also printed."""
     warn(f"{title}: {body}" if body else title)
-    ns = shutil.which("notify-send")
-    if ns:
-        try: subprocess.run([ns, "-a", "sbx", "-i", icon, *(["-h", f"string:x-canonical-private-synchronous:{replace}"] if replace else []), title, body[:400]], timeout=5, stdin=subprocess.DEVNULL)
-        except (OSError, subprocess.TimeoutExpired): pass
+    send_notification(title, body[:400], icon, replace)
 
 
 def failure_reason(text, rc):

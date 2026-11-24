@@ -3322,6 +3322,34 @@ class Logging(unittest.TestCase):
             err, sent = self.run_32bit(**kw)
             self.assertNotIn(hint, err, label); self.assertTrue(all(not h for _, h in sent), label)
 
+    def test_progress_notifications_replace_each_other_by_id(self):
+        S = self.S
+        S["NOTIFY_IDS"].clear()
+        out = iter(["7\n", "7\n", "8\n"])
+        calls = []
+        def fake(cmd, **kw): calls.append(cmd); return types.SimpleNamespace(returncode=0, stdout=next(out))
+        with mock.patch("shutil.which", return_value="/usr/bin/notify-send"), mock.patch("subprocess.run", side_effect=fake):
+            for body in ("unpacking: 200 files...", "unpacking: 400 files..."): S["send_notification"]("Installing x", body, "i", "k")
+            S["send_notification"]("Installed x", "done", "i", "k")
+        self.assertNotIn("-r", calls[0]); self.assertIn("-p", calls[0])
+        self.assertEqual(calls[1][calls[1].index("-r") + 1], "7"); self.assertEqual(calls[2][calls[2].index("-r") + 1], "7")
+        self.assertTrue(all("string:x-canonical-private-synchronous:k" in c for c in calls))
+        self.assertEqual(S["NOTIFY_IDS"]["k"], 8)
+        S["NOTIFY_IDS"].clear()
+
+    def test_an_old_notify_send_without_replace_id_gets_the_hint_only(self):
+        S = self.S
+        S["NOTIFY_IDS"].clear()
+        calls = []
+        def fake(cmd, **kw): calls.append(cmd); return types.SimpleNamespace(returncode=1 if "-p" in cmd else 0, stdout="")
+        with mock.patch("shutil.which", return_value="/usr/bin/notify-send"), mock.patch("subprocess.run", side_effect=fake):
+            S["send_notification"]("t", "b", "i", "k")
+        self.assertEqual(len(calls), 2); self.assertNotIn("-p", calls[1]); self.assertIn("string:x-canonical-private-synchronous:k", calls[1])
+        self.assertEqual(S["NOTIFY_IDS"], {})
+        with mock.patch("shutil.which", return_value="/usr/bin/notify-send"), mock.patch("subprocess.run") as run:
+            S["send_notification"]("t", "b", "i")
+        self.assertEqual(run.call_args.args[0][-2:], ["t", "b"]); self.assertNotIn("-h", run.call_args.args[0])
+
     def test_failure_notification_without_actions_is_a_plain_popup(self):
         S = self.S
         with mock.patch("shutil.which", return_value=None), mock.patch("subprocess.run") as run:
