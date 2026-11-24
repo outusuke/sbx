@@ -52,7 +52,9 @@ sandbox. The program sees the system read\-only, an empty private home instead o
 .I /tmp
 and
 .IR /run ,
-a cleared environment and a blocklist of system calls. What it may see beyond that is set with options and
+a cleared environment and a blocklist of system calls (and
+.BR socket (2)
+only for Unix, IPv4, IPv6 and netlink sockets). What it may see beyond that is set with options and
 settings files. Options go before the program name.
 .PP
 The program starts in its private home,

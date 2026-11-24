@@ -17,10 +17,14 @@ def seccomp_program(machine, allow=()):
     if machine not in ARCHES: return None
     audit, nrs = ARCHES[machine][0], blocked_numbers(machine, allow)
     deny = 0x00050000 | errno.EPERM
-    n = len(nrs)
-    if n > 250: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
+    n, fam = len(nrs), SOCKET_FAMILIES
+    if n + len(fam) > 245: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
+    b = len(fam) + 3                                            # length of the socket block below
     ins = [(0x20, 0, 0, 4), (0x15, 1, 0, audit), (0x06, 0, 0, deny), (0x20, 0, 0, 0),
-           (0x35, n + 1, 0, 0x40000000)]                       # x32 calls: deny
+           (0x35, n + b + 1, 0, 0x40000000)]                   # x32 calls: deny
+    ins += [(0x15, 0, b - 1, SOCKET_NR[machine]), (0x20, 0, 0, 16)]    # socket(): load the family (low half of arg 0)
+    ins += [(0x15, n + b - 3 - i, 0, f) for i, f in enumerate(fam)]    # listed family: jump to allow
+    ins += [(0x06, 0, 0, deny)]                                # any other family: deny
     ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
     ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)]       # allow, deny
     return b"".join(struct.pack("=HBBI", *i) for i in ins)

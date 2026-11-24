@@ -74,6 +74,13 @@ if col is not None:
         else:
             row(r == -1 and e == errno.EPERM, f"syscall {name} is blocked", "EPERM" if e == errno.EPERM else f"result {r}, errno {e}")
         if r >= 0 and name == "userfaultfd": os.close(r)
+    SOCK = {"x86_64": 41, "aarch64": 198}[platform.machine()]
+    for name, fam, unix in (("AF_ALG", 38, False), ("AF_UNIX", 1, True)):
+        ctypes.set_errno(0)
+        r = libc.syscall(SOCK, fam, 5 if fam == 38 else 1, 0)        # SOCK_SEQPACKET / SOCK_STREAM
+        e = ctypes.get_errno()
+        if r >= 0: os.close(r)
+        row((r >= 0) if unix else (r == -1 and e == errno.EPERM), f"socket {name} {'works' if unix else 'is blocked'}", f"result {r}, errno {e}")
 else:
     rows.append(f"INFO  syscalls: no list for {platform.machine()}")
 

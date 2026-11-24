@@ -1537,12 +1537,12 @@ class Units(unittest.TestCase):
 
     # -- system calls
     @staticmethod
-    def run_bpf(prog, nr, arch):
+    def run_bpf(prog, nr, arch, arg0=0):
         ins = [struct.unpack("=HBBI", prog[i:i + 8]) for i in range(0, len(prog), 8)]
         pc, acc = 0, 0
         while True:
             code, jt, jf, k = ins[pc]
-            if code == 0x20: acc = {0: nr, 4: arch}[k]; pc += 1                       # load nr / arch
+            if code == 0x20: acc = {0: nr, 4: arch, 16: arg0 & 0xFFFFFFFF}[k]; pc += 1   # load nr / arch / first argument
             elif code == 0x15: pc += 1 + (jt if acc == k else jf)                     # jump if equal
             elif code == 0x35: pc += 1 + (jt if acc >= k else jf)                     # jump if greater or equal
             elif code == 0x06: return k                                               # return
@@ -1565,6 +1565,15 @@ class Units(unittest.TestCase):
                 for nr in ok_nrs: self.assertEqual(self.run_bpf(prog, nr, audit), allow, f"{machine} syscall {nr}")
                 self.assertEqual(self.run_bpf(prog, 0, other), deny, f"{machine}: the other architecture (32-bit) is refused")
                 self.assertEqual(self.run_bpf(prog, 0x40000000 | 0, audit), deny, f"{machine}: x32 calls are refused")
+                sock = S["SOCKET_NR"][machine]
+                for fam in (1, 2, 10, 16): self.assertEqual(self.run_bpf(prog, sock, audit, fam), allow, f"{machine} socket family {fam}")
+                for fam in (0, 3, 17, 21, 30, 31, 38, 40, 44, 255):         # AF_PACKET, RDS, TIPC, BLUETOOTH, ALG, VSOCK, XDP...
+                    self.assertEqual(self.run_bpf(prog, sock, audit, fam), deny, f"{machine} socket family {fam}")
+                self.assertEqual(self.run_bpf(prog, sock, audit, (1 << 32) | 38), deny, f"{machine}: only the low half of the argument counts, as in the kernel")
+                self.assertEqual(self.run_bpf(prog, sock, audit, (1 << 32) | 1), allow, machine)
+                self.assertEqual(self.run_bpf(prog, sock, other, 1), deny, f"{machine}: socket on the other ABI")
+                self.assertEqual(self.run_bpf(prog, sock | 0x40000000, audit, 1), deny, f"{machine}: socket as an x32 call")
+                self.assertEqual(self.run_bpf(prog, 0, audit, 38), allow, f"{machine}: other calls ignore the first argument")
         self.assertIsNone(S["seccomp_program"]("riscv64"))
 
     def test_syscall_numbers_match_the_kernel_headers(self):
@@ -1576,6 +1585,8 @@ class Units(unittest.TestCase):
             for table in (self.S["BASE_SYSCALLS"], self.S["EXTRA_SYSCALLS"]):
                 for name, t in table.items():
                     if t[col] is not None and name in nrs: self.assertEqual(t[col], nrs[name], f"{name} (column {col})")
+            machine = {0: "x86_64", 1: "aarch64"}[col]
+            self.assertEqual(self.S["SOCKET_NR"][machine], nrs["socket"], f"socket (column {col})")
 
     # -- Wayland
     def test_wayland_client_against_a_fake_compositor(self):
@@ -4563,7 +4574,7 @@ class Isolation(unittest.TestCase):
         for must in ("~/.ssh is hidden", "~/.config/sbx is hidden", "/etc/shadow is empty or unreadable", "/root is empty",
                      "/var/log is empty", "syscall bpf is blocked", "syscall mbind is blocked", "syscall io_uring_setup is blocked",
                      "syscall userfaultfd is blocked", "syscall process_vm_readv is blocked", "syscall kcmp is blocked",
-                     "syscall pidfd_getfd is blocked"):
+                     "syscall pidfd_getfd is blocked", "socket AF_ALG is blocked", "socket AF_UNIX works"):
             self.assertRegex(r.stdout, rf"PASS  {re.escape(must)}")
 
     def test_the_report_shows_what_the_sandbox_hides(self):

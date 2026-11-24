@@ -17,6 +17,9 @@ EXTRA_SYSCALLS = {
     "fspick": (433, 433), "mount_setattr": (442, 442)}
 IO_URING = ("io_uring_setup", "io_uring_enter", "io_uring_register")
 ARCHES = {"x86_64": (0xC000003E, 0), "aarch64": (0xC00000B7, 1)}        # machine: (audit arch, column in the tables above)
+# socket() only for unix, inet, inet6 and netlink; any other family (AF_ALG, AF_VSOCK, AF_PACKET...) gets EPERM.
+SOCKET_NR = {"x86_64": 41, "aarch64": 198}
+SOCKET_FAMILIES = (1, 2, 10, 16)
 
 # Existing system files and folders hidden from the program (a file is replaced by an empty one, a folder by an empty tmpfs).
 SECRETS = ["/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/gshadow-", "/etc/sudoers", "/etc/sudoers.d",

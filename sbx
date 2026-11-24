@@ -29,6 +29,9 @@ EXTRA_SYSCALLS = {
     "fspick": (433, 433), "mount_setattr": (442, 442)}
 IO_URING = ("io_uring_setup", "io_uring_enter", "io_uring_register")
 ARCHES = {"x86_64": (0xC000003E, 0), "aarch64": (0xC00000B7, 1)}        # machine: (audit arch, column in the tables above)
+# socket() only for unix, inet, inet6 and netlink; any other family (AF_ALG, AF_VSOCK, AF_PACKET...) gets EPERM.
+SOCKET_NR = {"x86_64": 41, "aarch64": 198}
+SOCKET_FAMILIES = (1, 2, 10, 16)
 
 # Existing system files and folders hidden from the program (a file is replaced by an empty one, a folder by an empty tmpfs).
 SECRETS = ["/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/gshadow-", "/etc/sudoers", "/etc/sudoers.d",
@@ -632,10 +635,14 @@ def seccomp_program(machine, allow=()):
     if machine not in ARCHES: return None
     audit, nrs = ARCHES[machine][0], blocked_numbers(machine, allow)
     deny = 0x00050000 | errno.EPERM
-    n = len(nrs)
-    if n > 250: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
+    n, fam = len(nrs), SOCKET_FAMILIES
+    if n + len(fam) > 245: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
+    b = len(fam) + 3                                            # length of the socket block below
     ins = [(0x20, 0, 0, 4), (0x15, 1, 0, audit), (0x06, 0, 0, deny), (0x20, 0, 0, 0),
-           (0x35, n + 1, 0, 0x40000000)]                       # x32 calls: deny
+           (0x35, n + b + 1, 0, 0x40000000)]                   # x32 calls: deny
+    ins += [(0x15, 0, b - 1, SOCKET_NR[machine]), (0x20, 0, 0, 16)]    # socket(): load the family (low half of arg 0)
+    ins += [(0x15, n + b - 3 - i, 0, f) for i, f in enumerate(fam)]    # listed family: jump to allow
+    ins += [(0x06, 0, 0, deny)]                                # any other family: deny
     ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
     ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)]       # allow, deny
     return b"".join(struct.pack("=HBBI", *i) for i in ins)
