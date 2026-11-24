@@ -32,6 +32,15 @@ ARCHES = {"x86_64": (0xC000003E, 0), "aarch64": (0xC00000B7, 1)}        # machin
 # socket() only for unix, inet, inet6 and netlink; any other family (AF_ALG, AF_VSOCK, AF_PACKET...) gets EPERM.
 SOCKET_NR = {"x86_64": 41, "aarch64": 198}
 SOCKET_FAMILIES = (1, 2, 10, 16)
+# 32-bit x86 programs on an x86_64 kernel: another number table. socketcall hides the family behind a pointer, so it stays blocked.
+I386_AUDIT, I386_SOCKET_NR, I386_SOCKETCALL_NR = 0x40000003, 359, 102
+I386_SYSCALLS = {
+    "kexec_load": 283, "perf_event_open": 336, "bpf": 357, "syslog": 103, "uselib": 86, "acct": 51, "quotactl": 131,
+    "add_key": 286, "keyctl": 288, "request_key": 287, "move_pages": 317, "mbind": 274, "get_mempolicy": 275,
+    "set_mempolicy": 276, "migrate_pages": 294, "open_by_handle_at": 342, "name_to_handle_at": 341,
+    "userfaultfd": 374, "process_vm_readv": 347, "process_vm_writev": 348, "kcmp": 349, "pidfd_getfd": 438,
+    "io_uring_setup": 425, "io_uring_enter": 426, "io_uring_register": 427, "open_tree": 428, "move_mount": 429,
+    "fsopen": 430, "fsconfig": 431, "fsmount": 432, "fspick": 433, "mount_setattr": 442}
 
 # Existing system files and folders hidden from the program (a file is replaced by an empty one, a folder by an empty tmpfs).
 SECRETS = ["/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/gshadow-", "/etc/sudoers", "/etc/sudoers.d",
@@ -630,21 +639,39 @@ def blocked_numbers(machine, allow=()):
     return nrs
 
 
+def blocked_numbers_i386(allow=()):
+    allowed = set()
+    for n in allow: allowed.update(IO_URING if n == "io_uring" else [n])
+    return [nr for name, nr in I386_SYSCALLS.items() if name not in allowed] + [I386_SOCKETCALL_NR]
+
+
+def arch_block(nrs, sock, x32):
+    """The checks for one ABI. Jumps stay inside the block; the last two instructions are allow and deny."""
+    fam, n = SOCKET_FAMILIES, len(nrs)
+    if n + len(fam) > 240: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
+    b = len(fam) + 3                                            # length of the socket part below
+    ins = [(0x20, 0, 0, 0)]
+    if x32: ins += [(0x35, n + b + 1, 0, 0x40000000)]           # x32 calls: deny
+    ins += [(0x15, 0, b - 1, sock), (0x20, 0, 0, 16)]           # socket(): load the family (low half of arg 0)
+    ins += [(0x15, n + b - 3 - i, 0, f) for i, f in enumerate(fam)]    # listed family: jump to allow
+    ins += [(0x06, 0, 0, 0x00050000 | errno.EPERM)]             # any other family: deny
+    ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
+    ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, 0x00050000 | errno.EPERM)]
+    return ins
+
+
 def seccomp_program(machine, allow=()):
     """The blocklist as a raw BPF program (bytes), or None on an architecture without a list."""
     if machine not in ARCHES: return None
-    audit, nrs = ARCHES[machine][0], blocked_numbers(machine, allow)
+    blocks = [(ARCHES[machine][0], arch_block(blocked_numbers(machine, allow), SOCKET_NR[machine], True))]
+    if machine == "x86_64": blocks.append((I386_AUDIT, arch_block(blocked_numbers_i386(allow), I386_SOCKET_NR, False)))
     deny = 0x00050000 | errno.EPERM
-    n, fam = len(nrs), SOCKET_FAMILIES
-    if n + len(fam) > 245: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
-    b = len(fam) + 3                                            # length of the socket block below
-    ins = [(0x20, 0, 0, 4), (0x15, 1, 0, audit), (0x06, 0, 0, deny), (0x20, 0, 0, 0),
-           (0x35, n + b + 1, 0, 0x40000000)]                   # x32 calls: deny
-    ins += [(0x15, 0, b - 1, SOCKET_NR[machine]), (0x20, 0, 0, 16)]    # socket(): load the family (low half of arg 0)
-    ins += [(0x15, n + b - 3 - i, 0, f) for i, f in enumerate(fam)]    # listed family: jump to allow
-    ins += [(0x06, 0, 0, deny)]                                # any other family: deny
-    ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
-    ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)]       # allow, deny
+    ins, start = [(0x20, 0, 0, 4)], len(blocks) + 2             # the blocks begin after the arch checks and the deny
+    for i, (audit, blk) in enumerate(blocks):
+        ins += [(0x15, start - len(ins) - 1, 0, audit)]
+        start += len(blk)
+    ins += [(0x06, 0, 0, deny)]                                 # any other ABI: deny
+    for _, blk in blocks: ins += blk
     return b"".join(struct.pack("=HBBI", *i) for i in ins)
 
 
@@ -2197,7 +2224,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "notes: the program starts in its private home, so use full paths or --here for files.\n"
          "  Flags only turn things off (or on, for the extras); settings files set the rest.\n"
          "  net=1 also shares abstract Unix sockets (some X servers); only net=0 or --net-private closes that.\n"
-         "  32-bit programs are blocked by the syscall filter. Terminal programs lose /dev/tty (--new-session).\n"
+         "  32-bit x86 programs run, but without socketcall (no network if they use it); other 32-bit ABIs are blocked. Terminal programs lose /dev/tty (--new-session).\n"
          "  A program named like a command (clean, show...): sbx -- clean\n"
          "  A name belongs to the file that first used it. The same file moved or copied is recognised by its content; a different file\n"
          "  under that name is held for your decision (sbx rebind NAME, or sbx-gui) or refused (--name=OTHER). When a move is accepted, what the\n"

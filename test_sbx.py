@@ -1576,6 +1576,33 @@ class Units(unittest.TestCase):
                 self.assertEqual(self.run_bpf(prog, 0, audit, 38), allow, f"{machine}: other calls ignore the first argument")
         self.assertIsNone(S["seccomp_program"]("riscv64"))
 
+    def test_the_syscall_filter_on_i386(self):
+        S = self.S
+        allow, deny, audit = 0x7FFF0000, 0x00050001, S["I386_AUDIT"]
+        sock, call = S["I386_SOCKET_NR"], S["I386_SOCKETCALL_NR"]
+        for allowing in ((), ("io_uring",), ("kcmp", "userfaultfd")):
+            prog = S["seccomp_program"]("x86_64", allowing)
+            allowed = set(S["IO_URING"]) if "io_uring" in allowing else set(allowing)
+            for name, nr in S["I386_SYSCALLS"].items():
+                self.assertEqual(self.run_bpf(prog, nr, audit), allow if name in allowed else deny, f"i386 {name} allowing {allowing}")
+            for nr in (0, 1, 3, 4, 5, 192, 435): self.assertEqual(self.run_bpf(prog, nr, audit), allow, f"i386 syscall {nr}")
+            self.assertEqual(self.run_bpf(prog, call, audit, 1), deny, "i386: socketcall is blocked")
+            self.assertEqual(self.run_bpf(prog, 0x40000000 | 0, audit), allow, "i386: bit 30 is no x32 flag here")
+            for fam in (1, 2, 10, 16): self.assertEqual(self.run_bpf(prog, sock, audit, fam), allow, f"i386 socket family {fam}")
+            for fam in (0, 3, 17, 38, 40, 255): self.assertEqual(self.run_bpf(prog, sock, audit, fam), deny, f"i386 socket family {fam}")
+            self.assertEqual(self.run_bpf(prog, sock, audit, (1 << 32) | 38), deny, "i386: only the low half of the argument counts")
+            self.assertEqual(self.run_bpf(prog, 0, 0x40000001, 0), deny, "x86_64: an unknown ABI is refused")
+        self.assertEqual(self.run_bpf(S["seccomp_program"]("aarch64"), 0, audit), deny, "aarch64 does not accept i386")
+        self.assertIn(call, S["blocked_numbers_i386"](("socketcall",)))
+
+    def test_i386_syscall_numbers_match_the_kernel_headers(self):
+        path = "/usr/include/x86_64-linux-gnu/asm/unistd_32.h"
+        if not os.path.exists(path): self.skipTest("no i386 kernel header (linux-libc-dev)")
+        with open(path) as f: nrs = {m[1]: int(m[2]) for m in re.finditer(r"#define __NR_(\w+)\s+(\d+)\s*$", f.read(), re.M)}
+        for name, nr in self.S["I386_SYSCALLS"].items(): self.assertEqual(nr, nrs[name], name)
+        self.assertEqual(self.S["I386_SOCKET_NR"], nrs["socket"])
+        self.assertEqual(self.S["I386_SOCKETCALL_NR"], nrs["socketcall"])
+
     def test_syscall_numbers_match_the_kernel_headers(self):
         tables = {0: "/usr/include/x86_64-linux-gnu/asm/unistd_64.h", 1: "/usr/include/asm-generic/unistd.h"}
         tables = {c: p for c, p in tables.items() if os.path.exists(p)}      # the x86_64 header only exists on x86_64 (an arm runner has just the generic one)

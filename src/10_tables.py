@@ -20,6 +20,15 @@ ARCHES = {"x86_64": (0xC000003E, 0), "aarch64": (0xC00000B7, 1)}        # machin
 # socket() only for unix, inet, inet6 and netlink; any other family (AF_ALG, AF_VSOCK, AF_PACKET...) gets EPERM.
 SOCKET_NR = {"x86_64": 41, "aarch64": 198}
 SOCKET_FAMILIES = (1, 2, 10, 16)
+# 32-bit x86 programs on an x86_64 kernel: another number table. socketcall hides the family behind a pointer, so it stays blocked.
+I386_AUDIT, I386_SOCKET_NR, I386_SOCKETCALL_NR = 0x40000003, 359, 102
+I386_SYSCALLS = {
+    "kexec_load": 283, "perf_event_open": 336, "bpf": 357, "syslog": 103, "uselib": 86, "acct": 51, "quotactl": 131,
+    "add_key": 286, "keyctl": 288, "request_key": 287, "move_pages": 317, "mbind": 274, "get_mempolicy": 275,
+    "set_mempolicy": 276, "migrate_pages": 294, "open_by_handle_at": 342, "name_to_handle_at": 341,
+    "userfaultfd": 374, "process_vm_readv": 347, "process_vm_writev": 348, "kcmp": 349, "pidfd_getfd": 438,
+    "io_uring_setup": 425, "io_uring_enter": 426, "io_uring_register": 427, "open_tree": 428, "move_mount": 429,
+    "fsopen": 430, "fsconfig": 431, "fsmount": 432, "fspick": 433, "mount_setattr": 442}
 
 # Existing system files and folders hidden from the program (a file is replaced by an empty one, a folder by an empty tmpfs).
 SECRETS = ["/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/gshadow-", "/etc/sudoers", "/etc/sudoers.d",
