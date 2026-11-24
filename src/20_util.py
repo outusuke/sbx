@@ -49,6 +49,14 @@ def exit_code(rc):
     return 128 - rc if rc < 0 else rc
 
 
+def is_i386_elf(path):
+    try:
+        with open(path, "rb") as f: h = f.read(20)
+    except OSError:
+        return False
+    return len(h) == 20 and h[:6] == b"\x7fELF\x01\x01" and h[18:20] == b"\x03\x00"
+
+
 def elf_interpreter(path):
     """The dynamic loader an ELF program asks for (PT_INTERP), or None. Lets a file without the execute bit be run."""
     try:

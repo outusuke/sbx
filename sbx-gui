@@ -147,6 +147,9 @@ LOG_HINTS = [
     (r"panicked at [^\n]*\n[^\n]*kind: NotFound|no such file or directory",
      "folder", True, "Start it in the program's own folder (a guess)",
      "The program looked for a file and it was not there. A program starts in its private home, so files next to it are missed. This starts it in the folder its file sits in, which only works from a folder of its own (a subfolder): your home, Downloads and hidden folders are never shared. In a terminal, sbx --here ./NAME starts it in the folder you are in.", {}),
+    (r"32-bit program and 'allow 32-bit programs' is off",
+     "allow_32bit", True, "Allow 32-bit programs",
+     "The program is 32-bit, which is blocked while this is off. Turning it on weakens the network-socket filter for 32-bit programs, so use it only for this program.", {}),
     # A silent crash (segfault, abort, trap) while user namespaces are off: Chrome, Chromium and Electron die like this when they
     # cannot make their own sandbox, often with only a core dump and no message. Shown only while "userns" is off.
     (r"\] EXIT code=(13[2-6]|139|159)\b",

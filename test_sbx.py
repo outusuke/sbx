@@ -2101,6 +2101,16 @@ class Units(unittest.TestCase):
             self.assertIsNone(S["elf_interpreter"](p), label)
         self.assertIsNone(S["elf_interpreter"](f"{self.tmp}/missing"))
 
+    def test_is_i386_elf(self):
+        S = self.S
+        hdr = lambda cls, data, machine: b"\x7fELF" + bytes([cls, data, 1]) + b"\0" * 9 + struct.pack("<HH", 2, machine) + b"\0" * 32
+        for label, data, want in (("i386", hdr(1, 1, 3), True), ("x86_64", hdr(2, 1, 62), False), ("arm", hdr(1, 1, 40), False),
+                                  ("big-endian", hdr(1, 2, 3), False), ("script", b"#!/bin/sh\n" + b"\0" * 20, False), ("short", hdr(1, 1, 3)[:19], False)):
+            p = f"{self.tmp}/{label}"
+            with open(p, "wb") as f: f.write(data)
+            self.assertIs(S["is_i386_elf"](p), want, label)
+        self.assertFalse(S["is_i386_elf"](f"{self.tmp}/missing"))
+
     def test_opener_folder_rules(self):
         S, h = self.S, self.home
         self.write(".config/user-dirs.dirs", 'XDG_DOWNLOAD_DIR="$HOME/Transferências"\nXDG_DESKTOP_DIR="$HOME/Área de Trabalho"\n# x\n')
@@ -3265,6 +3275,53 @@ class Logging(unittest.TestCase):
         self.assertIn("critical", crash); self.assertTrue(any("chrome crashed (segmentation fault, SIGSEGV)" in x for x in crash))
         self.assertIn("normal", ended); self.assertTrue(any("chrome stopped with an error (exit code 1)" in x for x in ended))
 
+    def test_a_hint_rides_on_the_notification(self):
+        S = self.S
+        for call in (lambda: S["notify_crash"]("wine", "SIGSEGV", "H"), lambda: S["notify_ended"]("wine", 1, "H"), lambda: S["notify_failure"]("wine", "H")):
+            with mock.patch("shutil.which", side_effect=lambda x: "/usr/bin/notify-send" if x == "notify-send" else None), \
+                 mock.patch("subprocess.run", return_value=types.SimpleNamespace(stdout="no actions")) as run:
+                call()
+            self.assertTrue(any(" H " in x for x in run.call_args_list[-1].args[0]))
+        self.assertIn("Allow 32-bit programs", S["HINT_32BIT"])
+
+    def run_32bit(self, rc, allow=False, machine="x86_64", header=None):
+        """What run() tells about a program that ended with RC: (stderr, notifications sent)."""
+        S, sent = self.S, []
+        prog = f"{self.tmp}/prog"
+        with open(prog, "wb") as f: f.write(header or b"\x7fELF\x01\x01\x01" + b"\0" * 9 + b"\x02\0\x03\0" + b"\0" * 32)
+        os.chmod(prog, 0o755)
+        child = types.SimpleNamespace(stderr=types.SimpleNamespace(fileno=lambda: 0), wait=lambda: rc, terminate=lambda: None, kill=lambda: None)
+        S["subprocess"] = types.SimpleNamespace(Popen=lambda *a, **k: child, PIPE=-1)
+        S["platform"] = types.SimpleNamespace(machine=lambda: machine)
+        S["build"] = lambda prog, args, live, opts: ("app", [prog], {"prefix": [], "wrap": [], "fds": []})
+        S["effective"] = lambda name, o: ({**S["SCALARS"], "allow_32bit": allow}, {})
+        for fn in ("teardown", "mark_running", "unmark_running", "sweep_stale", "tee_stderr"): S[fn] = lambda *a, **k: None
+        S["shutil"] = types.SimpleNamespace(which=lambda x: f"/usr/bin/{x}")
+        S["notify_crash"] = lambda name, sig, hint="": sent.append(("crash", hint))
+        S["notify_failure"] = lambda name, reason="": sent.append(("failure", reason))
+        S["notify_ended"] = lambda name, code, hint="": sent.append(("ended", hint))
+        err = io.StringIO()
+        env = {k: v for k, v in os.environ.items() if k not in ("SBX_ACTIVE", "SBX_NO_POPUP")}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(os, "geteuid", return_value=1000), \
+             contextlib.redirect_stderr(err), self.assertRaises(SystemExit): S["run"](prog, [], {})
+        return err.getvalue(), sent
+
+    def test_a_32bit_program_that_fails_with_the_toggle_off_gets_a_hint(self):
+        hint = self.S["HINT_32BIT"]
+        err, sent = self.run_32bit(139)
+        self.assertIn(hint, err); self.assertEqual(sent, [("crash", hint)])
+        with open(self.S["LOG"]) as f: self.assertIn(f"WARNING {hint}", f.read())
+        err, sent = self.run_32bit(1)
+        self.assertIn(hint, err); self.assertEqual(sent, [("failure", hint)])
+
+    def test_no_32bit_hint_when_it_does_not_apply(self):
+        hint = self.S["HINT_32BIT"]
+        for label, kw in (("exit 0", {"rc": 0}), ("toggle on", {"rc": 139, "allow": True}), ("aarch64", {"rc": 139, "machine": "aarch64"}),
+                          ("64-bit program", {"rc": 139, "header": b"\x7fELF\x02\x01\x01" + b"\0" * 9 + b"\x02\0\x3e\0" + b"\0" * 32}),
+                          ("not an ELF file", {"rc": 1, "header": b"#!/bin/sh\n" + b"\0" * 40})):
+            err, sent = self.run_32bit(**kw)
+            self.assertNotIn(hint, err, label); self.assertTrue(all(not h for _, h in sent), label)
+
     def test_failure_notification_without_actions_is_a_plain_popup(self):
         S = self.S
         with mock.patch("shutil.which", return_value=None), mock.patch("subprocess.run") as run:
@@ -4267,6 +4324,12 @@ class Gui(unittest.TestCase):
         self.assertEqual(G["log_hints"](self.run_log("thread 'main' panicked at x.rs:1:1:", "index out of bounds", code=101), {}, {}), [])
         both = G["log_hints"](self.run_log(*self.NOTFOUND, *self.WGPU, code=101), {}, {})                # both can show, each once
         self.assertEqual(sorted(str(k) for k, *_ in both), ["folder", "setenv", "setenv"])
+
+    def test_the_32bit_warning_from_sbx_suggests_the_toggle(self):
+        lines = self.run_log("WARNING " + self.S["HINT_32BIT"], code=139)
+        self.assertEqual(self.hint_keys(lines, allow_32bit=False, userns=True), [("allow_32bit", True)])
+        self.assertEqual(self.hint_keys(lines, allow_32bit=True, userns=True), [])
+        self.assertIn("weakens", [h for h in self.G["LOG_HINTS"] if h[1] == "allow_32bit"][0][4])
 
     def test_every_hint_names_a_real_switch(self):
         G = self.G

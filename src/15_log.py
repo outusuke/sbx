@@ -118,6 +118,7 @@ def notify_click(plain, clicked, label, gui_args, urgency="critical"):
 # Signals that mean the program itself crashed (nobody stopped it), and how a notification says it.
 CRASH_SIGNALS = {"SIGSEGV": "segmentation fault", "SIGABRT": "aborted", "SIGBUS": "bus error", "SIGILL": "illegal instruction",
                  "SIGFPE": "arithmetic error", "SIGTRAP": "trap", "SIGSYS": "bad system call"}
+HINT_32BIT = "It is a 32-bit program and 'Allow 32-bit programs' is off. You can turn it on in sbx-gui or with --allow-32bit, but that weakens the network-socket filter for 32-bit programs."
 STOP_CODES = (129, 130, 143)    # shell exit codes of SIGHUP, SIGINT, SIGTERM: someone stopped it, nothing went wrong
 
 
@@ -130,18 +131,20 @@ def crash_signal(rc):
     return name if name in CRASH_SIGNALS else None
 
 
-def notify_crash(name, sig):
+def notify_crash(name, sig, hint=""):
     """A critical notification that the program crashed (killed by SIG), however long it had been running. Where
     notify-send can do actions, clicking it opens sbx-gui on this program's log."""
     what = f"crashed ({CRASH_SIGNALS[sig]}, {sig})"
-    notify_click(f"{name} {what}. See the log in sbx-gui.", f"{name} {what}. Click to open the log.", "Open log", ["--log", name])
+    why = f" {hint}" if hint else ""
+    notify_click(f"{name} {what}.{why} See the log in sbx-gui.", f"{name} {what}.{why} Click to open the log.", "Open log", ["--log", name])
 
 
-def notify_ended(name, code):
+def notify_ended(name, code, hint=""):
     """A normal-urgency notification that a program started without a terminal (app menu, file manager) ended with an
     error after running for a while. Where it can, clicking it opens the log."""
     what = f"stopped with an error (exit code {code})"
-    notify_click(f"{name} {what}. See the log in sbx-gui.", f"{name} {what}. Click to open the log.", "Open log", ["--log", name], "normal")
+    why = f" {hint}" if hint else ""
+    notify_click(f"{name} {what}.{why} See the log in sbx-gui.", f"{name} {what}.{why} Click to open the log.", "Open log", ["--log", name], "normal")
 
 
 def notify_failure(name, reason=""):
