@@ -2582,13 +2582,13 @@ class Install(unittest.TestCase):
             with mock.patch("builtins.input", return_value="y") as q: self.assertTrue(ask("anki", "/h/Apps/anki"))
             self.assertIn("anki is already installed in", q.call_args[0][0]); self.assertIn("Replace it?", q.call_args[0][0])
             with mock.patch("builtins.input", return_value=""): self.assertFalse(ask("anki", "/h/Apps/anki"))
-        seen = []; S["ask_without_terminal"] = lambda q, t, ok: seen.append((q, ok)) or True     
+        seen = []; S["ask_without_terminal"] = lambda q, t, ok: seen.append((q, ok)) or True
         with mock.patch.object(sys.stdin, "isatty", return_value=False, create=True): self.assertTrue(ask("anki", "/h/Apps/anki"))
         self.assertEqual(len(seen), 1); self.assertIn("Replace it?", seen[0][0])
 
     def test_installing_over_an_install_when_nothing_can_ask_or_with_yes_keeps_the_refusal(self):
         h = self.home; tar = self.installed_anki()
-        self.S["ask_to_replace"] = lambda n, d: None                                                
+        self.S["ask_to_replace"] = lambda n, d: None
         code, _, err = self.call("cmd_install", tar); self.assertEqual(code, 1); self.assertIn("already exists", err)
         self.S["ask_to_replace"] = lambda *a: self.fail("--yes must not ask")
         code, _, err = self.call("cmd_install", tar, "--yes"); self.assertEqual(code, 1); self.assertIn("already exists", err)
@@ -2608,7 +2608,7 @@ class Install(unittest.TestCase):
         code, _, err = self.call("cmd_install", tar); self.assertEqual(code, 1); self.assertIn("points outside", err)
         self.assertTrue(os.path.isfile(f"{h}/Apps/anki/marker")); self.assertTrue(os.path.isfile(f"{h}/.config/sbx/installed/anki"))
         self.assertTrue(os.path.isfile(f"{h}/.local/share/applications/anki.desktop"))
-        with open(f"{self.dl}/junk.tar", "w") as f: f.write("not an archive")                        
+        with open(f"{self.dl}/junk.tar", "w") as f: f.write("not an archive")
         code, _, err = self.call("cmd_install", f"{self.dl}/junk.tar", "anki"); self.assertEqual(code, 1)
         self.assertTrue(os.path.isfile(f"{h}/Apps/anki/marker"))
 
