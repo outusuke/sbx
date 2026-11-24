@@ -186,6 +186,19 @@ def ask_to_replace(name, dest):
     return ask_without_terminal(q, f"Update {name}?", "Update")
 
 
+def archive_stamp(src):
+    """size:mtime of an archive, the way ajail stamps an AppImage; None for a folder."""
+    if not os.path.isfile(src): return None
+    st = os.stat(src); return f"{st.st_size}:{st.st_mtime_ns}"
+
+
+def installed_stamp(name):
+    try:
+        with open(f"{INSTALLED}/{name}") as f: return (f.read().splitlines() + ["", ""])[1] or None
+    except OSError:
+        return None
+
+
 def is_our_install(name, src, dest, link, want_link):
     made, menu = installed_launcher(name), f"{user_launchers()}/{name}.desktop"
     base = os.path.realpath(dest)
@@ -226,6 +239,8 @@ def cmd_install(a):
     if os.path.basename(me) != "sbx": die("can't tell where sbx is installed; start this command by the name sbx")
     replace = False
     if not yes and is_our_install(name, src, dest, link, want_link):    # --yes or no way to ask: falls through to the refusal
+        if archive_stamp(src) and archive_stamp(src) == installed_stamp(name):
+            print(f"{name} is already installed in {tilde(dest)}"); return
         if running(name): die(f"{name} is running. Stop it first: sbx stop {name}")
         got = ask_to_replace(name, dest)
         if got is False: die("nothing installed", 0)
@@ -274,7 +289,8 @@ def cmd_install(a):
         else:
             warn(f"{rel} keeps its execute bit: sbx can only start a program without it if it is a dynamically linked ELF file")
         os.makedirs(INSTALLED, exist_ok=True)
-        with open(f"{INSTALLED}/{name}", "w") as f: f.write(main + "\n")
+        stamp = archive_stamp(src)
+        with open(f"{INSTALLED}/{name}", "w") as f: f.write(main + "\n" + (stamp + "\n" if stamp else ""))
         if fix == "fresh" or not os.path.exists(conf):
             os.makedirs(os.path.dirname(conf), exist_ok=True)
             with open(conf, "w") as f: f.write(f"read_only={tilde(dest)}\n")

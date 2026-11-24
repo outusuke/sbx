@@ -2519,7 +2519,7 @@ class Install(unittest.TestCase):
         app = f"{h}/Apps/anki"
         self.assertEqual(os.stat(f"{app}/anki").st_mode & 0o111, 0, "the launcher loses its execute bit")
         self.assertNotEqual(os.stat(f"{app}/lib/helper").st_mode & 0o100, 0, "the program's own helpers keep theirs")
-        with open(f"{h}/.config/sbx/installed/anki") as f: self.assertEqual(f.read(), f"{app}/anki\n")
+        with open(f"{h}/.config/sbx/installed/anki") as f: self.assertEqual(f.readline(), f"{app}/anki\n")
         with open(f"{h}/.config/sbx/apps/anki.conf") as f: self.assertEqual(f.read(), "read_only=~/Apps/anki\n")
         with open(f"{h}/.local/share/applications/anki.desktop") as f: d = f.read()
         self.assertIn("X-Sbx-Sandboxed=true", d); self.assertIn(f"Exec={self.inst}/sbx --name=anki {app}/anki %U", d)
@@ -2543,7 +2543,17 @@ class Install(unittest.TestCase):
     def installed_anki(self):
         folder, tar = self.program(); self.assertIsNone(self.call("cmd_install", tar)[0])
         with open(f"{self.home}/Apps/anki/marker", "w") as f: f.write("old\n")
+        os.utime(tar, ns=(1, 1))
         return tar
+
+    def test_installing_the_same_archive_again_does_nothing(self):
+        h = self.home; _, tar = self.program(); self.assertIsNone(self.call("cmd_install", tar)[0])
+        with open(f"{h}/Apps/anki/marker", "w") as f: f.write("old\n")
+        self.S["ask_to_replace"] = lambda *a: self.fail("same archive: nothing to ask")
+        code, out, err = self.call("cmd_install", tar); self.assertIsNone(code, err); self.assertIn("already installed", out)
+        self.assertTrue(os.path.isfile(f"{h}/Apps/anki/marker"))
+        os.utime(tar, ns=(1, 1)); asked = []; self.S["ask_to_replace"] = lambda n, d: asked.append(n) or False
+        self.call("cmd_install", tar); self.assertEqual(asked, ["anki"])
 
     def test_installing_over_our_own_install_asks_and_replaces_it(self):
         h, S = self.home, self.S; tar = self.installed_anki(); asked = []
@@ -2853,7 +2863,7 @@ class Install(unittest.TestCase):
         with mock.patch.object(S["subprocess"], "Popen", child): self.assertEqual(run(tar), 0, sent)
         self.assertEqual(len(sent), 1); self.assertEqual(sent[0][0], "Installed anki"); self.assertEqual(sent[0][2], "dialog-information")
         self.assertTrue(os.path.isfile(f"{h}/Apps/anki/anki"))
-        with mock.patch.object(S["subprocess"], "Popen", child): self.assertEqual(run(tar), 1)                # again: refused, and it says why
+        with mock.patch.object(S["subprocess"], "Popen", child): self.assertEqual(run(tar, "--yes"), 1)                # again: refused, and it says why
         self.assertEqual(sent[0][0], "Can't install anki-26.9.4-linux-x86_64.tar"); self.assertIn("already exists", sent[0][1]); self.assertEqual(sent[0][2], "dialog-error")
 
     def test_install_and_uninstall_are_documented_and_refuse_a_sandbox_and_bad_names(self):
