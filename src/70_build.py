@@ -77,13 +77,16 @@ def build(prog, args, live=False, o=None):
         state["files"].append(src)
 
     machine = platform.machine()
+    c32 = bool(cfg["allow_32bit"]) and machine in COMPAT32
+    if cfg["allow_32bit"] and live:
+        warn("allow_32bit=1: 32-bit programs may run. socketcall() hides its arguments from the filter, so for them the socket() family check does not apply (AF_ALG, AF_PACKET, AF_VSOCK...)" if c32 else f"allow_32bit=1 has no effect on {machine}")
     if machine in ARCHES and priv:              # inside pasta: bwrap reads the filter from descriptor 9, which a shell opens from this file
-        put(f"{tag}.seccomp", seccomp_program(machine, allow))
+        put(f"{tag}.seccomp", seccomp_program(machine, allow, c32))
         a += ["--seccomp", str(SEC_FD)]
         wrapfiles.append((SEC_FD, "<", f"{tag}.seccomp"))
     elif machine in ARCHES:
         if live:
-            sec = seccomp_file(allow)
+            sec = seccomp_file(allow, c32)
             os.set_inheritable(sec.fileno(), True)
             state["keep"].append(sec); state["fds"].append(sec.fileno())
             a += ["--seccomp", str(sec.fileno())]

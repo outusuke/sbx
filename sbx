@@ -13,34 +13,27 @@ CONF  = f"{HOME}/.config/sbx"
 HOMES = f"{HOME}/.sbx-homes"
 
 
-# Blocked system calls, as name: (x86_64 number, aarch64 number). The first group is the original list (same as ajail).
+# Blocked system calls, as name: (x86_64 number, aarch64 number, i386 number). The first group is the original list (same as ajail).
 # The second group is kernel attack surface that desktop programs rarely need; allow_syscall=NAME turns one back on
 # (io_uring stands for the three io_uring_* calls).
 BASE_SYSCALLS = {
-    "kexec_load": (246, 104), "kexec_file_load": (320, 294), "perf_event_open": (298, 241), "bpf": (321, 280),
-    "syslog": (103, 116), "uselib": (134, None), "acct": (163, 89), "quotactl": (179, 60), "add_key": (248, 217),
-    "keyctl": (250, 219), "request_key": (249, 218), "move_pages": (279, 239), "mbind": (237, 235),
-    "get_mempolicy": (239, 236), "set_mempolicy": (238, 237), "migrate_pages": (256, 238),
-    "open_by_handle_at": (304, 265), "name_to_handle_at": (303, 264)}
+    "kexec_load": (246, 104, 283), "kexec_file_load": (320, 294, None), "perf_event_open": (298, 241, 336), "bpf": (321, 280, 357),
+    "syslog": (103, 116, 103), "uselib": (134, None, 86), "acct": (163, 89, 51), "quotactl": (179, 60, 131), "add_key": (248, 217, 286),
+    "keyctl": (250, 219, 288), "request_key": (249, 218, 287), "move_pages": (279, 239, 317), "mbind": (237, 235, 274),
+    "get_mempolicy": (239, 236, 275), "set_mempolicy": (238, 237, 276), "migrate_pages": (256, 238, 294),
+    "open_by_handle_at": (304, 265, 342), "name_to_handle_at": (303, 264, 341)}
 EXTRA_SYSCALLS = {
-    "userfaultfd": (323, 282), "process_vm_readv": (310, 270), "process_vm_writev": (311, 271), "kcmp": (312, 272),
-    "pidfd_getfd": (438, 438), "io_uring_setup": (425, 425), "io_uring_enter": (426, 426), "io_uring_register": (427, 427),
-    "open_tree": (428, 428), "move_mount": (429, 429), "fsopen": (430, 430), "fsconfig": (431, 431), "fsmount": (432, 432),
-    "fspick": (433, 433), "mount_setattr": (442, 442)}
+    "userfaultfd": (323, 282, 374), "process_vm_readv": (310, 270, 347), "process_vm_writev": (311, 271, 348), "kcmp": (312, 272, 349),
+    "pidfd_getfd": (438, 438, 438), "io_uring_setup": (425, 425, 425), "io_uring_enter": (426, 426, 426), "io_uring_register": (427, 427, 427),
+    "open_tree": (428, 428, 428), "move_mount": (429, 429, 429), "fsopen": (430, 430, 430), "fsconfig": (431, 431, 431), "fsmount": (432, 432, 432),
+    "fspick": (433, 433, 433), "mount_setattr": (442, 442, 442)}
 IO_URING = ("io_uring_setup", "io_uring_enter", "io_uring_register")
 ARCHES = {"x86_64": (0xC000003E, 0), "aarch64": (0xC00000B7, 1)}        # machine: (audit arch, column in the tables above)
 # socket() only for unix, inet, inet6 and netlink; any other family (AF_ALG, AF_VSOCK, AF_PACKET...) gets EPERM.
 SOCKET_NR = {"x86_64": 41, "aarch64": 198}
+# i386 on x86_64: (audit arch, column, socket nr, socketcall nr). socketcall() args sit in memory, so the filter can't check them.
+COMPAT32 = {"x86_64": (0x40000003, 2, 359, 102)}
 SOCKET_FAMILIES = (1, 2, 10, 16)
-# 32-bit x86 programs on an x86_64 kernel: another number table. socketcall hides the family behind a pointer, so it stays blocked.
-I386_AUDIT, I386_SOCKET_NR, I386_SOCKETCALL_NR = 0x40000003, 359, 102
-I386_SYSCALLS = {
-    "kexec_load": 283, "perf_event_open": 336, "bpf": 357, "syslog": 103, "uselib": 86, "acct": 51, "quotactl": 131,
-    "add_key": 286, "keyctl": 288, "request_key": 287, "move_pages": 317, "mbind": 274, "get_mempolicy": 275,
-    "set_mempolicy": 276, "migrate_pages": 294, "open_by_handle_at": 342, "name_to_handle_at": 341,
-    "userfaultfd": 374, "process_vm_readv": 347, "process_vm_writev": 348, "kcmp": 349, "pidfd_getfd": 438,
-    "io_uring_setup": 425, "io_uring_enter": 426, "io_uring_register": 427, "open_tree": 428, "move_mount": 429,
-    "fsopen": 430, "fsconfig": 431, "fsmount": 432, "fspick": 433, "mount_setattr": 442}
 
 # Existing system files and folders hidden from the program (a file is replaced by an empty one, a folder by an empty tmpfs).
 SECRETS = ["/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/gshadow-", "/etc/sudoers", "/etc/sudoers.d",
@@ -78,7 +71,7 @@ TRAY_IDS = range(1, 4)
 A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 # Settings (key=value files) and their defaults. Lists: LISTS. Text values: LIMITS (a pattern each value must match).
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
-           "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": False, "theme": True, "camera": False,
+           "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": False, "allow_32bit": False, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
            "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, "bluetooth": False, "battery": False, "avahi": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall", "talk")
@@ -629,9 +622,9 @@ def gsettings_keyfile(dst, live):
 
 
 # ---------------------------------------------------------------- system-call filter
-def blocked_numbers(machine, allow=()):
-    """The numbers of the blocked system calls on this architecture."""
-    col = ARCHES[machine][1]
+def blocked_numbers(machine, allow=(), col=None):
+    """The numbers of the blocked system calls on this architecture (col picks another table column)."""
+    if col is None: col = ARCHES[machine][1]
     allowed = set()
     for n in allow: allowed.update(IO_URING if n == "io_uring" else [n])
     nrs = [t[col] for t in BASE_SYSCALLS.values() if t[col] is not None]
@@ -639,44 +632,42 @@ def blocked_numbers(machine, allow=()):
     return nrs
 
 
-def blocked_numbers_i386(allow=()):
-    allowed = set()
-    for n in allow: allowed.update(IO_URING if n == "io_uring" else [n])
-    return [nr for name, nr in I386_SYSCALLS.items() if name not in allowed] + [I386_SOCKETCALL_NR]
-
-
-def arch_block(nrs, sock, x32):
-    """The checks for one ABI. Jumps stay inside the block; the last two instructions are allow and deny."""
-    fam, n = SOCKET_FAMILIES, len(nrs)
-    if n + len(fam) > 240: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
-    b = len(fam) + 3                                            # length of the socket part below
+def _abi_block(nrs, sock_nr, x32):
+    """One ABI's filter as BPF tuples: blocklist plus socket() family check. Jumps stay inside the block."""
+    deny = 0x00050000 | errno.EPERM
+    n, fam = len(nrs), SOCKET_FAMILIES
+    if n + len(fam) > 245: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
+    b = len(fam) + 3                                            # length of the socket block below
     ins = [(0x20, 0, 0, 0)]
-    if x32: ins += [(0x35, n + b + 1, 0, 0x40000000)]           # x32 calls: deny
-    ins += [(0x15, 0, b - 1, sock), (0x20, 0, 0, 16)]           # socket(): load the family (low half of arg 0)
+    if x32: ins += [(0x35, n + b + 1, 0, 0x40000000)]           # x32 calls: deny (not needed for i386)
+    ins += [(0x15, 0, b - 1, sock_nr), (0x20, 0, 0, 16)]       # socket(): load the family (low half of arg 0)
     ins += [(0x15, n + b - 3 - i, 0, f) for i, f in enumerate(fam)]    # listed family: jump to allow
-    ins += [(0x06, 0, 0, 0x00050000 | errno.EPERM)]             # any other family: deny
+    ins += [(0x06, 0, 0, deny)]                                # any other family: deny
     ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
-    ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, 0x00050000 | errno.EPERM)]
+    ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)]       # allow, deny
     return ins
 
 
-def seccomp_program(machine, allow=()):
-    """The blocklist as a raw BPF program (bytes), or None on an architecture without a list."""
+def seccomp_program(machine, allow=(), compat32=False):
+    """The blocklist as a raw BPF program (bytes), or None on an architecture without a list. compat32 adds i386 on x86_64."""
     if machine not in ARCHES: return None
-    blocks = [(ARCHES[machine][0], arch_block(blocked_numbers(machine, allow), SOCKET_NR[machine], True))]
-    if machine == "x86_64": blocks.append((I386_AUDIT, arch_block(blocked_numbers_i386(allow), I386_SOCKET_NR, False)))
+    audit = ARCHES[machine][0]
     deny = 0x00050000 | errno.EPERM
-    ins, start = [(0x20, 0, 0, 4)], len(blocks) + 2             # the blocks begin after the arch checks and the deny
-    for i, (audit, blk) in enumerate(blocks):
-        ins += [(0x15, start - len(ins) - 1, 0, audit)]
-        start += len(blk)
-    ins += [(0x06, 0, 0, deny)]                                 # any other ABI: deny
+    blocks = [(audit, _abi_block(blocked_numbers(machine, allow), SOCKET_NR[machine], True))]
+    if compat32 and machine in COMPAT32:
+        a32, col32, sock32, _socketcall = COMPAT32[machine]
+        blocks.append((a32, _abi_block(blocked_numbers(machine, allow, col32), sock32, False)))
+    ins = [(0x20, 0, 0, 4)]
+    sizes = [len(blk) for _, blk in blocks]
+    for i, (arch, _) in enumerate(blocks):
+        ins.append((0x15, sum(sizes[:i]) + (len(blocks) - 1 - i) + 1, 0, arch))    # skip the later dispatch jumps, the deny and the earlier blocks
+    ins.append((0x06, 0, 0, deny))                             # unknown architecture
     for _, blk in blocks: ins += blk
     return b"".join(struct.pack("=HBBI", *i) for i in ins)
 
 
-def seccomp_file(allow=()):
-    prog = seccomp_program(platform.machine(), allow)
+def seccomp_file(allow=(), compat32=False):
+    prog = seccomp_program(platform.machine(), allow, compat32)
     if prog is None: return None
     tf = tempfile.TemporaryFile()
     tf.write(prog); tf.flush(); tf.seek(0)
@@ -1755,13 +1746,16 @@ def build(prog, args, live=False, o=None):
         state["files"].append(src)
 
     machine = platform.machine()
+    c32 = bool(cfg["allow_32bit"]) and machine in COMPAT32
+    if cfg["allow_32bit"] and live:
+        warn("allow_32bit=1: 32-bit programs may run. socketcall() hides its arguments from the filter, so for them the socket() family check does not apply (AF_ALG, AF_PACKET, AF_VSOCK...)" if c32 else f"allow_32bit=1 has no effect on {machine}")
     if machine in ARCHES and priv:              # inside pasta: bwrap reads the filter from descriptor 9, which a shell opens from this file
-        put(f"{tag}.seccomp", seccomp_program(machine, allow))
+        put(f"{tag}.seccomp", seccomp_program(machine, allow, c32))
         a += ["--seccomp", str(SEC_FD)]
         wrapfiles.append((SEC_FD, "<", f"{tag}.seccomp"))
     elif machine in ARCHES:
         if live:
-            sec = seccomp_file(allow)
+            sec = seccomp_file(allow, c32)
             os.set_inheritable(sec.fileno(), True)
             state["keep"].append(sec); state["fds"].append(sec.fileno())
             a += ["--seccomp", str(sec.fileno())]
@@ -2156,7 +2150,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--bluetooth": ("bluetooth", True), "--battery": ("battery", True), "--avahi": ("avahi", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
-         "--compat": ("compat", True), "--userns": ("userns", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
+         "--compat": ("compat", True), "--userns": ("userns", True), "--allow-32bit": ("allow_32bit", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
          **{"--" + k.replace("_", "-"): (k, True) for k in (*PORTAL_EXTRA, *PORTAL_DEFAULT_ON, "portal_file_transfer")},
          **{"--no-" + k.replace("_", "-"): (k, False) for k in (*PORTAL_TOGGLES, *PORTAL_DEFAULT_ON, "portal_file_transfer")}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
@@ -2192,6 +2186,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --gpu-render-only      of /dev/dri share only the render nodes (renderD*), not the display card nodes\n"
          "  --no-sound    hide PipeWire/PulseAudio     --portals      notifications and basic portals (xdg-dbus-proxy)\n"
          "  --hostname    hostname 'sbx' inside        --userns       the program can create user namespaces\n"
+         "  --allow-32bit 32-bit programs may run (weakens the socket filter)\n"
          "  --privacy     /etc/passwd without your real name or the other accounts; the Account portal is blocked too\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
          "  --a11y        screen reader and other assistive tools can see the program (filtered accessibility bus, xdg-dbus-proxy)\n"
@@ -2224,7 +2219,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "notes: the program starts in its private home, so use full paths or --here for files.\n"
          "  Flags only turn things off (or on, for the extras); settings files set the rest.\n"
          "  net=1 also shares abstract Unix sockets (some X servers); only net=0 or --net-private closes that.\n"
-         "  32-bit x86 programs run, but without socketcall (no network if they use it); other 32-bit ABIs are blocked. Terminal programs lose /dev/tty (--new-session).\n"
+         "  32-bit programs are blocked unless --allow-32bit. Terminal programs lose /dev/tty (--new-session).\n"
          "  A program named like a command (clean, show...): sbx -- clean\n"
          "  A name belongs to the file that first used it. The same file moved or copied is recognised by its content; a different file\n"
          "  under that name is held for your decision (sbx rebind NAME, or sbx-gui) or refused (--name=OTHER). When a move is accepted, what the\n"

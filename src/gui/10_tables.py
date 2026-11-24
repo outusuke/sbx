@@ -57,6 +57,7 @@ GROUPS = [
         ("private", "Temporary home", "Everything the program saves in its private home is erased when it closes. Shared folders are not affected.", False),
         ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),
         ("privacy", "Hide your real name", "The program sees a minimal /etc/passwd: your username, root and nobody", False),
+        ("allow_32bit", "Allow 32-bit programs", "Wine and Steam need this. Weakens the network-socket filter for them, so leave it off unless a program needs it.", False),
         ("userns", "Allow the program's own sandbox", "Chromium, Electron and Flatpak programs need this. Off by default for stricter isolation.", False),
         ("folder", "Start in the program's own folder", "For programs that read or create files in the folder they start in. The folder the program file sits in is shared read-write and the program starts there. Put the program in a folder of its own, or a subfolder: your home, Downloads, Desktop, Documents and hidden folders are never shared. On by itself when the folder is named after the program; switch it off here", False),
         ("single_instance", "Open files in the running copy", "A second launch of the program (for example a browser opened by double-clicking a file) finds the first one through a private temp folder shared by this program's sandboxes only. /tmp stays private.", False),
@@ -67,7 +68,7 @@ GROUP_INFO = {"What can this program use?": "Changes apply the next time the pro
 ADVANCED = ("portal_file_transfer", "portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network", "portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret", "portal_background", "portal_usb", "portal_clipboard")      # shown in one collapsed row, "More desktop services"
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
-         "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces",
+         "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces", "allow_32bit": "32-bit programs",
          "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm", "bluetooth": "Bluetooth", "battery": "battery state", "avahi": "network discovery",
          "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
          "portal_notification": "notifications", "portal_openuri": "open links", "portal_print": "print dialog", "portal_trash": "trash",

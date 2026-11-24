@@ -8,7 +8,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--bluetooth": ("bluetooth", True), "--battery": ("battery", True), "--avahi": ("avahi", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
-         "--compat": ("compat", True), "--userns": ("userns", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
+         "--compat": ("compat", True), "--userns": ("userns", True), "--allow-32bit": ("allow_32bit", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
          **{"--" + k.replace("_", "-"): (k, True) for k in (*PORTAL_EXTRA, *PORTAL_DEFAULT_ON, "portal_file_transfer")},
          **{"--no-" + k.replace("_", "-"): (k, False) for k in (*PORTAL_TOGGLES, *PORTAL_DEFAULT_ON, "portal_file_transfer")}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
@@ -44,6 +44,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --gpu-render-only      of /dev/dri share only the render nodes (renderD*), not the display card nodes\n"
          "  --no-sound    hide PipeWire/PulseAudio     --portals      notifications and basic portals (xdg-dbus-proxy)\n"
          "  --hostname    hostname 'sbx' inside        --userns       the program can create user namespaces\n"
+         "  --allow-32bit 32-bit programs may run (weakens the socket filter)\n"
          "  --privacy     /etc/passwd without your real name or the other accounts; the Account portal is blocked too\n"
          "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
          "  --a11y        screen reader and other assistive tools can see the program (filtered accessibility bus, xdg-dbus-proxy)\n"
@@ -76,7 +77,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "notes: the program starts in its private home, so use full paths or --here for files.\n"
          "  Flags only turn things off (or on, for the extras); settings files set the rest.\n"
          "  net=1 also shares abstract Unix sockets (some X servers); only net=0 or --net-private closes that.\n"
-         "  32-bit x86 programs run, but without socketcall (no network if they use it); other 32-bit ABIs are blocked. Terminal programs lose /dev/tty (--new-session).\n"
+         "  32-bit programs are blocked unless --allow-32bit. Terminal programs lose /dev/tty (--new-session).\n"
          "  A program named like a command (clean, show...): sbx -- clean\n"
          "  A name belongs to the file that first used it. The same file moved or copied is recognised by its content; a different file\n"
          "  under that name is held for your decision (sbx rebind NAME, or sbx-gui) or refused (--name=OTHER). When a move is accepted, what the\n"

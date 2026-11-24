@@ -369,6 +369,12 @@ accounts on this computer are not in it. The Account portal, which hands out the
 The program can create user namespaces. Programs that build their own sandbox (Chromium, Electron, Flatpak,
 nested bubblewrap) need them. Off by default; needs bubblewrap 0.8+ otherwise.
 .TP
+.B \-\-allow\-32bit
+32-bit programs (Wine, Steam) may run, on x86_64. Off by default. They get the same blocklist, but
+.BR socketcall (2)
+keeps its arguments in memory where the filter cannot read them, so for 32-bit programs the socket() family
+allowlist does not apply. A warning is printed.
+.TP
 .BI \-\-env= NAME
 Pass a variable through.
 .TP
@@ -440,7 +446,7 @@ memory=2G
 .RE
 .PP
 Switches take 0 or 1. Defaults: net=1, net_private=0, wayland=1, wayland_strict=automatic (1 where the compositor supports security contexts, else 0), x11=0, gpu=1, gpu_render_only=0, sound=1, portals=0, private=0,
-hostname=0, privacy=0, userns=0, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
+hostname=0, privacy=0, userns=0, allow_32bit=0, theme=1, camera=0, alsa=0, input=0, kvm=0, rocm=0, printing=0, ssh_agent=0,
 allow_sensitive=0, compat=0, tray=0, a11y=0, gnome_shell=0, gnome_shell_manage=0, kde=0, folder=0, single_instance=0, bluetooth=0, battery=0, avahi=0, and the extra portals portal_launcher, portal_remote_desktop, portal_input_capture
 and portal_background (all 0, and only used when portals=1), and portal_notification, portal_openuri, portal_print, portal_trash, portal_email, portal_inhibit,
 portal_network, portal_file_transfer (drag and drop of files from other programs), portal_screenshot, portal_screencast, portal_location, portal_shortcuts, portal_usb, portal_clipboard, portal_wallpaper and portal_secret (all 1, also only used when portals=1). Anything else, such as net=maybe, is reported with its file

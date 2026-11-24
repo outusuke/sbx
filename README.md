@@ -146,7 +146,7 @@ Failed runs are logged to `~/.local/state/sbx/sbx.log`.
 - Wayland without security-context support gives the program the full socket (a warning is shown). `wayland_strict` is on by default where the compositor supports security contexts, so a failed attempt there gives no Wayland instead of the full socket; where it can't, it is off and sbx-gui greys the switch out. Set it yourself to override.
 - `net_private=1` is not a firewall: your local network stays reachable.
 - Read-write shares (`--here`, `whitelist=`) let the program plant files that later run outside the sandbox. Share only what it needs.
-- 32-bit x86 programs run on x86_64, but `socketcall` is blocked, so those that use it get no network. Other 32-bit ABIs fail. Terminal programs have no `/dev/tty`, so password prompts don't work.
+- 32-bit programs (Wine, Steam) fail by default. `allow_32bit=1` (`--allow-32bit`) lets them run on x86_64 with the same blocklist, with a warning, because `socketcall()` (how 32-bit libcs reach `socket()`, `connect()`, `send()`...) hides its arguments in memory, so a filter can't check them: through it, the `socket()` family allowlist does not apply to 32-bit programs. Terminal programs have no `/dev/tty`, so password prompts don't work.
 - One private home per name: use `--name` for separate ones.
 
 ## License
