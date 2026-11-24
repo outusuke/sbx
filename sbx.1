@@ -370,7 +370,7 @@ The program can create user namespaces. Programs that build their own sandbox (C
 nested bubblewrap) need them. Off by default; needs bubblewrap 0.8+ otherwise.
 .TP
 .B \-\-allow\-32bit
-32-bit programs (Wine, Steam) may run, on x86_64. Off by default. They get the same blocklist, but
+32-bit programs may run, on x86_64. Off by default. They get the same blocklist, but
 .BR socketcall (2)
 keeps its arguments in memory where the filter cannot read them, so for 32-bit programs the socket() family
 allowlist does not apply. A warning is printed.

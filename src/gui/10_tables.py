@@ -57,7 +57,7 @@ GROUPS = [
         ("private", "Temporary home", "Everything the program saves in its private home is erased when it closes. Shared folders are not affected.", False),
         ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),
         ("privacy", "Hide your real name", "The program sees a minimal /etc/passwd: your username, root and nobody", False),
-        ("allow_32bit", "Allow 32-bit programs", "Wine and Steam need this. Weakens the network-socket filter for them, so leave it off unless a program needs it.", False),
+        ("allow_32bit", "Allow 32-bit programs", "Only for programs that are 32-bit. Weakens the network-socket filter for them, so leave it off unless a program needs it.", False),
         ("userns", "Allow the program's own sandbox", "Chromium, Electron and Flatpak programs need this. Off by default for stricter isolation.", False),
         ("folder", "Start in the program's own folder", "For programs that read or create files in the folder they start in. The folder the program file sits in is shared read-write and the program starts there. Put the program in a folder of its own, or a subfolder: your home, Downloads, Desktop, Documents and hidden folders are never shared. On by itself when the folder is named after the program; switch it off here", False),
         ("single_instance", "Open files in the running copy", "A second launch of the program (for example a browser opened by double-clicking a file) finds the first one through a private temp folder shared by this program's sandboxes only. /tmp stays private.", False),
