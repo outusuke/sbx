@@ -3346,6 +3346,22 @@ def ask_to_install(name, src, dest):
     return True if got is None else got
 
 
+def ask_to_replace(name, dest):
+    """Ask whether to replace an sbx install: True, False, or None when nothing can ask."""
+    q = f"{name} is already installed in {tilde(dest)}. Replace it?"
+    if sys.stdin.isatty() and sys.stderr.isatty(): return input(f"{q} [y/N] ").strip().lower() in ("y", "yes")
+    return ask_without_terminal(q, f"Update {name}?", "Update")
+
+
+def is_our_install(name, src, dest, link, want_link):
+    made, menu = installed_launcher(name), f"{user_launchers()}/{name}.desktop"
+    base = os.path.realpath(dest)
+    if not made or not os.path.isdir(dest) or os.path.islink(dest) or not os.path.realpath(made).startswith(base + "/"): return False
+    if (os.path.realpath(src) + "/").startswith(base + "/"): return False
+    if os.path.lexists(menu) and "X-Sbx-Sandboxed=true" not in launcher_text(menu): return False
+    return not (want_link and os.path.lexists(link) and not is_sbx_link(link))
+
+
 def cmd_install(a):
     """sbx install FOLDER|ARCHIVE [NAME] [--launcher PATH] [--link] [--yes]: ~/Apps/NAME holds the program; its launcher loses the execute bit (so running
     it by path outside the sandbox fails, and sbx sets the bit just for its own run); an app-menu entry starts it through sbx. --link also makes
@@ -3375,13 +3391,20 @@ def cmd_install(a):
     dest, link = f"{APPS}/{name}", f"{HOME}/.local/bin/{name}"
     me = shutil.which("sbx") or os.path.realpath(sys.argv[0])
     if os.path.basename(me) != "sbx": die("can't tell where sbx is installed; start this command by the name sbx")
-    for p, what in ((dest, "a program folder"), (link, "a command"), (f"{INSTALLED}/{name}", "an install record"), (f"{user_launchers()}/{name}.desktop", "a menu entry")):
+    replace = False
+    if not yes and is_our_install(name, src, dest, link, want_link):    # --yes or no way to ask: falls through to the refusal
+        if running(name): die(f"{name} is running. Stop it first: sbx stop {name}")
+        got = ask_to_replace(name, dest)
+        if got is False: die("nothing installed", 0)
+        replace = got is True
+        want_link = want_link or (replace and is_sbx_link(link))
+    for p, what in (() if replace else ((dest, "a program folder"), (link, "a command"), (f"{INSTALLED}/{name}", "an install record"), (f"{user_launchers()}/{name}.desktop", "a menu entry"))):
         if p == link and not want_link: continue
         if os.path.lexists(p): die(f"{tilde(p)} already exists ({what}). Pick another NAME, or remove the old one first: sbx uninstall {name}")
     other = None if yes else find_in_path(name)                         # a program of that name that is not this one: they would share a home
     if other:
         if not ask_about_same_name(name, other): die("nothing installed", 0)
-    elif not yes and not (sys.stdin.isatty() and sys.stderr.isatty()):   # from the file manager nobody typed the command: ask once
+    elif not yes and not replace and not (sys.stdin.isatty() and sys.stderr.isatty()):   # from the file manager nobody typed the command: ask once
         if not ask_to_install(name, src, dest): die("nothing installed", 0)
     conf = f"{CONF}/apps/{name}.conf"
     fix = None
@@ -3402,6 +3425,7 @@ def cmd_install(a):
             bad = link_escapes(root)
             if bad: die(f"the archive holds a link that points outside its folder ({os.path.relpath(bad, root)}); not installing it")
         rel = pick_launcher(root, name, launcher)
+        if replace: cmd_uninstall([name, "--yes"] + (["--trash"] if shutil.which("gio") else []))    # after unpacking, so a bad archive keeps the old one
         progress(f"moving it to {tilde(dest)}...", final=not sys.stderr.isatty())
         if os.path.isdir(src): shutil.move(root, dest)
         else: os.rename(root, dest)

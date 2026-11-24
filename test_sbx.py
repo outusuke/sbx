@@ -2532,13 +2532,85 @@ class Install(unittest.TestCase):
         S["run"] = lambda prog, args, opts: started.append((prog, args, opts)) or sys.exit(0)          # typing `anki` runs the file recorded, under its name
         with self.assertRaises(SystemExit): S["run_linked"](f"{h}/.local/bin/anki", ["--x"])
         self.assertEqual(started, [(f"{app}/anki", ["--x"], {"name": "anki"})])
-        code, _, err = self.call("cmd_install", tar)                                                  # the same name again: refused, nothing changed
+        code, _, err = self.call("cmd_install", tar, "--yes")                                         # the same name again with --yes: refused, nothing changed
         self.assertEqual(code, 1); self.assertIn("already exists", err)
         code, out, err = self.call("cmd_uninstall", "--yes", "anki")
         self.assertIsNone(code, err)
         for p in (app, f"{h}/.local/bin/anki", f"{h}/.local/share/applications/anki.desktop", f"{h}/.config/sbx/installed/anki"): self.assertFalse(os.path.lexists(p), p)
         self.assertTrue(os.path.exists(f"{h}/.config/sbx/apps/anki.conf"), "settings stay")
         self.assertEqual(self.call("cmd_uninstall", "--yes", "anki")[0], 1)
+
+    def installed_anki(self):
+        folder, tar = self.program(); self.assertIsNone(self.call("cmd_install", tar)[0])
+        with open(f"{self.home}/Apps/anki/marker", "w") as f: f.write("old\n")
+        return tar
+
+    def test_installing_over_our_own_install_asks_and_replaces_it(self):
+        h, S = self.home, self.S; tar = self.installed_anki(); asked = []
+        os.makedirs(f"{h}/.sbx-homes/anki"); self.assertIsNone(self.call("cmd_link", "anki")[0])
+        S["ask_to_install"] = lambda *a: self.fail("asked twice")
+        S["ask_to_replace"] = lambda n, d: asked.append((n, d)) or True
+        S["shutil"].which, real = (lambda n: None if n == "gio" else real(n)), S["shutil"].which
+        try: code, out, err = self.call("cmd_install", tar)
+        finally: S["shutil"].which = real
+        self.assertIsNone(code, err); self.assertEqual(asked, [("anki", f"{h}/Apps/anki")])
+        self.assertFalse(os.path.exists(f"{h}/Apps/anki/marker")); self.assertTrue(os.path.isfile(f"{h}/Apps/anki/anki"))
+        self.assertTrue(S["is_sbx_link"](f"{h}/.local/bin/anki"))
+        self.assertTrue(os.path.isfile(f"{h}/.config/sbx/installed/anki")); self.assertTrue(os.path.isfile(f"{h}/.local/share/applications/anki.desktop"))
+        self.assertTrue(os.path.isdir(f"{h}/.sbx-homes/anki")); self.assertTrue(os.path.isfile(f"{h}/.config/sbx/apps/anki.conf"))
+        self.assertEqual([n for n in os.listdir(f"{h}/Apps") if n.startswith(".")], [])
+
+    def test_installing_over_our_own_install_trashes_the_old_one_when_gio_exists(self):
+        h, S = self.home, self.S; tar = self.installed_anki(); calls = []
+        S["ask_to_replace"] = lambda n, d: True
+        real_un = S["cmd_uninstall"]; S["cmd_uninstall"] = lambda a: (calls.append(a), real_un(a[:2]))        # no gio here, so the real uninstall deletes
+        S["shutil"].which, real = (lambda n: "/fake/gio" if n == "gio" else real(n)), S["shutil"].which
+        try: self.call("cmd_install", tar)
+        finally: S["shutil"].which = real
+        self.assertEqual(calls, [["anki", "--yes", "--trash"]])
+
+    def test_declining_to_replace_changes_nothing(self):
+        h = self.home; tar = self.installed_anki(); self.S["ask_to_replace"] = lambda n, d: False
+        code, _, err = self.call("cmd_install", tar)
+        self.assertEqual(code, 0); self.assertIn("nothing installed", err)
+        self.assertTrue(os.path.isfile(f"{h}/Apps/anki/marker")); self.assertTrue(os.path.isfile(f"{h}/.config/sbx/installed/anki"))
+
+    def test_the_replace_question_on_a_terminal_is_a_y_n_prompt(self):
+        S = self.S; ask = S["ask_to_replace"]
+        S["ask_without_terminal"] = lambda *a: self.fail("no dialog on a terminal")
+        with mock.patch.object(sys.stdin, "isatty", return_value=True, create=True), mock.patch.object(sys.stderr, "isatty", return_value=True, create=True):
+            with mock.patch("builtins.input", return_value="y") as q: self.assertTrue(ask("anki", "/h/Apps/anki"))
+            self.assertIn("anki is already installed in", q.call_args[0][0]); self.assertIn("Replace it?", q.call_args[0][0])
+            with mock.patch("builtins.input", return_value=""): self.assertFalse(ask("anki", "/h/Apps/anki"))
+        seen = []; S["ask_without_terminal"] = lambda q, t, ok: seen.append((q, ok)) or True     
+        with mock.patch.object(sys.stdin, "isatty", return_value=False, create=True): self.assertTrue(ask("anki", "/h/Apps/anki"))
+        self.assertEqual(len(seen), 1); self.assertIn("Replace it?", seen[0][0])
+
+    def test_installing_over_an_install_when_nothing_can_ask_or_with_yes_keeps_the_refusal(self):
+        h = self.home; tar = self.installed_anki()
+        self.S["ask_to_replace"] = lambda n, d: None                                                
+        code, _, err = self.call("cmd_install", tar); self.assertEqual(code, 1); self.assertIn("already exists", err)
+        self.S["ask_to_replace"] = lambda *a: self.fail("--yes must not ask")
+        code, _, err = self.call("cmd_install", tar, "--yes"); self.assertEqual(code, 1); self.assertIn("already exists", err)
+        self.assertTrue(os.path.isfile(f"{h}/Apps/anki/marker"))
+
+    def test_a_running_program_is_not_replaced(self):
+        h = self.home; tar = self.installed_anki()
+        self.S["ask_to_replace"] = lambda *a: self.fail("asked about a running program")
+        self.S["running"] = lambda name=None: ["123"]
+        code, _, err = self.call("cmd_install", tar); self.assertEqual(code, 1); self.assertIn("Stop it first", err)
+        self.assertTrue(os.path.isfile(f"{h}/Apps/anki/marker"))
+
+    def test_a_bad_archive_keeps_the_old_install(self):
+        h = self.home; self.installed_anki(); self.S["ask_to_replace"] = lambda n, d: True
+        _, tar = self.program(top="anki-27.0")
+        os.symlink("/etc/passwd", f"{self.dl}/anki-27.0/escape"); subprocess.run(["tar", "-cf", tar, "-C", self.dl, "anki-27.0"], check=True)
+        code, _, err = self.call("cmd_install", tar); self.assertEqual(code, 1); self.assertIn("points outside", err)
+        self.assertTrue(os.path.isfile(f"{h}/Apps/anki/marker")); self.assertTrue(os.path.isfile(f"{h}/.config/sbx/installed/anki"))
+        self.assertTrue(os.path.isfile(f"{h}/.local/share/applications/anki.desktop"))
+        with open(f"{self.dl}/junk.tar", "w") as f: f.write("not an archive")                        
+        code, _, err = self.call("cmd_install", f"{self.dl}/junk.tar", "anki"); self.assertEqual(code, 1)
+        self.assertTrue(os.path.isfile(f"{h}/Apps/anki/marker"))
 
     def test_uninstall_trash_moves_the_folder_to_the_trash_and_changes_nothing_when_that_fails(self):
         h, S = self.home, self.S

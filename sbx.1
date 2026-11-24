@@ -165,7 +165,11 @@ is given, which also makes the link
 as
 .B sbx link
 does (add it later with that command). Nothing in the program is run. What the program saves goes to its private home, as for any program. Refuses an archive that holds a link
-pointing outside its folder, and any NAME already in use. Not from inside a sandbox.
+pointing outside its folder, and any NAME already in use, except one made by
+.B sbx install
+earlier: that one is replaced after asking (not with
+.BR \-\-yes ,
+nor while it runs). Not from inside a sandbox.
 .TP
 .B sbx uninstall [\-\-yes] [\-\-trash] NAME
 Remove a program made by
