@@ -5,7 +5,7 @@
 # Extra PATHs are files or folders that must not be visible (test_sbx.py plants canaries and passes them here).
 # --expect=LIST also checks the settings you started sbx with; LIST is comma separated, from:
 #     net0 (--net=none)   gpu0 (--no-gpu)   sound0 (--no-sound)   portals0 (no --portals)
-#     userns0 (--no-userns)   hostname (--hostname)   iouring (--allow-syscall=io_uring)
+#     userns0 (the default)   hostname (--hostname)   iouring (--allow-syscall=io_uring)
 # Exit status 1 if anything is FAIL. Run it without sbx and it should fail, which proves the checks mean something.
 import ctypes, errno, os, platform, socket, sys
 

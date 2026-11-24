@@ -63,7 +63,7 @@ complete -c sbx -n $c -l battery -d "Let the program read battery and power stat
 complete -c sbx -n $c -l avahi -d "Let the program discover network services (system bus)"
 complete -c sbx -n $c -l hostname -d "Hostname 'sbx' inside"
 complete -c sbx -n $c -l privacy -d "Minimal /etc/passwd: no real name, no other accounts"
-complete -c sbx -n $c -l no-userns -d "No nested user namespaces"
+complete -c sbx -n $c -l userns -d "Allow nested user namespaces"
 complete -c sbx -n $c -l no-theme -d "Don't show your fonts, icons and GTK settings"
 for d in camera alsa input kvm rocm printing ssh-agent
     complete -c sbx -n $c -l $d -d "Share that device or socket"

@@ -46,7 +46,7 @@ def build(prog, args, live=False, o=None):
     if live and cfg["hostname"] and not bwrap_has("--hostname"):
         die("hostname=1 needs bubblewrap with --hostname (0.7 or newer), so the computer name can't be hidden here. Update bubblewrap, or turn hostname off.")
     if live and not cfg["userns"] and not bwrap_has("--disable-userns"):
-        die("userns=0 needs bubblewrap 0.8 or newer (--disable-userns). Not starting without it.")
+        die("userns=0 needs bubblewrap 0.8 or newer (--disable-userns). Not starting without it. Update bubblewrap, or turn userns on for this program.")
     priv = private_net(cfg)
     if live and cfg["net_private"] and not cfg["net"]:
         warn("net_private does nothing while net=0: the program has no network at all")

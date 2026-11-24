@@ -49,8 +49,8 @@ FAKE_GLOBS = {"/etc/ssh/ssh_host_*_key": ["/etc/ssh/ssh_host_ed25519_key"], "/de
 NO_SECURITY_CONTEXT = {"wl_supported": lambda p: False}
 SCENARIOS = [                                   # (title, program, flags, overrides of sbx's own functions)
     ("default", "firefox", [], {}),
-    ("locked down", "firefox", ["--net=none", "--private", "--hostname", "--portals", "--no-gpu", "--no-sound", "--no-wayland",
-                                "--no-userns"], {}),
+    ("locked down", "firefox", ["--net=none", "--private", "--hostname", "--portals", "--no-gpu", "--no-sound", "--no-wayland"], {}),
+    ("own sandbox", "firefox", ["--userns"], {}),
     ("x11", "firefox", ["--x11"], {}),
     ("screen reader", "firefox", ["--a11y"], {}),
     ("GNOME Shell integration", "firefox", ["--gnome-shell"], {}),
@@ -135,8 +135,8 @@ class Snapshot(unittest.TestCase):
                 self.assertIn(need, a, f"{title}: {need} missing")
             i = a.index("--ro-bind"); self.assertEqual(a[i:i + 3], ["--ro-bind", "/", "/"], title)
             self.assertEqual(a.count("--share-net"), 0 if "--net=none" in flags else 1, title)
-            self.assertEqual("--disable-userns" in a, "--no-userns" in flags, title)
-            if "--no-userns" in flags: self.assertIn("--unshare-user", a, title)
+            self.assertEqual("--disable-userns" in a, "--userns" not in flags, title)
+            if "--userns" not in flags: self.assertIn("--unshare-user", a, title)
             if "--env=SECRET_TOKEN" not in flags: self.assertNotIn("SECRET_TOKEN", a, f"{title}: the environment leaked")
             # the real home is only ever replaced by the private home, never bound as it is
             binds = [(a[j], a[j + 1]) for j in range(len(a) - 2) if a[j] in ("--bind", "--ro-bind", "--dev-bind")]
@@ -4177,9 +4177,9 @@ class Gui(unittest.TestCase):
         self.assertEqual(self.hint_keys(run("cannot open /dev/video0"), camera=False), [("camera", True)])
         self.assertEqual(self.hint_keys(run("Error: cannot open display: :0")), [("x11", True)])
         crash = run("./setup_linux.sh: line 21:  1116 Aborted                    (core dumped) ./setup_linux 2> /dev/null", code=134)
-        self.assertEqual(self.hint_keys(crash, x11=False), [("x11", True)])                  # no message in the log: a guess
-        self.assertEqual(self.hint_keys(crash, x11=True), [])
-        self.assertEqual(self.hint_keys(run("something", code=134), x11=False), [("x11", True)])
+        self.assertEqual(self.hint_keys(crash, x11=False, userns=True), [("x11", True)])                  # no message in the log: a guess
+        self.assertEqual(self.hint_keys(crash, x11=True, userns=True), [])
+        self.assertEqual(self.hint_keys(run("something", code=134), x11=False, userns=True), [("x11", True)])
         self.assertEqual(self.hint_keys(run("Aborted (core dumped)", code=0), x11=False), [])   # only for a failed run
         self.assertEqual(len(self.G["log_hints"](run("Error: cannot open display: :0", "Aborted (core dumped)", code=134), {"x11": False})), 1)
         self.assertEqual(self.hint_keys(run("Failed to connect to Wayland display"), wayland=False), [("wayland", True), ("x11", True)])
@@ -4584,7 +4584,7 @@ class Isolation(unittest.TestCase):
             self.assertIn(must, r.stdout)
 
     def test_every_flag_does_what_it_says(self):
-        flags = ["--net=none", "--no-gpu", "--no-sound", "--hostname"] + (["--no-userns"] if self.has_disable_userns else [])
+        flags = ["--net=none", "--no-gpu", "--no-sound", "--hostname"]
         expect = "--expect=net0,gpu0,sound0,portals0,hostname" + (",userns0" if self.has_disable_userns else "")
         r = self.sbx_run(*flags, self.script, expect)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -4592,8 +4592,8 @@ class Isolation(unittest.TestCase):
                      "hostname is sbx everywhere"):
             self.assertRegex(r.stdout, rf"PASS  {re.escape(must)}")
         if self.has_disable_userns: self.assertRegex(r.stdout, r"PASS  user namespaces are blocked")
-        r = self.sbx_run(self.script, "--expect=userns0")                       # negative control: without --no-userns they work
-        if self.has_disable_userns and r.returncode == 0: self.fail("user namespaces were blocked without asking")
+        r = self.sbx_run("--userns", self.script, "--expect=userns0")                       # negative control: with --userns they work
+        if self.has_disable_userns and r.returncode == 0: self.fail("user namespaces were blocked despite --userns")
 
     def portals_leave_bwrapinfo(self, name, *flags):
         """Run a program that waits, with a stand-in xdg-dbus-proxy (answers ready, makes the socket file), and check that bwrap
