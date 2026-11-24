@@ -3465,6 +3465,11 @@ class Gui(unittest.TestCase):
         procs = [subprocess.Popen([sys.executable, fake]),                                              # python3 sbx: it is sbx
                  subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "sbx-report"])]   # only mentions sbx
         for p in procs: self.addCleanup(lambda p=p: (p.kill(), p.wait()))
+        for p, word in zip(procs, (fake, "sbx-report")):                                              # right after Popen returns, /proc may still show the old command line
+            for _ in range(500):
+                with open(f"/proc/{p.pid}/cmdline", "rb") as f:
+                    if word.encode() in f.read(): break
+                time.sleep(0.01)
         self.assertTrue(G["live_sbx"](procs[0].pid))
         self.assertFalse(G["live_sbx"](procs[1].pid))
 
