@@ -6,7 +6,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
          "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
          "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--bluetooth": ("bluetooth", True), "--battery": ("battery", True), "--avahi": ("avahi", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-theme": ("theme", False),
-         "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True),
+         "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True), "--ntsync": ("ntsync", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--userns": ("userns", True), "--allow-32bit": ("allow_32bit", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
          **{"--" + k.replace("_", "-"): (k, True) for k in (*PORTAL_EXTRA, *PORTAL_DEFAULT_ON, "portal_file_transfer")},
@@ -51,7 +51,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --gnome-shell         the browser's GNOME Shell connector can list and install extensions (xdg-dbus-proxy); --gnome-shell-manage also enable, disable and uninstall them\n"
          "  --kde         the browser's Plasma integration: downloads as Plasma jobs, KRunner tabs and history, media controls, keep awake while downloading (xdg-dbus-proxy)\n"
          "  --single-instance     a second launch hands its files to the running one (shares a private $TMPDIR per program)\n"
-         "  --camera --alsa --input --kvm --rocm --printing --ssh-agent     share that device or socket\n"
+         "  --camera --alsa --input --kvm --ntsync --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
          "  --portal-remote-desktop --portal-input-capture --portal-launcher --portal-background    one more desktop portal each (off by default; needs --portals)\n"
          "  --no-portal-notification --no-portal-openuri --no-portal-print --no-portal-trash --no-portal-email --no-portal-inhibit --no-portal-network\n"

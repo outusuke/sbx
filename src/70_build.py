@@ -166,6 +166,7 @@ def build(prog, args, live=False, o=None):
     if cfg["input"]: a += ["--dev-bind-try", "/dev/input", "/dev/input", "--ro-bind-try", "/run/udev", "/run/udev"]   # SDL/libinput classify devices from udev's database
     if cfg["alsa"]: a += ["--dev-bind-try", "/dev/snd", "/dev/snd"]
     if cfg["kvm"]: a += ["--dev-bind-try", "/dev/kvm", "/dev/kvm"]
+    if cfg["ntsync"]: a += ["--dev-bind-try", "/dev/ntsync", "/dev/ntsync"]
     if cfg["printing"]: a += ["--ro-bind-try", "/run/cups/cups.sock", "/run/cups/cups.sock"]; env["CUPS_SERVER"] = "/run/cups/cups.sock"
     if cfg["sound"]:
         for x in ("pipewire-0", "pulse/native"): a += ["--ro-bind-try", f"{rt}/{x}", f"{rt}/{x}"]

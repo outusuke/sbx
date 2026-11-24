@@ -751,7 +751,7 @@ bwrap
 --chdir /home/user
 -- /usr/bin/firefox
 
-## devices: sbx --camera --alsa --input --kvm --rocm --printing firefox
+## devices: sbx --camera --alsa --input --kvm --ntsync --rocm --printing firefox
 bwrap
 --unshare-all
 --share-net
@@ -778,6 +778,7 @@ bwrap
 --ro-bind-try /run/udev /run/udev
 --dev-bind-try /dev/snd /dev/snd
 --dev-bind-try /dev/kvm /dev/kvm
+--dev-bind-try /dev/ntsync /dev/ntsync
 --ro-bind-try /run/cups/cups.sock /run/cups/cups.sock
 --ro-bind-try /run/user/1000/pipewire-0 /run/user/1000/pipewire-0
 --ro-bind-try /run/user/1000/pulse/native /run/user/1000/pulse/native

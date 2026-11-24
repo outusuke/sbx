@@ -59,7 +59,7 @@ SCENARIOS = [                                   # (title, program, flags, overri
     ("shared folders, parent read-only", "firefox",
      [f"--whitelist={FIX}/a/b", f"--read-only={FIX}/a", f"--whitelist={FIX}/c", "--here"], {"share_dir": lambda d: f"{FIX}/a/b"}),
     ("render-only graphics", "firefox", ["--gpu-render-only"], {}),
-    ("devices", "firefox", ["--camera", "--alsa", "--input", "--kvm", "--rocm", "--printing"], {}),
+    ("devices", "firefox", ["--camera", "--alsa", "--input", "--kvm", "--ntsync", "--rocm", "--printing"], {}),
     ("environment", "firefox", ["--env=EXTRA_VAR", "--setenv=FOO=bar", "--setenv=HOME=/elsewhere", "--env=SECRET_TOKEN"], {}),
     ("limits", "firefox", ["--memory=2G", "--tasks=512", "--cpu=200%"], {}),
     ("no theme", "firefox", ["--no-theme"], {}),

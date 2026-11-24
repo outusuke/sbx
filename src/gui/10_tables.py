@@ -21,6 +21,7 @@ GROUPS = [
         ("alsa", "ALSA sound devices", "/dev/snd, for programs that don't use PipeWire or PulseAudio", False),
         ("rocm", "AMD compute (ROCm)", "/dev/kfd", False),
         ("kvm", "Virtual machines", "/dev/kvm", False),
+        ("ntsync", "Wine synchronization", "/dev/ntsync, for faster Wine and Proton", False),
         ("bluetooth", "Bluetooth", "Scan for and talk to Bluetooth devices (Web Bluetooth), through the system bus. Reaches nearby devices even without Internet. Needs xdg-dbus-proxy.", False),
         ("battery", "Battery and power state", "Read battery level and power source (the browser's battery API), through the system bus. Needs xdg-dbus-proxy.", False),
         ("avahi", "Network discovery (Avahi)", "Find printers, Cast devices and other services on your local network by name, through the system bus. Needs xdg-dbus-proxy.", False),
@@ -69,7 +70,7 @@ ADVANCED = ("portal_file_transfer", "portal_notification", "portal_openuri", "po
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces", "allow_32bit": "32-bit programs",
-         "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "rocm": "ROCm", "bluetooth": "Bluetooth", "battery": "battery state", "avahi": "network discovery",
+         "theme": "theme", "camera": "camera", "alsa": "ALSA", "input": "input devices", "kvm": "KVM", "ntsync": "NTSYNC", "rocm": "ROCm", "bluetooth": "Bluetooth", "battery": "battery state", "avahi": "network discovery",
          "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
          "portal_notification": "notifications", "portal_openuri": "open links", "portal_print": "print dialog", "portal_trash": "trash",
          "portal_email": "email", "portal_inhibit": "keep awake", "portal_network": "network state", "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",
@@ -90,7 +91,7 @@ ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    
 # The window edits whitelist, read_only, setenv, env and talk; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
-       ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("a11y", "screen reader"), ("gnome_shell", "GNOME Shell extensions"), ("kde", "KDE Plasma integration"), ("kvm", "virtual machines"), ("rocm", "AMD compute"), ("bluetooth", "Bluetooth"), ("battery", "battery state"), ("avahi", "network discovery"), ("ssh_agent", "your SSH agent"))
+       ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("a11y", "screen reader"), ("gnome_shell", "GNOME Shell extensions"), ("kde", "KDE Plasma integration"), ("kvm", "virtual machines"), ("ntsync", "Wine sync"), ("rocm", "AMD compute"), ("bluetooth", "Bluetooth"), ("battery", "battery state"), ("avahi", "network discovery"), ("ssh_agent", "your SSH agent"))
 DESKTOP_NAMES = {"GNOME": "GNOME Shell", "KDE": "KDE Plasma"}      # desktop -> the title of its expander; a new desktop is one line here and one in DESKTOP_ONLY
 DESKTOP_ONLY = {"gnome_shell": "GNOME", "gnome_shell_manage": "GNOME", "kde": "KDE"}      # switch -> the desktop it is for; hidden on the other one (see desktop_hidden())
 NEEDS = {"gnome_shell_manage": ("gnome_shell",), "net_private": ("net",), "gpu_render_only": ("gpu", "rocm"), "wayland_strict": ("wayland",)}      # key -> switches of which one must be on for it to do anything (portal_* need portals, see needs())
