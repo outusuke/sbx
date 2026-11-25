@@ -2,7 +2,7 @@
 #| Layer rule: this fragment may use names from lower-numbered fragments (and its own) only; build.py enforces it.
 
 # ---------------------------------------------------------------- running programs
-RUNNING = f"{STATE}/running"      # RUNNING/PID holds "NAME\nSTARTTIME" for each live sbx process
+RUNNING = f"{STATE}/running"      # RUNNING/PID: "NAME\nSTARTTIME" of an sbx process, then "\nPID\nSTARTTIME" of its sandbox
 
 
 def proc_start(pid):
@@ -25,14 +25,24 @@ def live_sbx(pid):
     return any(os.path.basename(x) == "sbx" or is_sbx_link(os.path.join(cwd, x)) for x in argv[:3])
 
 
-def pid_app(pid):
-    """The program name in RUNNING/PID, if that file was written by the process that is still running under this PID."""
+def live_pid(entry):
+    """The PID to signal for the run in RUNNING/ENTRY: its sbx process, else its sandbox if sbx is gone; None when neither is alive."""
     try:
-        with open(f"{RUNNING}/{pid}") as f: name, _, start = f.read().partition("\n")
+        with open(f"{RUNNING}/{entry}") as f: lines = [x.strip() for x in f.read().split("\n")] + ["", "", "", ""]
     except OSError:
         return None
-    start = start.strip()
-    return name.strip() if start and start == proc_start(pid) and live_sbx(pid) else None
+    if lines[1] and lines[1] == proc_start(entry) and live_sbx(entry): return int(entry)
+    if lines[2].isdigit() and lines[3] and lines[3] == proc_start(lines[2]): return int(lines[2])
+    return None
+
+
+def pid_app(pid):
+    """The program name in RUNNING/PID while that run is alive (see live_pid)."""
+    if live_pid(pid) is None: return None
+    try:
+        with open(f"{RUNNING}/{pid}") as f: return f.readline().strip()
+    except OSError:
+        return None
 
 
 def running(name=None):
@@ -52,9 +62,45 @@ def mark_running(name):
     with open(f"{RUNNING}/{os.getpid()}", "w") as f: f.write(f"{name}\n{proc_start(os.getpid()) or ''}")
 
 
+def mark_child(pid):
+    """Add the sandbox process to our file, so the run still counts if sbx dies before it."""
+    try:
+        with open(f"{RUNNING}/{os.getpid()}", "a") as f: f.write(f"\n{pid}\n{proc_start(pid) or ''}")
+    except OSError: pass
+
+
 def unmark_running():
     try: os.unlink(f"{RUNNING}/{os.getpid()}")
     except OSError: pass
+
+
+def descendants(pid):
+    """[(pid, start)] of every process below PID, found through the parent links in /proc."""
+    kids = {}
+    for f in os.listdir("/proc"):
+        if not f.isdigit(): continue
+        try:
+            with open(f"/proc/{f}/stat", "rb") as h: rest = h.read().rsplit(b")", 1)[1].split()
+            kids.setdefault(int(rest[1]), []).append((int(f), rest[19].decode()))
+        except (OSError, IndexError, ValueError): pass
+    found, todo = [], [int(pid)]
+    while todo:
+        for c in kids.get(todo.pop(), []): found.append(c); todo.append(c[0])
+    return found
+
+
+def signal_tree(tree, sig):
+    for pid, start in tree:
+        if proc_start(pid) != start: continue
+        try: os.kill(pid, sig)
+        except OSError: pass
+
+
+def finish_tree(tree, grace):
+    """Give the processes in TREE GRACE seconds to end, then SIGKILL the rest."""
+    end = time.time() + grace
+    while time.time() < end and any(proc_start(pid) == start for pid, start in tree): time.sleep(0.1)
+    signal_tree(tree, signal.SIGKILL)
 
 
 def stop_program(name):
@@ -63,17 +109,21 @@ def stop_program(name):
     signal goes to the process that was checked, never to a newcomer that took the number."""
     sent = 0
     use_fd = hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")
-    for pid in [int(p) for p in running(name)]:
+    for entry in running(name):
+        pid = live_pid(entry)
+        if pid is None: continue
+        below = descendants(pid) if pid != int(entry) else []          # sbx is gone: what its sandbox started must be stopped too
         fd = None
         try:
             if use_fd:
                 try: fd = os.pidfd_open(pid)
                 except ProcessLookupError: continue
                 except OSError: pass                     # no pidfd on this kernel: plain kill below
-            if pid_app(pid) != name: continue
+            if live_pid(entry) != pid: continue
             if fd is None: os.kill(pid, signal.SIGTERM)
             else: signal.pidfd_send_signal(fd, signal.SIGTERM)
             sent += 1
+            signal_tree(below, signal.SIGTERM)
         except OSError:
             pass
         finally:

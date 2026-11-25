@@ -1726,6 +1726,61 @@ class Units(unittest.TestCase):
         self.assertEqual(mine.wait(5), -15)
         self.assertIsNone(other.poll())
 
+    def test_a_run_whose_sbx_died_still_counts_through_its_sandbox_and_stop_reaches_it(self):
+        S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
+        box = subprocess.Popen(["sleep", "60"]); self.addCleanup(lambda: box.kill() or box.wait())
+        os.makedirs(S["RUNNING"])
+        def entry(cstart):
+            with open(f"{S['RUNNING']}/999999", "w") as f: f.write(f"app\n123\n{box.pid}\n{cstart}")      # 999999: the sbx that is gone
+        entry("1"); self.assertEqual(S["running"]("app"), [])                                        # the PID was reused
+        entry(S["proc_start"](box.pid)); self.assertEqual(S["running"]("app"), ["999999"])
+        self.assertEqual(S["stop_program"]("app"), 1); self.assertEqual(box.wait(5), -15)
+        self.assertEqual(S["running"]("app"), [])
+
+    def tree_of_sleeps(self, pre=""):
+        top = subprocess.Popen(["sh", "-c", pre + "sleep 60 & sleep 60 & wait"]); self.addCleanup(lambda: top.kill() or top.wait())
+        for _ in range(100):
+            kids = self.S["descendants"](top.pid)
+            if len(kids) == 2: return top, kids
+            time.sleep(0.05)
+        self.fail("the sleeps did not start")
+
+    def gone(self, pid):
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as f: return f.read().rsplit(b")", 1)[1].split()[0] == b"Z"
+        except OSError: return True
+
+    def test_descendants_lists_every_process_below_a_pid_with_its_start_time(self):
+        top, kids = self.tree_of_sleeps()
+        self.assertEqual([s for _, s in kids], [self.S["proc_start"](p) for p, _ in kids])
+        self.assertNotIn(top.pid, [p for p, _ in kids])
+
+    def test_stop_of_a_run_whose_sbx_died_also_ends_what_the_sandbox_started(self):
+        S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
+        top, kids = self.tree_of_sleeps(); os.makedirs(S["RUNNING"])
+        with open(f"{S['RUNNING']}/999999", "w") as f: f.write(f"app\n123\n{top.pid}\n{S['proc_start'](top.pid)}")
+        self.assertEqual(S["stop_program"]("app"), 1); top.wait(5)
+        for _ in range(100):
+            if all(self.gone(p) for p, _ in kids): break
+            time.sleep(0.05)
+        self.assertTrue(all(self.gone(p) for p, _ in kids))
+
+    def test_finish_tree_kills_what_ignores_the_stop_once_the_grace_is_over(self):
+        S = self.S
+        top, kids = self.tree_of_sleeps("trap '' TERM; ")
+        S["signal_tree"](kids, S["signal"].SIGTERM); S["finish_tree"](kids, 0.3)
+        for _ in range(100):
+            if all(self.gone(p) for p, _ in kids): break
+            time.sleep(0.05)
+        self.assertTrue(all(self.gone(p) for p, _ in kids))
+
+    def test_mark_child_records_the_sandbox_next_to_sbx(self):
+        S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
+        box = subprocess.Popen(["sleep", "60"]); self.addCleanup(lambda: box.kill() or box.wait())
+        S["mark_running"]("app"); S["mark_child"](box.pid)
+        with open(f"{S['RUNNING']}/{os.getpid()}") as f: self.assertEqual(f.read().split("\n")[2], str(box.pid))
+        self.assertEqual(S["running"]("app"), [str(os.getpid())], "one run, one entry")
+
     def test_clean_refuses_a_running_program_and_stop_needs_one(self):
         S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
         os.makedirs(f"{S['HOMES']}/busy"); os.makedirs(f"{S['HOMES']}/idle")
@@ -3372,7 +3427,7 @@ class Logging(unittest.TestCase):
         prog = f"{self.tmp}/prog"
         with open(prog, "wb") as f: f.write(header or b"\x7fELF\x01\x01\x01" + b"\0" * 9 + b"\x02\0\x03\0" + b"\0" * 32)
         os.chmod(prog, 0o755)
-        child = types.SimpleNamespace(stderr=types.SimpleNamespace(fileno=lambda: 0), wait=lambda: rc, terminate=lambda: None, kill=lambda: None)
+        child = types.SimpleNamespace(pid=os.getpid(), stderr=types.SimpleNamespace(fileno=lambda: 0), wait=lambda: rc, terminate=lambda: None, kill=lambda: None)
         S["subprocess"] = types.SimpleNamespace(Popen=lambda *a, **k: child, PIPE=-1)
         S["platform"] = types.SimpleNamespace(machine=lambda: machine)
         S["build"] = lambda prog, args, live, opts: ("app", [prog], {"prefix": [], "wrap": [], "fds": []})
@@ -4256,6 +4311,16 @@ class Gui(unittest.TestCase):
         self.assertTrue(G["program_running"]("app")); self.assertFalse(G["program_running"]("other"))
         with open(f"{G['RUNNING']}/{os.getpid()}", "w") as f: f.write("app\n1")
         self.assertFalse(G["program_running"]("app"))
+
+    def test_the_window_counts_a_run_through_its_sandbox_when_sbx_is_gone(self):
+        G = self.G
+        G["RUNNING"] = f"{self.tmp}/run"; os.makedirs(G["RUNNING"]); G["live_sbx"] = lambda pid: False
+        box = subprocess.Popen(["sleep", "60"]); self.addCleanup(lambda: box.kill() or box.wait())
+        with open(f"/proc/{box.pid}/stat", "rb") as f: start = f.read().rsplit(b")", 1)[1].split()[19].decode()
+        def entry(cstart):
+            with open(f"{G['RUNNING']}/999999", "w") as f: f.write(f"app\n123\n{box.pid}\n{cstart}")
+        entry("1"); self.assertFalse(G["program_running"]("app"))
+        entry(start); self.assertTrue(G["program_running"]("app")); self.assertFalse(G["program_running"]("other"))
 
     def test_log_page_reads_the_same_file_sbx_writes_and_filters_by_program(self):
         G, S = self.G, self.S

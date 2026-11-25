@@ -105,22 +105,25 @@ def run(prog, args, opts):
     log("START allow=[" + ",".join(k for k in SCALARS if cfg[k]) + "]", name)
     try: mark_running(name)
     except OSError: pass                          # only `sbx stop`, `sbx list` and the running-check of `sbx clean` need it
-    start, stopped, child = time.time(), [False], [None]
+    start, stopped, child, tree = time.time(), [False], [None], []
     piped = not sys.stderr.isatty()               # started from the app menu or a file manager: no terminal, so the log keeps stderr
     try:
         def stop(*_):                                  # first signal: ask politely, kill after STOP_GRACE s; a second one kills at once
             again, stopped[0] = stopped[0], True
             if not child[0]: return
-            if again: child[0].kill()
+            tree[:] = descendants(child[0].pid) or tree           # pasta dies on SIGTERM but leaves bwrap and the program running
+            if again: child[0].kill(); signal_tree(tree, signal.SIGKILL)
             else:
-                child[0].terminate()
+                child[0].terminate(); signal_tree(tree, signal.SIGTERM)
                 t = threading.Timer(STOP_GRACE, lambda: child[0].kill()); t.daemon = True; t.start()
         for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, stop)      # before the child exists, so no signal is missed
         p = child[0] = subprocess.Popen(st["prefix"] + st["wrap"] + cmd, pass_fds=st["fds"], stderr=subprocess.PIPE if piped else None)
+        mark_child(p.pid)
         if stopped[0]: p.terminate()                  # a signal that came while it was starting
         t = threading.Thread(target=tee_stderr, args=(p.stderr.fileno(), name), daemon=True) if piped else None
         if t: t.start()
         rc = p.wait()
+        if stopped[0]: finish_tree(tree, STOP_GRACE)
         if t: t.join(2)
     finally:
         unmark_running(); teardown(st); undo_exec_bit(prog, restore)
