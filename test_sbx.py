@@ -2640,7 +2640,7 @@ class Install(unittest.TestCase):
         self.assertEqual([n for n in os.listdir(f"{h}/Apps") if n.startswith(".")], [])
 
     def test_installing_over_our_own_install_trashes_the_old_one_when_gio_exists(self):
-        h, S = self.home, self.S; tar = self.installed_anki(); calls = []
+        S = self.S; tar = self.installed_anki(); calls = []
         S["ask_to_replace"] = lambda n, d: True
         real_un = S["cmd_uninstall"]; S["cmd_uninstall"] = lambda a: (calls.append(a), real_un(a[:2]))        # no gio here, so the real uninstall deletes
         S["shutil"].which, real = (lambda n: "/fake/gio" if n == "gio" else real(n)), S["shutil"].which
