@@ -4,7 +4,7 @@
 # ---------------------------------------------------------------- command line
 FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
-         "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
+         "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True), "--no-portals": ("portals", False),
          "--tray": ("tray", True), "--mpris": ("mpris", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--bluetooth": ("bluetooth", True), "--battery": ("battery", True), "--avahi": ("avahi", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True), "--ntsync": ("ntsync", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
@@ -42,7 +42,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --private     private home erased on exit  --x11          share the X11 socket (weaker isolation)\n"
          "  --here        share the current folder     --no-gpu       hide /dev/dri and NVIDIA devices\n"
          "  --gpu-render-only      of /dev/dri share only the render nodes (renderD*), not the display card nodes\n"
-         "  --no-sound    hide PipeWire/PulseAudio     --portals      notifications and basic portals (xdg-dbus-proxy)\n"
+         "  --no-sound    hide PipeWire/PulseAudio     --no-portals   no notifications or desktop portals (on by default)\n"
          "  --hostname    hostname 'sbx' inside        --userns       the program can create user namespaces\n"
          "  --allow-32bit 32-bit programs may run (weakens the socket filter)\n"
          "  --privacy     /etc/passwd without your real name or the other accounts; the Account portal is blocked too\n"

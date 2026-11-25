@@ -181,7 +181,7 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(a[a.index("/sys/class/net") - 1], "--tmpfs")
 
     def test_net_private_runs_bwrap_inside_pasta_and_changes_only_what_it_must(self):
-        wrap, a = fake_preview("firefox", ["--net-private"])
+        wrap, a = fake_preview("firefox", ["--net-private", "--no-portals"])
         self.assertEqual(wrap, ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", "169.254.1.1",
                                 "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--",
                                 "/bin/sh", "-c", 'exec 9<"$1"; shift 1; exec "$@"', "sh", "/run/user/1000/sbx/PID.seccomp"])
@@ -194,7 +194,7 @@ class Snapshot(unittest.TestCase):
         self.assertNotIn("/etc/resolv.conf", a)
         self.assertEqual(a[a.index("/sys/class/net") - 1], "--tmpfs")                       # the host's cards stay hidden, network on or not
         self.assertLess(a.index("/run/systemd/resolve"), a.index("/run/user/1000/sbx/PID.resolv.conf"))   # after the folders resolv.conf may point into
-        wrap, a = fake_preview("firefox", ["--net-private"], {"resolv_target": lambda: "/etc/resolv.conf"})   # a plain file: bound where it is
+        wrap, a = fake_preview("firefox", ["--net-private", "--no-portals"], {"resolv_target": lambda: "/etc/resolv.conf"})   # a plain file: bound where it is
         self.assertIn(["--ro-bind", "/run/user/1000/sbx/PID.resolv.conf", "/etc/resolv.conf"], [a[k:k + 3] for k in range(len(a) - 2)])
         # without the switch none of that appears
         for flags in ([], ["--net=none"]):
@@ -403,7 +403,7 @@ class Units(unittest.TestCase):
     def test_a11y_binds_the_filtered_bus_and_tells_the_program_where_it_is_without_a_session_bus(self):
         S = self.S; rt = f"{self.tmp}/run"; S["runtime_dir"] = lambda: rt
         def env_of(a): return {a[j + 1]: a[j + 2] for j, x in enumerate(a) if x == "--setenv"}
-        a = S["build"]("/bin/true", [], False, {"a11y": True, "name": "tool", "ignore_config": True})[1]
+        a = S["build"]("/bin/true", [], False, {"a11y": True, "portals": False, "name": "tool", "ignore_config": True})[1]
         i = a.index(f"{rt}/at-spi/bus")
         self.assertEqual(a[i - 2], "--ro-bind"); self.assertTrue(a[i - 1].endswith(".a11y"), a[i - 1])
         e = env_of(a)
@@ -458,7 +458,7 @@ class Units(unittest.TestCase):
     def test_a_system_bus_switch_binds_the_filtered_system_bus_and_leaves_the_session_bus_closed(self):
         S = self.S; rt = f"{self.tmp}/run"; S["runtime_dir"] = lambda: rt
         def env_of(a): return {a[j + 1]: a[j + 2] for j, x in enumerate(a) if x == "--setenv"}
-        a = S["build"]("/bin/true", [], False, {"bluetooth": True, "name": "tool", "ignore_config": True})[1]
+        a = S["build"]("/bin/true", [], False, {"bluetooth": True, "portals": False, "name": "tool", "ignore_config": True})[1]
         i = a.index("/run/dbus/system_bus_socket")
         self.assertEqual(a[i - 2], "--ro-bind"); self.assertTrue(a[i - 1].endswith(".system"), a[i - 1])
         self.assertEqual(env_of(a)["DBUS_SYSTEM_BUS_ADDRESS"], "unix:path=/run/dbus/system_bus_socket")
@@ -903,7 +903,7 @@ class Units(unittest.TestCase):
         S["runtime_dir"] = lambda: f"{self.tmp}/run4"
         S["resolv_target"] = lambda: "/run/systemd/resolve/stub-resolv.conf"
         with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}), mock.patch.object(shutil, "which", lambda x: f"/usr/bin/{x}"):
-            _, cmd, st = S["build"]("/bin/true", [], True, {"net_private": True, "allow_syscall": ["io_uring"]})
+            _, cmd, st = S["build"]("/bin/true", [], True, {"net_private": True, "portals": False, "allow_syscall": ["io_uring"]})
         self.addCleanup(lambda: [f.close() for f in st["keep"]])
         d = f"{self.tmp}/run4/sbx"
         sec, resolv = f"{d}/{os.getpid()}.seccomp", f"{d}/{os.getpid()}.resolv.conf"
@@ -3056,10 +3056,15 @@ class Ported(unittest.TestCase):
         self.assertIn("--talk=org.freedesktop.Notifications", both); self.assertIn("--talk=org.kde.StatusNotifierWatcher", both)
         self.assertEqual(S["bus_rules"](), S["portal_rules"]())                          # unchanged for callers that pass nothing
         rt = S["runtime_dir"]()
-        _, args, _ = S["build"]("/bin/true", [], False, {"tray": True, "ignore_config": True})
+        _, args, _ = S["build"]("/bin/true", [], False, {"tray": True, "portals": False, "ignore_config": True})
         self.assertIn(f"{rt}/bus", args); self.assertIn("DBUS_SESSION_BUS_ADDRESS", args)
-        _, args, _ = S["build"]("/bin/true", [], False, {"ignore_config": True})
+        _, args, _ = S["build"]("/bin/true", [], False, {"portals": False, "ignore_config": True})
         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", args)
+
+    def test_portals_are_on_unless_switched_off(self):
+        S = load_sbx()
+        self.assertIs(S["SCALARS"]["portals"], True)
+        self.assertEqual(S["parse_options"](["--no-portals", "x"])[0], {"portals": False})
 
     def test_media_keys_are_a_switch_of_their_own(self):
         S = load_sbx()
@@ -3080,9 +3085,9 @@ class Ported(unittest.TestCase):
         self.assertEqual(S["bus_rules"]({"portals": False, "talk": ["org.example.App", "org.*"]}), ["--talk=org.example.App"])      # a name that slipped past the parser is dropped here
         both = S["bus_rules"]({"portals": True, "tray": True, "talk": ["org.example.App"]})
         self.assertTrue(set(S["portal_rules"]()) <= set(both) and set(S["tray_rules"]()) <= set(both) and "--talk=org.example.App" in both)
-        _, args, _ = S["build"]("/bin/true", [], False, {"talk": ["org.example.App"], "ignore_config": True})
+        _, args, _ = S["build"]("/bin/true", [], False, {"talk": ["org.example.App"], "portals": False, "ignore_config": True})
         self.assertIn(f"{rt}/bus", args); self.assertIn("DBUS_SESSION_BUS_ADDRESS", args); self.assertNotIn("GTK_USE_PORTAL", args)
-        _, args, _ = S["build"]("/bin/true", [], False, {"ignore_config": True})
+        _, args, _ = S["build"]("/bin/true", [], False, {"portals": False, "ignore_config": True})
         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", args)
 
     # -- GNOME Shell integration (gnome_shell, gnome_shell_manage)
@@ -3115,9 +3120,9 @@ class Ported(unittest.TestCase):
         self.assertNotIn("--talk=org.freedesktop.Notifications", only)                  # the Shell alone doesn't open the portals
         both = S["bus_rules"]({"portals": True, "tray": True, "gnome_shell": True})
         self.assertTrue(set(S["portal_rules"]()) <= set(both) and set(S["tray_rules"]()) <= set(both) and set(only) <= set(both))
-        _, args, _ = S["build"]("/bin/true", [], False, {"gnome_shell": True, "ignore_config": True})
+        _, args, _ = S["build"]("/bin/true", [], False, {"gnome_shell": True, "portals": False, "ignore_config": True})
         self.assertIn(f"{rt}/bus", args); self.assertIn("DBUS_SESSION_BUS_ADDRESS", args); self.assertNotIn("GTK_USE_PORTAL", args)
-        _, args, _ = S["build"]("/bin/true", [], False, {"gnome_shell_manage": True, "ignore_config": True})
+        _, args, _ = S["build"]("/bin/true", [], False, {"gnome_shell_manage": True, "portals": False, "ignore_config": True})
         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", args, "the manage switch alone opens no bus")
         seen = []
         S["shutil"] = types.SimpleNamespace(which=lambda n: f"/fake/{n}")
@@ -3158,7 +3163,7 @@ class Ported(unittest.TestCase):
         self.assertNotIn("--talk=org.freedesktop.Notifications", only)                  # KDE alone doesn't open the portals
         both = S["bus_rules"]({"portals": True, "tray": True, "gnome_shell": True, "kde": True})
         self.assertTrue(set(S["portal_rules"]()) <= set(both) and set(S["tray_rules"]()) <= set(both) and set(only) <= set(both))
-        _, args, _ = S["build"]("/bin/true", [], False, {"kde": True, "ignore_config": True})
+        _, args, _ = S["build"]("/bin/true", [], False, {"kde": True, "portals": False, "ignore_config": True})
         self.assertIn(f"{rt}/bus", args); self.assertIn("DBUS_SESSION_BUS_ADDRESS", args); self.assertNotIn("GTK_USE_PORTAL", args)
         seen = []
         S["shutil"] = types.SimpleNamespace(which=lambda n: f"/fake/{n}")
@@ -4034,10 +4039,10 @@ class Gui(unittest.TestCase):
 
     def test_the_list_starts_with_the_defaults_row_and_says_what_every_program_may_use(self):
         G = self.G; adw = G["Adw"]; os.makedirs(G["APPS"], exist_ok=True)
-        self.assertEqual(G["default_summary"](), "Network · Graphics · Sound")                     # the built-in defaults
+        self.assertEqual(G["default_summary"](), "Network · Graphics · Sound · Desktop portals")                     # the built-in defaults
         with open(f"{G['CONF']}/default.conf", "w") as f: f.write("net_private=1\ncamera=1\nwhitelist=~/Shared\nread_only=~/Docs\nread_only=~/Shared\n")
-        self.assertEqual(G["default_summary"](), "Internet only · Graphics · Sound · Camera · 2 shared folders")
-        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("net=0\ngpu=0\nsound=0\n")
+        self.assertEqual(G["default_summary"](), "Internet only · Graphics · Sound · Camera · Desktop portals · 2 shared folders")
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("net=0\ngpu=0\nsound=0\nportals=0\n")
         self.assertEqual(G["default_summary"](), "No network, devices or desktop services")
         win = mock.MagicMock(); win.app_rows = []; win.others_open = False
         adw.ActionRow.reset_mock(); G["Win"].fill_apps(win)
@@ -4246,13 +4251,13 @@ class Gui(unittest.TestCase):
         G = self.G; adw = G["Adw"]; os.makedirs(G["APPS"], exist_ok=True)
         with open(f"{G['CONF']}/default.conf", "w") as f: f.write("camera=1\nwhitelist=~/Shared\n")
         with open(f"{G['APPS']}/app.conf", "w") as f: f.write("net_private=1\nsound=0\nwhitelist=~/Shared\nread_only=~/Docs\n")
-        self.assertEqual(G["default_summary"]("app"), "Internet only · Graphics · Camera · 2 shared folders")      # its own file over the defaults; a shared folder counts once
-        self.assertEqual(G["default_summary"]("other"), "Network · Graphics · Sound · Camera · 1 shared folder")  # no file: the defaults
+        self.assertEqual(G["default_summary"]("app"), "Internet only · Graphics · Camera · Desktop portals · 2 shared folders")      # its own file over the defaults; a shared folder counts once
+        self.assertEqual(G["default_summary"]("other"), "Network · Graphics · Sound · Camera · Desktop portals · 1 shared folder")  # no file: the defaults
         win = mock.MagicMock(); win.badges = {}
         adw.ActionRow.reset_mock(); G["Win"].app_row(win, "app", True, set(), set(), True)
-        self.assertEqual(adw.ActionRow.call_args.kwargs["subtitle"], "Waiting for your decision · Internet only · Graphics · Camera · 2 shared folders")
+        self.assertEqual(adw.ActionRow.call_args.kwargs["subtitle"], "Waiting for your decision · Internet only · Graphics · Camera · Desktop portals · 2 shared folders")
         G["Win"].app_row(win, "app", False, set(), set(), True)
-        self.assertEqual(adw.ActionRow.call_args.kwargs["subtitle"], "Internet only · Graphics · Camera · 2 shared folders")      # no source, no tags: they are on the program's page
+        self.assertEqual(adw.ActionRow.call_args.kwargs["subtitle"], "Internet only · Graphics · Camera · Desktop portals · 2 shared folders")      # no source, no tags: they are on the program's page
         G["Win"].app_row(win, "app")                                                                  # a program only run from the terminal keeps its source line
         self.assertEqual(adw.ActionRow.call_args.kwargs["subtitle"], G["row_subtitle"]("app", False, set(), set(), show_running=False))
 
@@ -4884,7 +4889,7 @@ class Isolation(unittest.TestCase):
             self.assertIn(must, r.stdout)
 
     def test_every_flag_does_what_it_says(self):
-        flags = ["--net=none", "--no-gpu", "--no-sound", "--hostname"]
+        flags = ["--net=none", "--no-gpu", "--no-sound", "--no-portals", "--hostname"]
         expect = "--expect=net0,gpu0,sound0,portals0,hostname" + (",userns0" if self.has_disable_userns else "")
         r = self.sbx_run(*flags, self.script, expect)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

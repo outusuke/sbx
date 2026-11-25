@@ -358,13 +358,13 @@ class Win(Adw.ApplicationWindow):
             for key, _t, _s, _d in rows:
                 if desktop_hidden(scope, key): continue                           # the GNOME Shell rows on KDE, the KDE row on GNOME
                 r = self.switch_row(scope, key, page_rows)
-                if key in ADVANCED: box = "More desktop services"                 # seldom needed: one collapsed row
+                if key in ADVANCED: box = "More desktop portals"                 # seldom needed: one collapsed row
                 elif DESKTOP_ONLY.get(key) in fold: box = DESKTOP_NAMES.get(DESKTOP_ONLY[key], DESKTOP_ONLY[key])      # a desktop with many rows: one collapsed row
                 else: box = None
                 if box is None: g.add(r)
                 else:
                     if box not in boxes:
-                        boxes[box] = Adw.ExpanderRow(title=box, subtitle="Location, shortcuts, wallpaper, launchers, remote control, secrets, background" if key in ADVANCED else "", use_markup=False)
+                        boxes[box] = Adw.ExpanderRow(title=box, subtitle="Notifications, links, printing, trash, email, keep awake, network state, location, shortcuts, wallpaper, launchers, remote control, secrets, background" if key in ADVANCED else "", use_markup=False)
                         g.add(boxes[box])
                     boxes[box].add_row(r); holder[key] = boxes[box]
                     if key not in ADVANCED:
@@ -632,7 +632,7 @@ class Win(Adw.ApplicationWindow):
             """Why this switch can't be turned on right now, or "" (e.g. the extra portals do nothing until portals itself is on)."""
             req = needs(key)
             if req and not any(is_on(scope, k) for k in req):
-                return "Turn on “" + "” or “".join(SWITCHES[k][0] for k in req if k in SWITCHES) + "” first"
+                return "Turn on “" + "” or “".join(SWITCHES[k][0] for k in req if k in SWITCHES) + "” first."
             if key == "wayland_strict" and not WL_RESTRICTED: return WL_WHY
             return ""
 

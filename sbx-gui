@@ -46,34 +46,34 @@ GROUPS = [
         ("avahi", "Network discovery (Avahi)", "Find printers, Cast devices and other services on your local network by name, through the system bus. Needs xdg-dbus-proxy.", False),
         ("compat", "Pass graphics and toolkit settings", "For programs that draw wrongly or won't start. Copies the graphics and toolkit variables of your session that are set (WGPU_*, MESA_*, SDL_*, QT_QPA_* and similar). Never tokens or other variables.", False)]),
     ("Desktop integration", [
-        ("portals", "Notifications and portals", "Notifications, opening links, the file chooser, dark mode (needs xdg-dbus-proxy)", False),
-        ("portal_notification", "Notifications", "Show desktop notifications (with the portals switch on)", True),
-        ("portal_openuri", "Open links and files", "Let the program ask the desktop to open a link or file in another program", True),
-        ("portal_print", "Printing dialog", "Let the program use the desktop's print dialog", True),
-        ("portal_trash", "Move files to trash", "Let the program move files it can reach to the trash", True),
-        ("portal_email", "Compose email", "Let the program open your mail program with a new message", True),
-        ("portal_inhibit", "Keep screen awake", "Let the program stop the screen from sleeping or locking", True),
-        ("portal_network", "Network state", "Let the program ask whether you are online and which proxy to use", True),
-        ("portal_file_transfer", "Drag and drop files", "Lets the program receive files you drag in from other programs (browsers print a FileTransfer error without it). Only files you drop on it, through the Documents portal.", True),
-        ("portal_screenshot", "Screenshots", "Let the program ask the desktop for a screenshot. The desktop shows its own prompt.", True),
-        ("portal_screencast", "Screen sharing", "Let the program ask to share your screen or a window (Discord, Teams, Slack). The desktop shows its own picker.", True),
-        ("tray", "Tray icon", "Let the program show an icon in your panel's tray (needs xdg-dbus-proxy)", False),
-        ("mpris", "Media keys", "Let the program show up as a media player and answer play, pause and next keys (needs xdg-dbus-proxy)", False),
-        ("a11y", "Screen reader support", "Let a screen reader such as Orca read the program (needs xdg-dbus-proxy)", False),
+        ("portals", "Desktop portals", "File chooser, dark mode and the portals below (needs xdg-dbus-proxy)", True),
+        ("portal_notification", "Notifications", "Show desktop notifications.", True),
+        ("portal_openuri", "Open links and files", "Let the app ask the desktop to open a link or file in another program.", True),
+        ("portal_print", "Printing dialog", "Let the app use the desktop's print dialog.", True),
+        ("portal_trash", "Move files to trash", "Let the app move files it can reach to the trash.", True),
+        ("portal_email", "Compose email", "Let the app open your mail program with a new message.", True),
+        ("portal_inhibit", "Keep screen awake", "Let the app stop the screen from sleeping or locking.", True),
+        ("portal_network", "Network state", "Let the app ask whether you are online and which proxy to use.", True),
+        ("portal_file_transfer", "Drag and drop files", "Let the app receive files you drag in from other programs, through the Documents portal.", True),
+        ("portal_screenshot", "Screenshots", "Let the app ask the desktop for a screenshot. The desktop shows its own prompt.", True),
+        ("portal_screencast", "Screen sharing", "Let the app ask to share your screen or a window (Discord, Teams, Slack). The desktop shows its own picker.", True),
+        ("tray", "Tray icon", "Let the app show an icon in your panel's tray (needs xdg-dbus-proxy)", False),
+        ("mpris", "Media keys", "Let the app show up as a media player and answer play, pause and next keys (needs xdg-dbus-proxy)", False),
+        ("a11y", "Screen reader support", "Let a screen reader such as Orca read the app (needs xdg-dbus-proxy)", False),
         ("gnome_shell", "GNOME Shell integration", "Let the browser's GNOME Shell connector list and install extensions (the Shell asks you first; needs xdg-dbus-proxy)", False),
         ("gnome_shell_manage", "Manage GNOME Shell extensions", "Also let it enable, disable and uninstall extensions (needs GNOME Shell integration)", False),
         ("kde", "KDE Plasma integration", "Let the browser's Plasma integration show downloads as Plasma jobs, answer KRunner and the media controls, and keep the computer awake while it downloads (needs xdg-dbus-proxy)", False),
         ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and GTK settings, so the program looks like your desktop", True),
-        ("portal_location", "Location", "Lets the program ask the desktop where you are.", True),
-        ("portal_shortcuts", "Global shortcuts", "Keyboard shortcuts that work in any window.", True),
-        ("portal_wallpaper", "Wallpaper", "Lets the program ask to change your desktop wallpaper.", True),
-        ("portal_launcher", "Create launchers", "Lets the program ask to add its own entries to your app menu.", False),
-        ("portal_remote_desktop", "Remote desktop and input control", "Lets the program ask to control your mouse and keyboard. Far-reaching access.", False),
-        ("portal_input_capture", "Input capture", "Lets the program ask to capture your keyboard and mouse. Far-reaching access.", False),
-        ("portal_clipboard", "Clipboard in remote control", "Also lets a remote-control session read and set your clipboard. Normal copy and paste is not affected, and with X11 on the program can read your clipboard anyway.", True),
-        ("portal_background", "Run in the background", "Lets the program ask to keep running when closed or to start at login. The autostart it registers runs outside the sandbox.", False),
-        ("portal_usb", "USB devices", "Lets the program ask to use a USB device. The desktop shows its own prompt.", True),
-        ("portal_secret", "Program secret", "Lets the program keep one secret of its own, such as the key that encrypts its saved logins (Chrome and Electron use it). It can't read your keyring or other programs' secrets.", True)]),
+        ("portal_location", "Location", "Let the app ask the desktop where you are.", True),
+        ("portal_shortcuts", "Global shortcuts", "Let the app register keyboard shortcuts that work in any window.", True),
+        ("portal_wallpaper", "Wallpaper", "Let the app ask to change your desktop wallpaper.", True),
+        ("portal_launcher", "Create launchers", "Let the app ask to add its own entries to your app menu.", False),
+        ("portal_remote_desktop", "Remote desktop and input control", "Let the app ask to control your mouse and keyboard. Far-reaching access.", False),
+        ("portal_input_capture", "Input capture", "Let the app ask to capture your keyboard and mouse input. Far-reaching access.", False),
+        ("portal_clipboard", "Clipboard in remote control", "Also let a remote-control session read and set your clipboard. Normal copy and paste is not affected, and with X11 on the app can read your clipboard anyway.", True),
+        ("portal_background", "Run in the background", "Let the app ask to keep running when closed or to start at login. The autostart it registers runs outside the sandbox.", False),
+        ("portal_usb", "USB devices", "Let the app ask to use a USB device. The desktop shows its own prompt.", True),
+        ("portal_secret", "App secret", "Let the app keep one secret of its own, such as the key that encrypts its saved logins (Chrome and Electron use it). It can't read your keyring or other apps' secrets.", True)]),
     ("Hardening", [
         ("private", "Temporary home", "Everything the program saves in its private home is erased when it closes. Shared folders are not affected.", False),
         ("hostname", "Hide the computer name", "The program sees the name sbx, also in /etc/hostname and /etc/hosts", False),
@@ -86,7 +86,7 @@ GROUPS = [
 ]
 WL_RESTRICTED = False      # can this desktop restrict Wayland programs (wp_security_context_v1)? Learned from `sbx schema`; wayland_strict is on by default only where it can
 GROUP_INFO = {"What can this program use?": "Changes apply the next time the program starts. Everything else on your computer stays hidden from it."}      # a line under a group's title
-ADVANCED = ("portal_file_transfer", "portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network", "portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret", "portal_background", "portal_usb", "portal_clipboard")      # shown in one collapsed row, "More desktop services"
+ADVANCED = ("portal_file_transfer", "portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network", "portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret", "portal_background", "portal_usb", "portal_clipboard")      # shown in one collapsed row, "More desktop portals"
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}
 SHORT = {"net": "network", "net_private": "this computer private", "wayland": "Wayland", "wayland_strict": "strict Wayland", "x11": "X11", "gpu": "graphics", "gpu_render_only": "render-only graphics",
          "sound": "sound", "portals": "portals", "private": "private home", "hostname": "hostname", "privacy": "real name hidden", "userns": "user namespaces", "allow_32bit": "32-bit programs",
@@ -1454,13 +1454,13 @@ class Win(Adw.ApplicationWindow):
             for key, _t, _s, _d in rows:
                 if desktop_hidden(scope, key): continue                           # the GNOME Shell rows on KDE, the KDE row on GNOME
                 r = self.switch_row(scope, key, page_rows)
-                if key in ADVANCED: box = "More desktop services"                 # seldom needed: one collapsed row
+                if key in ADVANCED: box = "More desktop portals"                 # seldom needed: one collapsed row
                 elif DESKTOP_ONLY.get(key) in fold: box = DESKTOP_NAMES.get(DESKTOP_ONLY[key], DESKTOP_ONLY[key])      # a desktop with many rows: one collapsed row
                 else: box = None
                 if box is None: g.add(r)
                 else:
                     if box not in boxes:
-                        boxes[box] = Adw.ExpanderRow(title=box, subtitle="Location, shortcuts, wallpaper, launchers, remote control, secrets, background" if key in ADVANCED else "", use_markup=False)
+                        boxes[box] = Adw.ExpanderRow(title=box, subtitle="Notifications, links, printing, trash, email, keep awake, network state, location, shortcuts, wallpaper, launchers, remote control, secrets, background" if key in ADVANCED else "", use_markup=False)
                         g.add(boxes[box])
                     boxes[box].add_row(r); holder[key] = boxes[box]
                     if key not in ADVANCED:
@@ -1728,7 +1728,7 @@ class Win(Adw.ApplicationWindow):
             """Why this switch can't be turned on right now, or "" (e.g. the extra portals do nothing until portals itself is on)."""
             req = needs(key)
             if req and not any(is_on(scope, k) for k in req):
-                return "Turn on “" + "” or “".join(SWITCHES[k][0] for k in req if k in SWITCHES) + "” first"
+                return "Turn on “" + "” or “".join(SWITCHES[k][0] for k in req if k in SWITCHES) + "” first."
             if key == "wayland_strict" and not WL_RESTRICTED: return WL_WHY
             return ""
 

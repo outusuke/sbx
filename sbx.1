@@ -341,9 +341,9 @@ Pass through the graphics and toolkit variables that are set (WGPU_*, ICED_BACKE
 VK_ICD_FILENAMES, SDL_VIDEODRIVER, QT_QPA_PLATFORM, GDK_BACKEND and similar). Tokens, keys and everything else
 stay out.
 .TP
-.B \-\-portals
-Allow notifications and the basic desktop portals (open links, file chooser, print, settings, trash, e\-mail and a
-few more) through xdg\-dbus\-proxy.
+.BR \-\-portals ", " \-\-no\-portals
+Allow or block notifications and the basic desktop portals (open links, file chooser, print, settings, trash, e\-mail and a
+few more) through xdg\-dbus\-proxy. On by default; without xdg\-dbus\-proxy sbx warns and runs without them.
 GTK and Qt programs are told to use the file chooser portal (GTK_USE_PORTAL=1, QT_QPA_PLATFORMTHEME=xdgdesktopportal)
 unless you set or pass through those variables yourself.
 .TP
@@ -455,7 +455,7 @@ memory=2G
 .fi
 .RE
 .PP
-Switches take 0 or 1. Defaults: net=1, net_private=0, wayland=1, wayland_strict=automatic (1 where the compositor supports security contexts, else 0), x11=0, gpu=1, gpu_render_only=0, sound=1, portals=0, private=0,
+Switches take 0 or 1. Defaults: net=1, net_private=0, wayland=1, wayland_strict=automatic (1 where the compositor supports security contexts, else 0), x11=0, gpu=1, gpu_render_only=0, sound=1, portals=1, private=0,
 hostname=0, privacy=0, userns=0, allow_32bit=0, theme=1, camera=0, alsa=0, input=0, kvm=0, ntsync=0, rocm=0, printing=0, ssh_agent=0,
 allow_sensitive=0, compat=0, tray=0, mpris=0, a11y=0, gnome_shell=0, gnome_shell_manage=0, kde=0, folder=0, single_instance=0, bluetooth=0, battery=0, avahi=0, and the extra portals portal_launcher, portal_remote_desktop, portal_input_capture
 and portal_background (all 0, and only used when portals=1), and portal_notification, portal_openuri, portal_print, portal_trash, portal_email, portal_inhibit,
