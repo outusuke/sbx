@@ -40,6 +40,7 @@ Ubuntu 24.04+: AppArmor blocks user namespaces. `sbx doctor` shows the fix.
 - System: read-only
 - Your home: hidden, replaced by `~/.sbx-homes/NAME`
 - Downloads, Documents, Pictures, Music, Videos: the program's own subfolder (e.g. `~/Downloads/sbx/NAME`) shows up as that folder in its home; the rest of your folder stays hidden
+- Files you open with it ("Open with", a path argument), with `portals=1` and PyGObject: read-only through the Documents portal, as Flatpak does
 - `/tmp`, `/run`: empty tmpfs
 - Secrets (`/etc/shadow`, SSH host keys, other users): emptied
 - Environment: cleared, except locale, terminal and desktop variables

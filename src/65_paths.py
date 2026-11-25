@@ -85,6 +85,27 @@ def hint_args(args, here, shared):
         if said == 3: break
 
 
+def portal_file_args(args, app, shared, export=portal_export):
+    """ARGS with each file you started the program with (a full path or file:// URI) swapped for its read-only path in the Documents portal,
+    so "Open with" works without sharing the folder. Files in a shared folder, secret folders and sbx's own folders stay as they are."""
+    guarded = [os.path.realpath(x) for x in (CONF, HOMES)]
+    found = {}
+    for i, x in enumerate(args[:64]):
+        uri = x.startswith("file://")
+        q = urllib.parse.unquote(x[7:]) if uri else x
+        if not q.startswith("/") or "\n" in q or len(q) > 1024: continue
+        q = os.path.realpath(q)
+        if not os.path.isfile(q) or any(q.startswith(s + "/") or q == s for s in shared + guarded): continue
+        if q.startswith((HOME + "/",) + OUTSIDE) and not sensitive_match(q): found[i] = (q, uri)
+    ids = export([q for q, _ in found.values()], app) if found else {}
+    out = list(args)
+    for i, (q, uri) in found.items():
+        if q in ids:
+            p = f"{runtime_dir()}/doc/{ids[q]}/{os.path.basename(q)}"
+            out[i] = "file://" + urllib.parse.quote(p) if uri else p
+    return out
+
+
 def generic_folders():
     """Folders that hold all sorts of things (Downloads, Desktop...), never shared as a program's own folder."""
     out = {HOME}

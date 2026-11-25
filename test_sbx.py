@@ -701,6 +701,16 @@ class Units(unittest.TestCase):
         self.assertEqual(o(["/t/p"], ["/t/p"], program="/t/p"), [("/t/p", "ro")])              # unless you also listed it read-only
         self.assertEqual(o([], [], here="/t/p", program="/t/p"), [("/t/p", "ro")])             # the folder you started in is not "asked for"
 
+    def test_portal_file_args(self):
+        f = self.write("report.html"); os.makedirs(f"{self.home}/.ssh"); key = self.write(".ssh/key")
+        conv = lambda a, shared=(): self.S["portal_file_args"](a, "org.sbx.Run.x", list(shared), lambda paths, app: {p: "ab12" for p in paths})
+        doc = f"{self.S['runtime_dir']()}/doc/ab12/report.html"
+        self.assertEqual(conv([f, "--flag"]), [doc, "--flag"])
+        self.assertEqual(conv([f"file://{f}"]), [f"file://{doc}"])
+        self.assertEqual(conv([f], [self.home]), [f])
+        self.assertEqual(conv(["report.html", "/usr/bin/env", self.home, key]), ["report.html", "/usr/bin/env", self.home, key])
+        self.assertEqual(self.S["portal_file_args"]([f], "x", [], lambda paths, app: {}), [f])
+
     def test_hint_args(self):
         os.makedirs(f"{self.home}/work"); self.write("work/script.py")
         old = os.getcwd(); os.chdir(f"{self.home}/work"); self.addCleanup(os.chdir, old)

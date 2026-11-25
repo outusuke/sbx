@@ -258,8 +258,12 @@ def build(prog, args, live=False, o=None):
         if k in ENV_PROTECTED: warn(f"setenv: {k} can't be changed")
         else: env[k] = v
     for k, v in env.items(): a += ["--setenv", k, v]
+    shared = [p for p, _ in shares]
+    if live and cfg["portals"]:
+        args = portal_file_args(args, portal_app_id(name), shared)
+        shared.append(f"{rt}/doc")
     exe = real if real.startswith(HOME + "/") or path.startswith(HOME + "/") else path
-    if live: hint_args(args, cwd, [p for p, _ in shares])
+    if live: hint_args(args, cwd, shared)
     limits = [f"-p{p}={cfg[k]}" for k, p in (("memory", "MemoryMax"), ("tasks", "TasksMax"), ("cpu", "CPUQuota")) if cfg[k]]
     if limits: state["prefix"] = ["systemd-run", "--user", "--scope", "--quiet"] + limits + ["--"]
     if priv: state["wrap"] = net_wrap(wrapfiles)

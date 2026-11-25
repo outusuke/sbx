@@ -27,6 +27,26 @@ def portal_app_id(name):
     return "org.sbx.Run." + ("p" + part if part[0].isdigit() else part)
 
 
+def portal_export(paths, app):
+    """{path: document id} for the files the Documents portal took, with read access for APP. {} when it can't (no PyGObject, no portal)."""
+    try:
+        from gi.repository import Gio, GLib
+    except ImportError:
+        return {}
+    paths = sorted(set(paths))
+    try:
+        fds = [os.open(p, os.O_PATH | os.O_CLOEXEC) for p in paths]
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        reply, _ = bus.call_with_unix_fd_list_sync(
+            PORTAL_DOCS_NAME, PORTAL_DOCS_PATH, PORTAL_DOCS_NAME, "AddFull",
+            GLib.Variant("(ahusas)", (list(range(len(fds))), 1, app, ["read"])),    # 1: reuse a document that already exists
+            GLib.VariantType("(asa{sv})"), Gio.DBusCallFlags.NONE, 3000, Gio.UnixFDList.new_from_array(fds), None)
+        ids = reply.unpack()[0]
+    except (OSError, GLib.Error):
+        return {}
+    return dict(zip(paths, ids)) if len(ids) == len(paths) else {}
+
+
 def tray_rules():
     """Show a tray icon (StatusNotifierItem). Nothing else on the bus."""
     return ["--talk=org.kde.StatusNotifierWatcher"] + [
