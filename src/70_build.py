@@ -51,6 +51,7 @@ def build(prog, args, live=False, o=None):
     if live and cfg["net_private"] and not cfg["net"]:
         warn("net_private does nothing while net=0: the program has no network at all")
     if live and priv and not shutil.which("pasta"): die("net_private=1 needs pasta: " + install_hint("passt") + ". Or turn net_private off.")
+    if live and priv and pasta_problem(): die(f"net_private=1: {pasta_problem()}. Or turn net_private off.")
     shares = order_shares(rw, ro, cwd, program_share(real) if real.startswith(HOME + "/") else None)
     rt = runtime_dir()
     tag = f"{rt}/sbx/{os.getpid() if live else 'PID'}"

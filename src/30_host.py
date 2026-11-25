@@ -112,6 +112,12 @@ def net_wrap(files=()):
     return PASTA + ["/bin/sh", "-c", f'{opens}; shift {len(files)}; exec "$@"', "sh"] + [path for _, _, path in files]
 
 
+def pasta_problem():
+    """Why pasta can't give the sandbox a network here, or None; its tap device comes from /dev/net/tun."""
+    if not os.access("/dev/net/tun", os.R_OK | os.W_OK): return "/dev/net/tun is missing or not usable by you (try: sudo modprobe tun)"
+    return None
+
+
 def scoped_xauth(src, disp, dst):
     """A copy of the XAUTHORITY file with only the cookie for this display on this computer (no xauth tool needed), or None.
     An entry is kept when it is for this display number AND for this machine (family Local with our host name, or family

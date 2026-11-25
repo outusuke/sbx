@@ -514,7 +514,7 @@ class Units(unittest.TestCase):
         with open(dst) as f: self.assertEqual(f.read(), "info\n")
 
     def live_portals_build(self, extra=None):
-        S = self.S; S["runtime_dir"] = lambda: f"{self.tmp}/run"
+        S = self.S; S["runtime_dir"] = lambda: f"{self.tmp}/run"; S["pasta_problem"] = lambda: None
         S["start_proxy"] = lambda *a, **k: ("proxy", -1)
         with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}), mock.patch.object(shutil, "which", lambda x: f"/usr/bin/{x}"):
             _, a, st = S["build"]("/bin/true", [], True, {"portals": True, "name": "tool", "ignore_config": True, **(extra or {})})
@@ -829,6 +829,7 @@ class Units(unittest.TestCase):
         S = self.S
         os.makedirs(f"{self.tmp}/run5")
         S["runtime_dir"] = lambda: f"{self.tmp}/run5"
+        S["pasta_problem"] = lambda: None
         S["bwrap_has"] = lambda flag: True
         def triples(cmd): return [cmd[i:i + 3] for i in range(len(cmd) - 2)]
         with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}):
@@ -849,6 +850,7 @@ class Units(unittest.TestCase):
         S = self.S
         os.makedirs(f"{self.tmp}/run4")
         S["runtime_dir"] = lambda: f"{self.tmp}/run4"
+        S["pasta_problem"] = lambda: None
         S["bwrap_has"] = lambda flag: True
         text = S["fake_passwd"]()
         lines = text.splitlines()
@@ -935,6 +937,18 @@ class Units(unittest.TestCase):
         self.assertEqual(st["wrap"], []); self.assertNotIn("--uid", cmd); self.assertNotIn("--share-net", cmd)
         self.assertEqual(len(self.warned), 1); self.assertIn("net_private does nothing while net=0", self.warned[0])
         S["teardown"](st)
+
+    def test_net_private_says_what_is_wrong_when_there_is_no_tun_device(self):
+        S = self.S
+        os.makedirs(f"{self.tmp}/run6")
+        S["runtime_dir"] = lambda: f"{self.tmp}/run6"
+        with mock.patch.object(os, "access", lambda p, m: p != "/dev/net/tun" and os.path.exists(p)):
+            self.assertIn("modprobe tun", S["pasta_problem"]())
+            with mock.patch.dict(os.environ, {"WAYLAND_DISPLAY": ""}), mock.patch.object(shutil, "which", lambda x: f"/usr/bin/{x}"):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit): S["build"]("/bin/true", [], True, {"net_private": True})
+        self.assertRegex(err.getvalue(), r"net_private=1: /dev/net/tun"); self.assertFalse(os.path.exists(f"{self.tmp}/run6/sbx"))
+        with mock.patch.object(os, "access", lambda p, m: True): self.assertIsNone(S["pasta_problem"]())
 
     def test_preview_prints_the_pasta_command_first(self):
         out = io.StringIO()

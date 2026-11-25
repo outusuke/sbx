@@ -859,6 +859,14 @@ def doctor():
     row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1, gnome_shell=1, kde=1, a11y=1, talk=, bluetooth=1, battery=1 and avahi=1: {install_hint('xdg-dbus-proxy')}")
     ps = shutil.which("pasta")
     row("OK" if ps else "WARN", "pasta", "" if ps else f"only needed for net_private=1: {install_hint('passt')}")
+    if ps:
+        pr = pasta_problem()
+        if not pr:
+            true = shutil.which("true") or "/bin/true"
+            try: r = subprocess.run([ps, "--config-net", "--", true], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+            except (OSError, subprocess.TimeoutExpired) as e: r = subprocess.CompletedProcess([], 1, "", str(e) or "timed out")
+            if r.returncode: pr = (r.stderr.strip().splitlines() or ["failed"])[-1][:160]
+        row("WARN" if pr else "OK", "pasta can set up a network" if not pr else "pasta cannot set up a network: " + pr, "only needed for net_private=1" if pr else "")
     sd = shutil.which("systemd-run")
     row("OK" if sd else "WARN", "systemd-run", "" if sd else "only needed for memory/tasks/cpu limits")
     wp = wayland_path()
