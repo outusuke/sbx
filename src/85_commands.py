@@ -23,7 +23,7 @@ def cmd_show(a):
         auto = k == "wayland_strict" and src[k] == "default" and cfg["wayland"] and wayland_path() and wl_supported(wayland_path())
         print(f"  {k:<16} = {int(cfg[k]) or int(bool(auto))}   [{'default, on because the compositor can restrict programs' if auto else src[k]}]")
     for k in LIMITS:
-        if cfg[k]: print(f"  {k:<16} = {cfg[k]}   [{src[k]}]")
+        if cfg[k] or k == "share_dirs": print(f"  {k:<16} = {cfg[k] or 'none'}   [{src[k]}]")
     for k in LISTS:
         for v in cfg[k]: print(f"  {k:<16} = {v}   [{src[(k, v)]}]")
     for k, flag in (("whitelist", "whitelist"), ("read_only", "read_only")):

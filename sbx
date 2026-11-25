@@ -74,10 +74,15 @@ SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True,
            "sound": True, "gpu_render_only": False, "portals": True, "hostname": False, "privacy": False, "userns": False, "allow_32bit": False, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "ntsync": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
            "compat": False, "tray": False, "mpris": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, "bluetooth": False, "battery": False, "avahi": False, **{k: False for k in PORTAL_EXTRA}}
+# Your real folders that get a per-program subfolder (<folder>/sbx/NAME) mounted over the same folder in the private home: name -> XDG key.
+SHARE_DIRS = {"Downloads": "DOWNLOAD", "Documents": "DOCUMENTS", "Pictures": "PICTURES", "Music": "MUSIC", "Videos": "VIDEOS"}
+SHARE_DEFAULT = ",".join(SHARE_DIRS)
+_SHARE_ONE = "(?:" + "|".join(SHARE_DIRS) + ")"
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall", "talk")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
-LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%", "gtk_portal": r"auto|0|1"}
+LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%", "gtk_portal": r"auto|0|1",
+          "share_dirs": _SHARE_ONE + r"(?:\s*,\s*" + _SHARE_ONE + ")*"}
 # Folders in your home that hold secrets. Sharing one (or a folder around one) needs allow_sensitive=1 / --allow-sensitive.
 SENSITIVE = [".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".netrc", ".git-credentials", ".password-store", ".config/gcloud",
              ".config/gh", ".config/rclone", ".local/share/keyrings", ".mozilla", ".thunderbird", ".config/google-chrome",
@@ -1194,6 +1199,7 @@ def parse_conf(path):
 def load_conf(name, ignore=False):
     """Built-in defaults < default.conf < apps/NAME.conf. Lists add up. Returns (settings, where each value came from)."""
     cfg = {**SCALARS, **{k: "" for k in LIMITS}, **{k: [] for k in LISTS}}
+    cfg["share_dirs"] = SHARE_DEFAULT
     src = {k: "default" for k in cfg}
     if ignore: return cfg, src
     for label, path in (("default.conf", f"{CONF}/default.conf"), (f"apps/{name}.conf", f"{CONF}/apps/{name}.conf")):
@@ -1317,6 +1323,8 @@ def own_folder(real):
     makes in the current folder), or (None, reason) when that folder is your home, a hidden folder, a general-purpose one
     like Downloads, or not one sbx shares."""
     d = os.path.dirname(real)
+    if any(d == g + "/sbx" or d.startswith(g + "/sbx/") for g in generic_folders() - {HOME}):
+        return None, f"{tilde(d)} is a per-program shared folder (share_dirs)"
     if d in generic_folders(): return None, f"{tilde(d)} holds all sorts of things (your home, Downloads, Desktop...)"
     if d.startswith(HOME + "/"):
         if d[len(HOME) + 1:].split("/")[0].startswith("."): return None, f"{tilde(d)} is a hidden folder"
@@ -1413,15 +1421,21 @@ def write_origin(name, path, fp=None, moved=None):
     replace_file(p, "\n".join(lines) + "\n")
 
 
-def downloads_dir():
-    """Your Downloads folder: XDG_DOWNLOAD_DIR in user-dirs.dirs (translated names), else ~/Downloads."""
+def user_dir(key):
+    """One of your folders by its XDG name (DOWNLOAD, DOCUMENTS...): the line in user-dirs.dirs (translated names), a path inside your
+    home; None when the file has no such line, or it points at the home itself or outside it."""
     try:
         with open(f"{os.environ.get('XDG_CONFIG_HOME') or HOME + '/.config'}/user-dirs.dirs") as f:
-            m = re.search(r'^XDG_DOWNLOAD_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M)
-        if m and m[1]: return f"{HOME}/{m[1]}".rstrip("/")
+            m = re.search(r'^XDG_' + key + r'_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M)
     except OSError:
-        pass
-    return f"{HOME}/Downloads"
+        return None
+    p = os.path.normpath(f"{HOME}/{m[1]}") if m and m[1] else None
+    return p if p and p.startswith(HOME + "/") else None
+
+
+def downloads_dir():
+    """Your Downloads folder: XDG_DOWNLOAD_DIR in user-dirs.dirs (translated names), else ~/Downloads."""
+    return user_dir("DOWNLOAD") or f"{HOME}/Downloads"
 
 
 def source_kind(path):
@@ -1692,6 +1706,72 @@ def refresh_origin(name, real, rec):
         pass
 
 
+# ---------------------------------------------------------------- shared folders
+def share_names(text):
+    """The folder names in a share_dirs value, in SHARE_DIRS order."""
+    want = {x.strip() for x in text.split(",")}
+    return [n for n in SHARE_DIRS if n in want]
+
+
+def share_hosts(names):
+    """[(your real folder, its path inside the sandbox)] for NAMES. Left out: a folder that is unset, missing, your home, hidden,
+    secret, or inside another one in the list."""
+    found = []
+    for n in names:
+        d = user_dir(SHARE_DIRS[n])
+        if d and os.path.isdir(d) and not d[len(HOME) + 1:].startswith(".") and not sensitive_match(d) and d not in found: found.append(d)
+    found.sort(key=lambda d: d.count("/"))
+    keep = []
+    for d in found:
+        if not any(d.startswith(k + "/") for k in keep): keep.append(d)
+    return keep
+
+
+def share_move(old, new):
+    """Move what is in the folder OLD (the private home's own Downloads, ...) into NEW. Nothing is overwritten and nothing is deleted:
+    (moved, left) counts; an entry whose name is taken, or that can't be renamed, stays."""
+    moved = left = 0
+    try: entries = sorted(os.listdir(old))
+    except OSError: return 0, 0
+    for e in entries:
+        if os.path.lexists(f"{new}/{e}"): left += 1; continue
+        try: os.rename(f"{old}/{e}", f"{new}/{e}"); moved += 1
+        except OSError: left += 1
+    return moved, left
+
+
+def share_mounts(name, text, live):
+    """[(folder for this program, path inside the sandbox)] to bind after the private home. live=True also makes the folders (mode
+    0700) and moves what the private home already holds there. A folder that isn't safe to use (sbx or sbx/NAME is a link or not
+    a plain folder, the private home's own folder is behind a link, it can't be made) is skipped with a warning: it stays in the
+    private home."""
+    out, moved, left = [], 0, 0
+    home = os.path.realpath(f"{HOMES}/{name}")
+    for d in share_hosts(share_names(text)):
+        rel = d[len(HOME) + 1:]
+        base, own = f"{d}/sbx", f"{d}/sbx/{name}"
+        bad = next((p for p in (base, own) if os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p))), None)
+        inside = f"{HOMES}/{name}/{rel}"
+        if bad: why = f"{tilde(bad)} is a link or not a plain folder"
+        elif os.path.realpath(inside) != f"{home}/{rel}": why = f"{tilde(inside)} is behind a link"
+        else: why = None
+        if why is None and live:
+            try:
+                for p in (base, own):
+                    if not os.path.isdir(p): os.mkdir(p, 0o700)
+            except OSError as e:
+                why = f"can't make {tilde(own)} ({e.strerror})"
+        if why:
+            if live: warn(f"share_dirs: {rel} stays in the private home: {why}")
+            continue
+        if live and os.path.isdir(inside):
+            m, k = share_move(inside, own)
+            moved, left = moved + m, left + k
+        out.append((own, f"{HOME}/{rel}"))
+    if live and moved: warn(f"moved {moved} item{'s' if moved != 1 else ''} from the private home's shared folders into <folder>/sbx/{name}" + (f"; {left} left in place (the name is taken there)" if left else ""))
+    return out
+
+
 # ---------------------------------------------------------------- the bwrap command
 def fake_passwd():
     """A minimal /etc/passwd for privacy=1: you (no full name), root and nobody. Written from scratch, not filtered from the
@@ -1916,6 +1996,8 @@ def build(prog, args, live=False, o=None):
     for d in HIDE_SYS + ([] if cfg["net"] and not priv else ["/sys/class/net"]):     # /sys/class/net would list the host's cards even without a network, or with pasta's own
         if os.path.isdir(d): a += ["--tmpfs", d]
     a += ["--tmpfs", HOME] if cfg["private"] else ["--bind", f"{HOMES}/{name}", HOME]     # private=1: erased on exit
+    if not cfg["private"]:
+        for own, dst in share_mounts(name, cfg["share_dirs"], live): a += ["--bind", own, dst]
     for i in range(0, len(late), 3): mount(late[i], late[i + 1], late[i + 2])
     if gui and cfg["theme"]:
         for rel in THEME: mount("--ro-bind-try", f"{HOME}/{rel}")
@@ -2230,7 +2312,7 @@ FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "
          "--tray": ("tray", True), "--mpris": ("mpris", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--bluetooth": ("bluetooth", True), "--battery": ("battery", True), "--avahi": ("avahi", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True), "--ntsync": ("ntsync", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
-         "--compat": ("compat", True), "--userns": ("userns", True), "--allow-32bit": ("allow_32bit", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
+         "--compat": ("compat", True), "--userns": ("userns", True), "--allow-32bit": ("allow_32bit", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True), "--no-share-dirs": ("share_dirs", ""),
          **{"--" + k.replace("_", "-"): (k, True) for k in (*PORTAL_EXTRA, *PORTAL_DEFAULT_ON, "portal_file_transfer")},
          **{"--no-" + k.replace("_", "-"): (k, False) for k in (*PORTAL_TOGGLES, *PORTAL_DEFAULT_ON, "portal_file_transfer")}}
 VALUE_FLAGS = {"--whitelist": "whitelist", "--read-only": "read_only", "--env": "env", "--setenv": "setenv",
@@ -2276,6 +2358,7 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --single-instance     a second launch hands its files to the running one (shares a private $TMPDIR per program)\n"
          "  --camera --alsa --input --kvm --ntsync --rocm --printing --ssh-agent     share that device or socket\n"
          "  --no-theme    don't show your fonts, icons, GTK settings, title-bar buttons and cursor\n"
+         "  --no-share-dirs        no per-program folders in Downloads, Documents, Pictures, Music and Videos (setting: share_dirs=Downloads,Documents,...; empty = none)\n"
          "  --portal-remote-desktop --portal-input-capture --portal-launcher --portal-background    one more desktop portal each (off by default; needs --portals)\n"
          "  --no-portal-notification --no-portal-openuri --no-portal-print --no-portal-trash --no-portal-email --no-portal-inhibit --no-portal-network\n"
          "  --no-portal-file-transfer --no-portal-screenshot --no-portal-screencast --no-portal-location --no-portal-shortcuts --no-portal-usb --no-portal-clipboard --no-portal-wallpaper --no-portal-secret\n"
@@ -2371,7 +2454,7 @@ def cmd_show(a):
         auto = k == "wayland_strict" and src[k] == "default" and cfg["wayland"] and wayland_path() and wl_supported(wayland_path())
         print(f"  {k:<16} = {int(cfg[k]) or int(bool(auto))}   [{'default, on because the compositor can restrict programs' if auto else src[k]}]")
     for k in LIMITS:
-        if cfg[k]: print(f"  {k:<16} = {cfg[k]}   [{src[k]}]")
+        if cfg[k] or k == "share_dirs": print(f"  {k:<16} = {cfg[k] or 'none'}   [{src[k]}]")
     for k in LISTS:
         for v in cfg[k]: print(f"  {k:<16} = {v}   [{src[(k, v)]}]")
     for k, flag in (("whitelist", "whitelist"), ("read_only", "read_only")):

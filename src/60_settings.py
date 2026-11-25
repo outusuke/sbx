@@ -52,6 +52,7 @@ def parse_conf(path):
 def load_conf(name, ignore=False):
     """Built-in defaults < default.conf < apps/NAME.conf. Lists add up. Returns (settings, where each value came from)."""
     cfg = {**SCALARS, **{k: "" for k in LIMITS}, **{k: [] for k in LISTS}}
+    cfg["share_dirs"] = SHARE_DEFAULT
     src = {k: "default" for k in cfg}
     if ignore: return cfg, src
     for label, path in (("default.conf", f"{CONF}/default.conf"), (f"apps/{name}.conf", f"{CONF}/apps/{name}.conf")):

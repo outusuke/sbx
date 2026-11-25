@@ -2532,6 +2532,122 @@ class Units(unittest.TestCase):
         self.assertIn(".ssh", sch["sensitive"])
 
 
+    # -- per-program shared folders (share_dirs)
+    def share_env(self, text=None):
+        text = 'XDG_DOWNLOAD_DIR="$HOME/Transferencias"\nXDG_DOCUMENTS_DIR="$HOME/Documentos"\nXDG_MUSIC_DIR="$HOME/"\nXDG_PICTURES_DIR="$HOME/Fotos"\nXDG_VIDEOS_DIR="$HOME/Videos"\nXDG_DESKTOP_DIR="$HOME/Escritorio"\n' if text is None else text
+        self.write(".config/user-dirs.dirs", text)
+        for d in ("Transferencias", "Documentos", "Videos", "Escritorio"): os.makedirs(f"{self.home}/{d}", exist_ok=True)
+        patch = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": f"{self.home}/.config"}); patch.start(); self.addCleanup(patch.stop)
+
+    def test_share_dirs_mounts_a_subfolder_per_program_over_the_matching_private_home_folder(self):
+        S = self.S; self.share_env()
+        h = self.home
+        a = S["build"]("/bin/true", [], False, {"name": "tool", "ignore_config": True})[1]
+        pairs = [(a[i + 1], a[i + 2]) for i, x in enumerate(a) if x == "--bind"]
+        self.assertEqual(pairs[:1], [(f"{h}/.sbx-homes/tool", h)])
+        for d in ("Transferencias", "Documentos", "Videos"): self.assertIn((f"{h}/{d}/sbx/tool", f"{h}/{d}"), pairs)
+        self.assertLess(a.index(f"{h}/.sbx-homes/tool"), a.index(f"{h}/Transferencias/sbx/tool"))
+        for gone in ("Escritorio", "Musica", "Fotos"): self.assertFalse([p for p in pairs if gone in p[1]], gone)       # not listed, unset, missing
+        self.assertFalse(os.path.exists(f"{h}/Transferencias/sbx"))                                                  # a preview makes nothing
+        self.assertEqual([p[1] for p in pairs if p[1] == h], [h])                                                    # never the home itself
+
+    def test_share_dirs_is_a_setting_with_a_flag_that_only_turns_it_off(self):
+        S = self.S; self.share_env()
+        cfg, src = S["effective"]("tool", {})
+        self.assertEqual((cfg["share_dirs"], src["share_dirs"]), ("Downloads,Documents,Pictures,Music,Videos", "default"))
+        self.write(".config/sbx/default.conf", "share_dirs=Downloads, Videos\n"); self.write(".config/sbx/apps/tool.conf", "share_dirs=\n")
+        self.assertEqual(S["effective"]("other", {})[0]["share_dirs"], "Downloads, Videos")
+        cfg, src = S["effective"]("tool", {}); self.assertEqual((cfg["share_dirs"], src["share_dirs"]), ("", "apps/tool.conf"))
+        self.write(".config/sbx/apps/tool.conf", "share_dirs=Desktop\n"); self.warned.clear()
+        self.assertEqual(S["effective"]("tool", {})[0]["share_dirs"], "Downloads, Videos"); self.assertTrue(self.warned)      # an unknown folder is refused
+        o, _ = S["parse_options"](["--no-share-dirs", "x"]); self.assertEqual(o, {"share_dirs": ""})
+        cfg, src = S["effective"]("other", o); self.assertEqual((cfg["share_dirs"], src["share_dirs"]), ("", "flag"))
+        a = S["build"]("/bin/true", [], False, {"name": "other", **o})[1]
+        self.assertNotIn(f"{self.home}/Transferencias/sbx/other", a)
+        a = S["build"]("/bin/true", [], False, {"name": "other"})[1]                                                   # default.conf: Downloads and Videos only
+        self.assertIn(f"{self.home}/Transferencias/sbx/other", a); self.assertIn(f"{self.home}/Videos/sbx/other", a); self.assertNotIn(f"{self.home}/Documentos/sbx/other", a)
+
+    def test_share_dirs_is_ignored_with_private_and_leaves_nothing_behind(self):
+        S = self.S; self.share_env()
+        a = S["build"]("/bin/true", [], False, {"name": "tool", "ignore_config": True, "private": True})[1]
+        self.assertFalse([x for x in a if "/sbx/tool" in x and "/.sbx-homes" not in x and "/run/" not in x])
+        self.assertFalse(os.path.exists(f"{self.home}/Transferencias/sbx"))
+
+    def test_share_dirs_makes_private_folders_and_moves_old_private_home_files_without_overwriting_or_deleting(self):
+        S = self.S; self.share_env(); h = self.home
+        old = f"{h}/.sbx-homes/tool/Transferencias"
+        self.write(".sbx-homes/tool/Transferencias/a.txt", "old a"); self.write(".sbx-homes/tool/Transferencias/clash.txt", "private copy")
+        self.write(".sbx-homes/tool/Transferencias/dir/inner.txt", "inner"); self.write("Transferencias/sbx/tool/clash.txt", "host copy")
+        os.chmod(f"{h}/Transferencias/sbx", 0o755)
+        def boom(*a, **k): raise AssertionError("something was deleted")
+        with mock.patch.object(os, "rmdir", boom), mock.patch.object(os, "remove", boom), mock.patch.object(os, "unlink", boom), mock.patch.object(shutil, "rmtree", boom):
+            mounts = S["share_mounts"]("tool", S["SHARE_DEFAULT"], True)
+        self.assertIn((f"{h}/Transferencias/sbx/tool", f"{h}/Transferencias"), mounts)
+        with open(f"{h}/Transferencias/sbx/tool/a.txt") as f: self.assertEqual(f.read(), "old a")
+        self.assertTrue(os.path.isfile(f"{h}/Transferencias/sbx/tool/dir/inner.txt"))
+        with open(f"{h}/Transferencias/sbx/tool/clash.txt") as f: self.assertEqual(f.read(), "host copy")
+        with open(f"{old}/clash.txt") as f: self.assertEqual(f.read(), "private copy")                                 # the conflict stays where it was
+        self.assertTrue(os.path.isdir(old)); self.assertEqual(sorted(os.listdir(old)), ["clash.txt"])
+        self.assertEqual(len(self.warned), 1); self.assertIn("moved 2 items", self.warned[0]); self.assertIn("1 left", self.warned[0])
+        for d in ("Documentos", "Videos"):
+            self.assertEqual(os.stat(f"{h}/{d}/sbx/tool").st_mode & 0o777, 0o700)
+            self.assertEqual(os.stat(f"{h}/{d}/sbx").st_mode & 0o777, 0o700)
+        self.assertEqual(os.stat(f"{h}/Transferencias/sbx").st_mode & 0o777, 0o755)                                    # an existing folder keeps its mode
+        self.warned.clear(); S["share_mounts"]("tool", S["SHARE_DEFAULT"], True); self.assertEqual(self.warned, [])          # nothing more to move, nothing to say
+
+    def test_share_dirs_falls_back_to_the_private_home_for_a_link_or_a_file_in_the_way(self):
+        S = self.S; self.share_env(); h = self.home
+        os.makedirs(f"{self.tmp}/elsewhere"); os.symlink(f"{self.tmp}/elsewhere", f"{h}/Transferencias/sbx")                  # sbx itself is a link
+        self.write("Documentos/sbx/tool", "a file")                                                                          # sbx/NAME is not a folder
+        os.makedirs(f"{h}/Videos/sbx"); os.symlink(f"{self.tmp}/elsewhere", f"{h}/Videos/sbx/tool")                          # sbx/NAME is a link
+        mounts = S["share_mounts"]("tool", S["SHARE_DEFAULT"], True)
+        self.assertEqual(mounts, []); self.assertEqual(len(self.warned), 3, self.warned)
+        self.assertEqual(os.listdir(f"{self.tmp}/elsewhere"), [])                                                            # nothing was written through a link
+        self.assertEqual(S["share_mounts"]("tool", S["SHARE_DEFAULT"], False), [])                                           # a preview agrees
+        os.makedirs(f"{h}/.sbx-homes/two"); os.symlink(f"{self.tmp}/elsewhere", f"{h}/.sbx-homes/two/Videos")               # the private home's own folder is a link
+        self.warned.clear(); self.assertEqual(S["share_mounts"]("two", "Videos", True), []); self.assertEqual(len(self.warned), 1)
+
+    def test_share_dirs_skips_folders_that_are_hidden_secret_or_inside_another_shared_one(self):
+        S = self.S
+        self.share_env('XDG_DOWNLOAD_DIR="$HOME/.cache/dl"\nXDG_DOCUMENTS_DIR="$HOME/.ssh"\nXDG_MUSIC_DIR="$HOME/Documentos/Musica"\nXDG_PICTURES_DIR="$HOME/../x"\nXDG_VIDEOS_DIR="$HOME/Videos"\n')
+        for d in (".cache/dl", ".ssh", "Documentos/Musica", "Videos"): os.makedirs(f"{self.home}/{d}", exist_ok=True)
+        self.assertEqual(S["share_hosts"](list(S["SHARE_DIRS"])), [f"{self.home}/Videos", f"{self.home}/Documentos/Musica"])
+        self.share_env('XDG_DOWNLOAD_DIR="$HOME/Documentos"\nXDG_DOCUMENTS_DIR="$HOME/Documentos"\nXDG_MUSIC_DIR="$HOME/Documentos/Musica"\n')
+        self.assertEqual(S["share_hosts"](list(S["SHARE_DIRS"])), [f"{self.home}/Documentos"])
+
+    def test_clean_deletes_only_the_private_home_and_never_the_shared_folders(self):
+        S = self.S; self.share_env()
+        self.write(".sbx-homes/tool/x"); self.write("Transferencias/sbx/tool/keep.txt", "mine")
+        S["wipe_home"]("tool")
+        self.assertFalse(os.path.exists(f"{self.home}/.sbx-homes/tool")); self.assertTrue(os.path.isfile(f"{self.home}/Transferencias/sbx/tool/keep.txt"))
+
+    def test_downloads_sbx_folders_do_not_confuse_the_downloaded_label_or_the_general_folders(self):
+        S = self.S; self.share_env(); h = self.home
+        self.assertEqual(S["source_kind"](f"{h}/Transferencias/sbx/firefox/tool"), "Downloaded")                              # still under Downloads: the label is right
+        self.assertEqual(S["source_kind"](f"{h}/Transferencias/tool"), "Downloaded")
+        self.assertFalse([p for p in S["generic_folders"]() if p[len(h):].startswith("/sbx") or "/sbx" in p[len(h) + 1:]])
+        for p in (f"{h}/Transferencias/sbx/firefox/tool", f"{h}/Transferencias/sbx/tool", f"{h}/Documentos/sbx/x/y/tool"):
+            folder, why = S["own_folder"](p); self.assertIsNone(folder, p); self.assertIn("per-program shared folder", why)
+        self.assertEqual(S["own_folder"](f"{h}/Games/tool/prog"), (f"{h}/Games/tool", None))
+        self.assertEqual(S["own_folder"](f"{h}/Games/sbx/prog"), (f"{h}/Games/sbx", None))                                   # only the share folders of a general folder are special
+
+    def test_share_dirs_survives_export_and_import_and_does_not_count_as_widening(self):
+        S = self.S
+        self.write(".config/sbx/apps/tool.conf", "share_dirs=Downloads\nnet=0\n")
+        text = S["export_text"]("tool"); self.assertIn("share_dirs=Downloads", text)
+        self.assertEqual(S["widening"](text), [])
+        self.assertEqual(S["widening"]("share_dirs=Downloads,Music\n"), [])
+
+    def test_sbx_show_names_share_dirs_and_where_it_came_from(self):
+        S = self.S; self.share_env(); self.write(".config/sbx/apps/tool.conf", "share_dirs=\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_show"](["tool"])
+        self.assertRegex(out.getvalue(), r"share_dirs\s+= none\s+\[apps/tool.conf\]")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): S["cmd_show"](["other"])
+        self.assertRegex(out.getvalue(), r"share_dirs\s+= Downloads,Documents,Pictures,Music,Videos\s+\[default\]")
+
+
 class Install(unittest.TestCase):
     """sbx install / uninstall: a downloaded program goes to ~/Apps/NAME and only starts through sbx."""
     def setUp(self):
@@ -4825,6 +4941,21 @@ def bwrap_works():
     if not shutil.which("bwrap"): return "bubblewrap is not installed"
     r = subprocess.run(["bwrap", "--unshare-all", "--ro-bind", "/", "/", "/usr/bin/true"], capture_output=True)
     return None if r.returncode == 0 else "bubblewrap cannot create sandboxes here: " + r.stderr.decode()[:100]
+
+
+    def test_the_window_reads_share_dirs_like_sbx_and_keeps_a_custom_list(self):
+        G = self.G
+        os.makedirs(G["APPS"], exist_ok=True)
+        self.assertEqual(G["share_text"](None), G["SHARE_ALL"]); self.assertEqual(G["share_text"]("app"), G["SHARE_ALL"])
+        with open(f"{G['CONF']}/default.conf", "w") as f: f.write("share_dirs=Downloads, Music\nnet=0\n")
+        self.assertEqual(G["share_text"]("app"), "Downloads, Music")
+        with open(f"{G['APPS']}/app.conf", "w") as f: f.write("share_dirs=Desktop\n")
+        self.assertIsNone(G["share_own"]("app")); self.assertEqual(G["share_text"]("app"), "Downloads, Music")      # an unknown folder is ignored, as in sbx
+        G["set_limit"]("app", "share_dirs", ""); self.assertEqual(G["share_text"]("app"), "")
+        G["set_limit"]("app", "share_dirs", None); self.assertEqual(G["share_text"]("app"), "Downloads, Music")
+        G["set_limit"](None, "share_dirs", ""); self.assertEqual(G["share_text"](None), "")
+        with open(f"{G['CONF']}/default.conf") as f: self.assertEqual(f.read().splitlines(), ["net=0", "share_dirs="])        # other lines stay
+        self.assertEqual(self.S["SHARE_DIRS"].keys(), dict.fromkeys(G["SHARE_NAMES"]).keys())
 
 
 class Isolation(unittest.TestCase):

@@ -62,10 +62,15 @@ SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True,
            "sound": True, "gpu_render_only": False, "portals": True, "hostname": False, "privacy": False, "userns": False, "allow_32bit": False, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "ntsync": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
            "compat": False, "tray": False, "mpris": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, "bluetooth": False, "battery": False, "avahi": False, **{k: False for k in PORTAL_EXTRA}}
+# Your real folders that get a per-program subfolder (<folder>/sbx/NAME) mounted over the same folder in the private home: name -> XDG key.
+SHARE_DIRS = {"Downloads": "DOWNLOAD", "Documents": "DOCUMENTS", "Pictures": "PICTURES", "Music": "MUSIC", "Videos": "VIDEOS"}
+SHARE_DEFAULT = ",".join(SHARE_DIRS)
+_SHARE_ONE = "(?:" + "|".join(SHARE_DIRS) + ")"
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall", "talk")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
-LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%", "gtk_portal": r"auto|0|1"}
+LIMITS = {"memory": r"\d+[KMGT]?|\d+%", "tasks": r"\d+", "cpu": r"\d+%", "gtk_portal": r"auto|0|1",
+          "share_dirs": _SHARE_ONE + r"(?:\s*,\s*" + _SHARE_ONE + ")*"}
 # Folders in your home that hold secrets. Sharing one (or a folder around one) needs allow_sensitive=1 / --allow-sensitive.
 SENSITIVE = [".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".netrc", ".git-credentials", ".password-store", ".config/gcloud",
              ".config/gh", ".config/rclone", ".local/share/keyrings", ".mozilla", ".thunderbird", ".config/google-chrome",

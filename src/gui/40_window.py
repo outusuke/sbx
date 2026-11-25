@@ -396,6 +396,7 @@ class Win(Adw.ApplicationWindow):
             if not bar.get_search_mode(): search.set_text("")                    # closing the search shows everything again
         searchbar.connect("notify::search-mode-enabled", closed)
         page.add(self.limits_group(scope, refresh_tech))
+        page.add(self.share_group(scope, refresh_tech))
         for grp in self.folders_group(scope, refresh_tech): page.add(grp)
         page.add(self.env_group(scope, refresh_tech))
         page.add(self.talk_group(scope, refresh_tech))
@@ -774,6 +775,45 @@ class Win(Adw.ApplicationWindow):
         set_active(link_is_ours(scope))
         row.connect("notify::active", toggled)
         return row
+
+    def share_group(self, scope, on_change=None):
+        """The switch for share_dirs: each program gets its own subfolder (<folder>/sbx/NAME) of Downloads, Documents, Pictures, Music and Videos
+        as that folder in its private home. Off writes share_dirs= (private home only). A custom list in the file is shown, not overwritten."""
+        g = Adw.PreferencesGroup(title="Program's own folders")
+        row = Adw.SwitchRow(title="Own folders in Downloads, Documents, Pictures, Music and Videos", use_markup=False)
+        undo = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Use the default again")
+        row.add_suffix(undo); g.add(row)
+        busy = [False]
+        base = ("The program sees only its own subfolder of each (for example ~/Downloads/sbx/NAME as ~/Downloads), never the rest of the folder. "
+                "Off: everything it saves stays in its private home.")
+
+        def show():
+            text = share_text(scope)
+            names = [x.strip() for x in text.split(",") if x.strip()]
+            busy[0] = True; row.set_active(bool(names)); busy[0] = False
+            custom = bool(names) and set(names) != set(SHARE_NAMES)
+            row.set_subtitle(base + (f"\nOnly {', '.join(names)}, as set in the settings file." if custom else ""))
+            own = share_own(scope) is not None
+            undo.set_visible(own)
+            undo.set_tooltip_text("Back to the " + ("default" if scope is not None else "built-in setting"))
+            if on_change: on_change()
+
+        def toggled(*_):
+            if busy[0]: return
+            if row.get_active():
+                inherited = share_text(None) if scope is not None else SHARE_ALL
+                set_limit(scope, "share_dirs", None if inherited else SHARE_ALL)      # the default says none: this program asks for all five
+                return show()
+            names = [x for x in share_text(scope).split(",") if x]
+            if set(names) == set(SHARE_NAMES):
+                set_limit(scope, "share_dirs", ""); return show()
+            show()                                                                      # a custom list: keep it unless the person confirms
+            self.ask("Turn off the program's own folders?", f"The settings file lists only {', '.join(names)}. Turning this off replaces that list with none.",
+                     "Turn off", lambda: (set_limit(scope, "share_dirs", ""), show()))
+        row.connect("notify::active", toggled)
+        undo.connect("clicked", lambda *_: (set_limit(scope, "share_dirs", None), show()))
+        show()
+        return g
 
     def folders_group(self, scope, on_change=None):
         """One list of shared folders and files, in the order of the settings file. Each row has a button that says Read only or Read and write and flips it, and a button to stop sharing it."""

@@ -68,6 +68,7 @@ complete -c sbx -n $c -l privacy -d "Minimal /etc/passwd: no real name, no other
 complete -c sbx -n $c -l userns -d "Allow nested user namespaces"
 complete -c sbx -n $c -l allow-32bit -d "Allow 32-bit programs (weakens the socket filter)"
 complete -c sbx -n $c -l no-theme -d "Don't show your fonts, icons and GTK settings"
+complete -c sbx -n $c -l no-share-dirs -d "No per-program folders in Downloads, Documents, Pictures, Music, Videos"
 for d in camera alsa input kvm ntsync rocm printing ssh-agent
     complete -c sbx -n $c -l $d -d "Share that device or socket"
 end

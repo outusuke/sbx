@@ -58,15 +58,21 @@ def write_origin(name, path, fp=None, moved=None):
     replace_file(p, "\n".join(lines) + "\n")
 
 
-def downloads_dir():
-    """Your Downloads folder: XDG_DOWNLOAD_DIR in user-dirs.dirs (translated names), else ~/Downloads."""
+def user_dir(key):
+    """One of your folders by its XDG name (DOWNLOAD, DOCUMENTS...): the line in user-dirs.dirs (translated names), a path inside your
+    home; None when the file has no such line, or it points at the home itself or outside it."""
     try:
         with open(f"{os.environ.get('XDG_CONFIG_HOME') or HOME + '/.config'}/user-dirs.dirs") as f:
-            m = re.search(r'^XDG_DOWNLOAD_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M)
-        if m and m[1]: return f"{HOME}/{m[1]}".rstrip("/")
+            m = re.search(r'^XDG_' + key + r'_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M)
     except OSError:
-        pass
-    return f"{HOME}/Downloads"
+        return None
+    p = os.path.normpath(f"{HOME}/{m[1]}") if m and m[1] else None
+    return p if p and p.startswith(HOME + "/") else None
+
+
+def downloads_dir():
+    """Your Downloads folder: XDG_DOWNLOAD_DIR in user-dirs.dirs (translated names), else ~/Downloads."""
+    return user_dir("DOWNLOAD") or f"{HOME}/Downloads"
 
 
 def source_kind(path):

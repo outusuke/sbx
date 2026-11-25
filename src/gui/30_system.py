@@ -447,6 +447,7 @@ def folder_problem(name):
             for m in re.finditer(r'^XDG_\w+_DIR="(?:\$HOME|' + re.escape(HOME) + r')/?([^"]*)"', f.read(), re.M): generic.add(f"{HOME}/{m[1]}".rstrip("/"))
     except OSError:
         pass
+    if any(d == g + "/sbx" or d.startswith(g + "/sbx/") for g in generic - {HOME}): return f"{tilde(d)} is a per-program shared folder, so it is not shared again."
     if d in generic: return f"{tilde(d)} holds all sorts of things, so it is not shared. Move the program into a folder of its own."
     if d.startswith(HOME + "/") and d[len(HOME) + 1:].split("/")[0].startswith("."): return f"{tilde(d)} is a hidden folder, so it is not shared."
     if not (d.startswith(HOME + "/") or d.startswith("/tmp/")): return f"{d} is not inside your home or /tmp, so it is not shared."

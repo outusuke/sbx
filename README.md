@@ -39,6 +39,7 @@ Ubuntu 24.04+: AppArmor blocks user namespaces. `sbx doctor` shows the fix.
 
 - System: read-only
 - Your home: hidden, replaced by `~/.sbx-homes/NAME`
+- Downloads, Documents, Pictures, Music, Videos: the program's own subfolder (e.g. `~/Downloads/sbx/NAME`) shows up as that folder in its home; the rest of your folder stays hidden
 - `/tmp`, `/run`: empty tmpfs
 - Secrets (`/etc/shadow`, SSH host keys, other users): emptied
 - Environment: cleared, except locale, terminal and desktop variables
@@ -87,6 +88,7 @@ The program goes to `~/Apps/NAME` and is shared with it read-only. Its launcher 
 | `--private` | erase private home on exit |
 | `--here` | share current folder, read-write |
 | `--whitelist=PATH` / `--read-only=PATH` | share a path, read-write / read-only |
+| `--no-share-dirs` | no per-program folders in Downloads, Documents, Pictures, Music, Videos |
 | `--name=NAME` | separate home and settings |
 | `--app-id=ID` | the id the desktop is told the program has (a launcher's file name without `.desktop`); `sbx desktop` sets it |
 | `--memory=2G` `--tasks=512` `--cpu=200%` | limits |
@@ -111,6 +113,8 @@ memory=2G
 ```
 
 A program that reads or creates files in the folder it starts in needs `folder=1` (a switch in `sbx-gui`: "Start in the program's own folder"). It starts in the folder its file sits in and shares that folder read-write. The program must sit in a folder of its own: your home, Downloads, Desktop, Documents and hidden folders are never shared, and sbx warns why. `--here` is the same for the folder you are in. Without a `folder` setting, a program that sits in a folder named after it (`G-Diffuser/`, `G-Diffuser-v1.2.3-linux-x64/`) gets this automatically, and sbx says so on start. `folder=0` turns that off.
+
+Per-program folders: for each of Downloads, Documents, Pictures, Music and Videos that is set in `~/.config/user-dirs.dirs` and exists, `<folder>/sbx/NAME` is mounted over the same folder in the private home (`~/Downloads/sbx/firefox` is `~/Downloads` for firefox). The program sees only its own files there. `share_dirs=Downloads,Pictures` picks some, `share_dirs=` (or `--no-share-dirs`) turns it off, and `sbx-gui` has a switch on each program's page and on the defaults page. Files the program's private home already holds in those folders are moved over on first use, never overwriting. sbx creates the folders with mode 0700 and never deletes them, empty or not; if `sbx` or `sbx/NAME` is a link, sbx warns and that folder stays in the private home. `private=1` ignores it. `sbx clean` removes only the private home.
 
 Environment variables: `setenv=NAME=value` sets one for the program, `env=NAME` passes your own value through (also `--setenv=NAME=value`). `sbx-gui` has a list for both on each program's page.
 

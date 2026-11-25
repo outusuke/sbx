@@ -102,6 +102,8 @@ def own_folder(real):
     makes in the current folder), or (None, reason) when that folder is your home, a hidden folder, a general-purpose one
     like Downloads, or not one sbx shares."""
     d = os.path.dirname(real)
+    if any(d == g + "/sbx" or d.startswith(g + "/sbx/") for g in generic_folders() - {HOME}):
+        return None, f"{tilde(d)} is a per-program shared folder (share_dirs)"
     if d in generic_folders(): return None, f"{tilde(d)} holds all sorts of things (your home, Downloads, Desktop...)"
     if d.startswith(HOME + "/"):
         if d[len(HOME) + 1:].split("/")[0].startswith("."): return None, f"{tilde(d)} is a hidden folder"

@@ -225,6 +225,8 @@ def build(prog, args, live=False, o=None):
     for d in HIDE_SYS + ([] if cfg["net"] and not priv else ["/sys/class/net"]):     # /sys/class/net would list the host's cards even without a network, or with pasta's own
         if os.path.isdir(d): a += ["--tmpfs", d]
     a += ["--tmpfs", HOME] if cfg["private"] else ["--bind", f"{HOMES}/{name}", HOME]     # private=1: erased on exit
+    if not cfg["private"]:
+        for own, dst in share_mounts(name, cfg["share_dirs"], live): a += ["--bind", own, dst]
     for i in range(0, len(late), 3): mount(late[i], late[i + 1], late[i + 2])
     if gui and cfg["theme"]:
         for rel in THEME: mount("--ro-bind-try", f"{HOME}/{rel}")

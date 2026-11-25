@@ -336,6 +336,10 @@ and cursor theme and size. Without this option sbx reads those from your desktop
 sandbox cannot reach; on KDE, kwinrc and kcminputrc) and gives the program only them, as a small GSettings key file, so that for example
 GNOME's minimize and maximize buttons appear.
 .TP
+.B \-\-no\-share\-dirs
+Do not mount the program's own subfolders of Downloads, Documents, Pictures, Music and Videos
+(see share_dirs under SETTINGS); the program sees only its private home. Same as share_dirs= for one run.
+.TP
 .B \-\-compat
 Pass through the graphics and toolkit variables that are set (WGPU_*, ICED_BACKEND, MESA_*, RADV_*,
 VK_ICD_FILENAMES, SDL_VIDEODRIVER, QT_QPA_PLATFORM, GDK_BACKEND and similar). Tokens, keys and everything else
@@ -476,8 +480,24 @@ If folder is not set anywhere, a program whose folder name starts with the progr
 e.g. G\-Diffuser\-v1.2.3\-linux\-x64 for G\-Diffuser) gets folder=1 automatically, with the same limits, and sbx says so
 on start. folder=0 turns that off.
 .PP
+share_dirs is a comma list of Downloads, Documents, Pictures, Music and Videos (all five by default; empty means none).
+For each one that is set in
+.I ~/.config/user\-dirs.dirs
+and exists, sbx mounts
+.I <folder>/sbx/NAME
+over the same folder in the private home of NAME, so a program's downloads are easy to find and it sees only its own files there.
+Desktop, Templates, Public and your home are never used. The folders are made with mode 0700. A private home that already holds
+files in such a folder has them moved into the new one on first use, without overwriting anything. If
+.I <folder>/sbx
+or
+.I <folder>/sbx/NAME
+is a link or not a plain folder, sbx warns and leaves that folder in the private home. private=1 ignores share_dirs.
+sbx never deletes these folders, not even empty ones, and
+.B sbx clean
+removes only the private home.
+.PP
 Lists that add up across the two files: whitelist, read_only, env, setenv, allow_syscall, talk. Limits: memory, tasks,
-cpu (and gtk_portal, which takes auto, 1 or 0); an empty value in a program's file cancels the default's. Command\-line flags beat the files.
+cpu (and gtk_portal, which takes auto, 1 or 0, and share_dirs); an empty value in a program's file cancels the default's. Command\-line flags beat the files.
 .PP
 .B sbx show
 prints the result of all this.
@@ -571,6 +591,9 @@ The machine\-id of NAME.
 .TP
 .I ~/.sbx\-homes/NAME
 The private home of NAME.
+.TP
+.I ~/Downloads/sbx/NAME
+The part of your Downloads folder that NAME sees as its Downloads (likewise for Documents, Pictures, Music and Videos). Kept when NAME is cleaned.
 .TP
 .I ~/.local/state/sbx/sbx.log
 The launch log.

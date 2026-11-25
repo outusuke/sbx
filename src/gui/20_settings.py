@@ -128,6 +128,24 @@ def set_limit(scope, key, text):
     save(scope, [l for l in read_lines(scope) if key_of(l) != key] + ([f"{key}={text}"] if text is not None else []))
 
 
+def share_valid(v):
+    return all(x.strip() in SHARE_NAMES for x in v.split(",")) if v else True
+
+
+def share_own(scope):
+    """What the file of SCOPE says for share_dirs: its last valid line ('' = none, on purpose), None when the file says nothing."""
+    vals = [strip(l).partition("=")[2].strip() for l in read_lines(scope) if key_of(l) == "share_dirs"]
+    vals = [v for v in vals if share_valid(v)]
+    return vals[-1] if vals else None
+
+
+def share_text(scope):
+    """share_dirs as sbx reads it for SCOPE: its own file, else the default file, else all five folders."""
+    own = share_own(scope)
+    if own is None and scope is not None: own = share_own(None)
+    return SHARE_ALL if own is None else own
+
+
 def raw_list(scope, key):
     """The values of the KEY= lines of a settings file, for lists that parse() does not keep (setenv)."""
     return [strip(l).partition("=")[2].strip() for l in read_lines(scope) if key_of(l) == key]
