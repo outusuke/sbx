@@ -2543,7 +2543,7 @@ class Install(unittest.TestCase):
         os.chmod(f"{self.inst}/sbx", 0o755)
         self.S = load_sbx()
         self.S.update(HOME=self.home, CONF=f"{self.home}/.config/sbx", HOMES=f"{self.home}/.sbx-homes", APPS=f"{self.home}/Apps",
-                      INSTALLED=f"{self.home}/.config/sbx/installed")
+                      INSTALLED=f"{self.home}/.config/sbx/installed", ICON_THEME=f"{self.home}/.local/share/icons/hicolor")
         self.warned = []
         self.S["warn"] = self.warned.append
         self.S["ask_about_same_name"] = lambda n, o: True                                              # (the real ones may open a dialog)
