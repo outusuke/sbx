@@ -28,9 +28,14 @@ def portal_app_id(name):
 
 
 def tray_rules():
-    """Show a tray icon (StatusNotifierItem) and answer media keys (MPRIS). Nothing else on the bus."""
+    """Show a tray icon (StatusNotifierItem). Nothing else on the bus."""
     return ["--talk=org.kde.StatusNotifierWatcher"] + [
-        f"--own=org.kde.StatusNotifierItem-{p}-{i}" for p in TRAY_PIDS for i in TRAY_IDS] + ["--own=org.mpris.MediaPlayer2.*"]
+        f"--own=org.kde.StatusNotifierItem-{p}-{i}" for p in TRAY_PIDS for i in TRAY_IDS]
+
+
+def mpris_rules():
+    """Show up as a media player and answer media keys (MPRIS). Nothing else on the bus."""
+    return ["--own=org.mpris.MediaPlayer2.*"]
 
 
 # ---------------------------------------------------------------- GNOME Shell integration
@@ -102,7 +107,7 @@ def talk_rules(cfg):
 
 # Every switch that opens the session-bus proxy, with the function that gives its rules. A new integration is one line here: bus_rules() and the
 # check that starts the proxy (70_build.py) both read this list, so the switch can't be added without the proxy starting for it.
-BUS_INTEGRATIONS = (("tray", lambda cfg: tray_rules()), ("gnome_shell", gnome_shell_rules), ("kde", kde_rules))
+BUS_INTEGRATIONS = (("tray", lambda cfg: tray_rules()), ("mpris", lambda cfg: mpris_rules()), ("gnome_shell", gnome_shell_rules), ("kde", kde_rules))
 
 
 def bus_rules(cfg=None):

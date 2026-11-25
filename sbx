@@ -73,7 +73,7 @@ A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 SCALARS = {"net": True, "net_private": False, "private": False, "wayland": True, "wayland_strict": False, "x11": False, "gpu": True,
            "sound": True, "gpu_render_only": False, "portals": False, "hostname": False, "privacy": False, "userns": False, "allow_32bit": False, "theme": True, "camera": False,
            "alsa": False, "input": False, "kvm": False, "ntsync": False, "rocm": False, "printing": False, "ssh_agent": False, "allow_sensitive": False,
-           "compat": False, "tray": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, "bluetooth": False, "battery": False, "avahi": False, **{k: False for k in PORTAL_EXTRA}}
+           "compat": False, "tray": False, "mpris": False, "a11y": False, "gnome_shell": False, "gnome_shell_manage": False, "kde": False, "folder": False, "single_instance": False, "bluetooth": False, "battery": False, "avahi": False, **{k: False for k in PORTAL_EXTRA}}
 LISTS = ("whitelist", "read_only", "env", "setenv", "allow_syscall", "talk")
 # gtk_portal is a value too: auto (or no line), 1 or 0. With portals=1 it decides whether GTK_USE_PORTAL=1 is set: auto sets it, except
 # when the host's cursor size is 0 (the one confirmed GTK crash); 1 and 0 force it on or off.
@@ -855,9 +855,14 @@ def portal_app_id(name):
 
 
 def tray_rules():
-    """Show a tray icon (StatusNotifierItem) and answer media keys (MPRIS). Nothing else on the bus."""
+    """Show a tray icon (StatusNotifierItem). Nothing else on the bus."""
     return ["--talk=org.kde.StatusNotifierWatcher"] + [
-        f"--own=org.kde.StatusNotifierItem-{p}-{i}" for p in TRAY_PIDS for i in TRAY_IDS] + ["--own=org.mpris.MediaPlayer2.*"]
+        f"--own=org.kde.StatusNotifierItem-{p}-{i}" for p in TRAY_PIDS for i in TRAY_IDS]
+
+
+def mpris_rules():
+    """Show up as a media player and answer media keys (MPRIS). Nothing else on the bus."""
+    return ["--own=org.mpris.MediaPlayer2.*"]
 
 
 # ---------------------------------------------------------------- GNOME Shell integration
@@ -929,7 +934,7 @@ def talk_rules(cfg):
 
 # Every switch that opens the session-bus proxy, with the function that gives its rules. A new integration is one line here: bus_rules() and the
 # check that starts the proxy (70_build.py) both read this list, so the switch can't be added without the proxy starting for it.
-BUS_INTEGRATIONS = (("tray", lambda cfg: tray_rules()), ("gnome_shell", gnome_shell_rules), ("kde", kde_rules))
+BUS_INTEGRATIONS = (("tray", lambda cfg: tray_rules()), ("mpris", lambda cfg: mpris_rules()), ("gnome_shell", gnome_shell_rules), ("kde", kde_rules))
 
 
 def bus_rules(cfg=None):
@@ -2222,7 +2227,7 @@ def run(prog, args, opts):
 FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
          "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
-         "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--bluetooth": ("bluetooth", True), "--battery": ("battery", True), "--avahi": ("avahi", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-theme": ("theme", False),
+         "--tray": ("tray", True), "--mpris": ("mpris", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--bluetooth": ("bluetooth", True), "--battery": ("battery", True), "--avahi": ("avahi", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True), "--ntsync": ("ntsync", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--userns": ("userns", True), "--allow-32bit": ("allow_32bit", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
@@ -2263,7 +2268,8 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --hostname    hostname 'sbx' inside        --userns       the program can create user namespaces\n"
          "  --allow-32bit 32-bit programs may run (weakens the socket filter)\n"
          "  --privacy     /etc/passwd without your real name or the other accounts; the Account portal is blocked too\n"
-         "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
+         "  --tray        the program can show a tray icon (xdg-dbus-proxy)\n"
+         "  --mpris       media keys: the program shows up as a media player and answers play, pause and next (xdg-dbus-proxy)\n"
          "  --a11y        screen reader and other assistive tools can see the program (filtered accessibility bus, xdg-dbus-proxy)\n"
          "  --gnome-shell         the browser's GNOME Shell connector can list and install extensions (xdg-dbus-proxy); --gnome-shell-manage also enable, disable and uninstall them\n"
          "  --kde         the browser's Plasma integration: downloads as Plasma jobs, KRunner tabs and history, media controls, keep awake while downloading (xdg-dbus-proxy)\n"
@@ -3198,7 +3204,7 @@ def doctor():
         row("OK" if bwrap_has("--disable-userns") else "WARN", "userns=0 supported (bubblewrap 0.8+)")
     row("OK" if shutil.which("notify-send") else "WARN", "notify-send", "" if shutil.which("notify-send") else f"only needed for the failed-to-start popup: {install_hint('libnotify')}")
     px = shutil.which("xdg-dbus-proxy")
-    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1, gnome_shell=1, kde=1, a11y=1, talk=, bluetooth=1, battery=1 and avahi=1: {install_hint('xdg-dbus-proxy')}")
+    row("OK" if px else "WARN", "xdg-dbus-proxy", "" if px else f"only needed for portals=1, tray=1, mpris=1, gnome_shell=1, kde=1, a11y=1, talk=, bluetooth=1, battery=1 and avahi=1: {install_hint('xdg-dbus-proxy')}")
     ps = shutil.which("pasta")
     row("OK" if ps else "WARN", "pasta", "" if ps else f"only needed for net_private=1: {install_hint('passt')}")
     if ps:

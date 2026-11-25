@@ -38,7 +38,8 @@ GROUPS = [
         ("portal_file_transfer", "Drag and drop files", "Lets the program receive files you drag in from other programs (browsers print a FileTransfer error without it). Only files you drop on it, through the Documents portal.", True),
         ("portal_screenshot", "Screenshots", "Let the program ask the desktop for a screenshot. The desktop shows its own prompt.", True),
         ("portal_screencast", "Screen sharing", "Let the program ask to share your screen or a window (Discord, Teams, Slack). The desktop shows its own picker.", True),
-        ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)", False),
+        ("tray", "Tray icon", "Let the program show an icon in your panel's tray (needs xdg-dbus-proxy)", False),
+        ("mpris", "Media keys", "Let the program show up as a media player and answer play, pause and next keys (needs xdg-dbus-proxy)", False),
         ("a11y", "Screen reader support", "Let a screen reader such as Orca read the program (needs xdg-dbus-proxy)", False),
         ("gnome_shell", "GNOME Shell integration", "Let the browser's GNOME Shell connector list and install extensions (the Shell asks you first; needs xdg-dbus-proxy)", False),
         ("gnome_shell_manage", "Manage GNOME Shell extensions", "Also let it enable, disable and uninstall extensions (needs GNOME Shell integration)", False),
@@ -74,7 +75,7 @@ SHORT = {"net": "network", "net_private": "this computer private", "wayland": "W
          "printing": "printing", "ssh_agent": "SSH agent", "allow_sensitive": "secret folders", "compat": "compat variables",
          "portal_notification": "notifications", "portal_openuri": "open links", "portal_print": "print dialog", "portal_trash": "trash",
          "portal_email": "email", "portal_inhibit": "keep awake", "portal_network": "network state", "portal_screenshot": "screenshots", "portal_screencast": "screen sharing", "portal_location": "location",
-         "tray": "tray icon", "a11y": "screen reader", "gnome_shell": "GNOME Shell extensions", "gnome_shell_manage": "manage extensions", "kde": "KDE Plasma integration", "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
+         "tray": "tray icon", "mpris": "media keys", "a11y": "screen reader", "gnome_shell": "GNOME Shell extensions", "gnome_shell_manage": "manage extensions", "kde": "KDE Plasma integration", "portal_shortcuts": "global shortcuts", "portal_wallpaper": "wallpaper", "portal_launcher": "create launchers",
          "folder": "own folder", "portal_remote_desktop": "remote desktop", "portal_input_capture": "input capture", "portal_secret": "secrets", "portal_background": "background", "portal_usb": "USB devices", "portal_clipboard": "shared clipboard", "portal_file_transfer": "drag and drop"}
 SENSITIVE = [".ssh", ".gnupg", ".aws"]          # replaced by the real list from sbx
 SYSTEM_PROGRAMS = ("/usr/", "/bin/", "/sbin/", "/lib/", "/opt/", "/snap/", "/nix/store/", "/gnu/store/", "/run/current-system/", "/var/lib/flatpak/")   # same as in sbx: where a system program lives
@@ -91,7 +92,7 @@ ENV_PROTECTED = ("HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "SBX_ACTIVE")    
 # The window edits whitelist, read_only, setenv, env and talk; allow_syscall and the limits stay in the settings file (other lines are kept as they are).
 # What the summary line calls the switches that give a program something: key -> words.
 CAN = (("gpu", "graphics"), ("sound", "sound"), ("camera", "camera"), ("input", "controllers"), ("alsa", "ALSA sound"), ("printing", "printing"),
-       ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("a11y", "screen reader"), ("gnome_shell", "GNOME Shell extensions"), ("kde", "KDE Plasma integration"), ("kvm", "virtual machines"), ("ntsync", "Wine sync"), ("rocm", "AMD compute"), ("bluetooth", "Bluetooth"), ("battery", "battery state"), ("avahi", "network discovery"), ("ssh_agent", "your SSH agent"))
+       ("x11", "X11"), ("portals", "desktop portals"), ("tray", "tray icon"), ("mpris", "media keys"), ("a11y", "screen reader"), ("gnome_shell", "GNOME Shell extensions"), ("kde", "KDE Plasma integration"), ("kvm", "virtual machines"), ("ntsync", "Wine sync"), ("rocm", "AMD compute"), ("bluetooth", "Bluetooth"), ("battery", "battery state"), ("avahi", "network discovery"), ("ssh_agent", "your SSH agent"))
 DESKTOP_NAMES = {"GNOME": "GNOME Shell", "KDE": "KDE Plasma"}      # desktop -> the title of its expander; a new desktop is one line here and one in DESKTOP_ONLY
 DESKTOP_ONLY = {"gnome_shell": "GNOME", "gnome_shell_manage": "GNOME", "kde": "KDE"}      # switch -> the desktop it is for; hidden on the other one (see desktop_hidden())
 NEEDS = {"gnome_shell_manage": ("gnome_shell",), "net_private": ("net",), "gpu_render_only": ("gpu", "rocm"), "wayland_strict": ("wayland",)}      # key -> switches of which one must be on for it to do anything (portal_* need portals, see needs())

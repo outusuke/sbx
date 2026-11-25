@@ -14,7 +14,7 @@ sbx --net=none --here python3 script.py
 ## Install
 
 Needs Linux, Python 3.8+ and `bubblewrap` (0.8+ unless `userns=1`).
-Optional: GTK 4 + libadwaita 1.5 + PyGObject (GUI), `xdg-dbus-proxy` (`portals`, `tray`, `a11y`, `gnome_shell`, `kde`, `talk`, `bluetooth`, `battery`, `avahi`), `pasta` (`net_private`), `systemd-run` (limits).
+Optional: GTK 4 + libadwaita 1.5 + PyGObject (GUI), `xdg-dbus-proxy` (`portals`, `tray`, `mpris`, `a11y`, `gnome_shell`, `kde`, `talk`, `bluetooth`, `battery`, `avahi`), `pasta` (`net_private`), `systemd-run` (limits).
 
 ```
 sudo apt install bubblewrap         # or your distro's equivalent

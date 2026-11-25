@@ -5,7 +5,7 @@
 FLAGS = {"--net=none": ("net", False), "--net-private": ("net_private", True), "--private": ("private", True), "--here": ("here", True),
          "--no-wayland": ("wayland", False), "--wayland-strict": ("wayland_strict", True), "--x11": ("x11", True),
          "--no-gpu": ("gpu", False), "--gpu-render-only": ("gpu_render_only", True), "--no-sound": ("sound", False), "--portals": ("portals", True),
-         "--tray": ("tray", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--bluetooth": ("bluetooth", True), "--battery": ("battery", True), "--avahi": ("avahi", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-theme": ("theme", False),
+         "--tray": ("tray", True), "--mpris": ("mpris", True), "--a11y": ("a11y", True), "--gnome-shell": ("gnome_shell", True), "--gnome-shell-manage": ("gnome_shell_manage", True), "--kde": ("kde", True), "--bluetooth": ("bluetooth", True), "--battery": ("battery", True), "--avahi": ("avahi", True), "--hostname": ("hostname", True), "--privacy": ("privacy", True), "--no-theme": ("theme", False),
          "--camera": ("camera", True), "--alsa": ("alsa", True), "--input": ("input", True), "--kvm": ("kvm", True), "--ntsync": ("ntsync", True),
          "--rocm": ("rocm", True), "--printing": ("printing", True), "--ssh-agent": ("ssh_agent", True), "--allow-sensitive": ("allow_sensitive", True),
          "--compat": ("compat", True), "--userns": ("userns", True), "--allow-32bit": ("allow_32bit", True), "--single-instance": ("single_instance", True), "--ignore-config": ("ignore_config", True), "--rebind": ("rebind", True),
@@ -46,7 +46,8 @@ USAGE = ("sbx [options] PROGRAM [args]           run a program in the sandbox\n"
          "  --hostname    hostname 'sbx' inside        --userns       the program can create user namespaces\n"
          "  --allow-32bit 32-bit programs may run (weakens the socket filter)\n"
          "  --privacy     /etc/passwd without your real name or the other accounts; the Account portal is blocked too\n"
-         "  --tray        tray icon and media keys (xdg-dbus-proxy)\n"
+         "  --tray        the program can show a tray icon (xdg-dbus-proxy)\n"
+         "  --mpris       media keys: the program shows up as a media player and answers play, pause and next (xdg-dbus-proxy)\n"
          "  --a11y        screen reader and other assistive tools can see the program (filtered accessibility bus, xdg-dbus-proxy)\n"
          "  --gnome-shell         the browser's GNOME Shell connector can list and install extensions (xdg-dbus-proxy); --gnome-shell-manage also enable, disable and uninstall them\n"
          "  --kde         the browser's Plasma integration: downloads as Plasma jobs, KRunner tabs and history, media controls, keep awake while downloading (xdg-dbus-proxy)\n"

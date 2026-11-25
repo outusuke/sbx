@@ -3045,23 +3045,33 @@ class Ported(unittest.TestCase):
         r = S["tray_rules"]()
         self.assertIn("--talk=org.kde.StatusNotifierWatcher", r)
         self.assertIn("--own=org.kde.StatusNotifierItem-2-1", r)
-        self.assertIn("--own=org.mpris.MediaPlayer2.*", r)
-        self.assertTrue(all(x.startswith(("--talk=org.kde.StatusNotifierWatcher", "--own=org.kde.StatusNotifierItem-", "--own=org.mpris."))
-                            for x in r), "the tray rules name something besides the tray and media keys")
+        self.assertTrue(all(x.startswith(("--talk=org.kde.StatusNotifierWatcher", "--own=org.kde.StatusNotifierItem-"))
+                            for x in r), "the tray rules name something besides the tray")
         self.assertIs(S["SCALARS"]["tray"], False)                                       # off unless asked for
         self.assertEqual(S["parse_options"](["--tray", "x"])[0], {"tray": True})
         self.assertEqual(S["bus_rules"]({"portals": False, "tray": False}), [])
         only = S["bus_rules"]({"portals": False, "tray": True})
-        self.assertIn("--own=org.mpris.MediaPlayer2.*", only)
         self.assertNotIn("--talk=org.freedesktop.Notifications", only)                  # the tray alone doesn't open the portals
         both = S["bus_rules"]({"portals": True, "tray": True})
-        self.assertIn("--talk=org.freedesktop.Notifications", both); self.assertIn("--own=org.mpris.MediaPlayer2.*", both)
+        self.assertIn("--talk=org.freedesktop.Notifications", both); self.assertIn("--talk=org.kde.StatusNotifierWatcher", both)
         self.assertEqual(S["bus_rules"](), S["portal_rules"]())                          # unchanged for callers that pass nothing
         rt = S["runtime_dir"]()
         _, args, _ = S["build"]("/bin/true", [], False, {"tray": True, "ignore_config": True})
         self.assertIn(f"{rt}/bus", args); self.assertIn("DBUS_SESSION_BUS_ADDRESS", args)
         _, args, _ = S["build"]("/bin/true", [], False, {"ignore_config": True})
         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", args)
+
+    def test_media_keys_are_a_switch_of_their_own(self):
+        S = load_sbx()
+        self.assertEqual(S["mpris_rules"](), ["--own=org.mpris.MediaPlayer2.*"])
+        self.assertIs(S["SCALARS"]["mpris"], False)                                      # off unless asked for
+        self.assertEqual(S["parse_options"](["--mpris", "x"])[0], {"mpris": True})
+        mpris = "--own=org.mpris.MediaPlayer2.*"; watcher = "--talk=org.kde.StatusNotifierWatcher"
+        for o, has_tray, has_mpris in (({"tray": True}, True, False), ({"mpris": True}, False, True), ({"tray": True, "mpris": True}, True, True), ({}, False, False)):
+            rules = S["bus_rules"]({"portals": False, **o})
+            self.assertEqual(watcher in rules, has_tray, o); self.assertEqual(mpris in rules, has_mpris, o)
+        _, args, _ = S["build"]("/bin/true", [], False, {"mpris": True, "ignore_config": True})
+        self.assertIn("DBUS_SESSION_BUS_ADDRESS", args)                                  # the switch alone starts the proxy
 
     # -- extra session-bus names (talk)
     def test_talk_names_open_the_session_proxy_without_portals_or_tray(self):

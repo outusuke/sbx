@@ -3,11 +3,12 @@
 # sbx-report - run it INSIDE sbx and it prints what the program can reach: network, sockets, devices, folders, desktop
 # portals, the tray, system calls. Unlike sbx-selftest (which says PASS or FAIL) this is a readable overview, for
 # looking at a setup you made, for example before you give a program one more permission.
-#     sbx ./sbx-report [--portals=LIST] [--tray] [PATH ...]
+#     sbx ./sbx-report [--portals=LIST] [--tray] [--mpris] [PATH ...]
 # Inside the sandbox the report can't see your settings, so tell it what you turned on, or those rows say EXPOSED:
 #     --portals=LIST   the extra portals that are on, comma separated: screenshot screencast location shortcuts
 #                      remote_desktop input_capture wallpaper launcher secret background camera
 #     --tray           tray=1 is on
+#     --mpris          mpris=1 is on
 # Extra PATHs are checked as "File argument": is it visible, and writable?
 # Legend: ALLOWED = reachable   blocked/hidden = not reachable   EXPOSED = reachable and probably not meant to be
 #         ACTIVE = a protection is working   INFO = for your information
@@ -16,6 +17,7 @@ import ctypes, glob, json, os, platform, re, shutil, socket, struct, subprocess,
 args = sys.argv[1:]
 on_portals = {p for a in args if a.startswith("--portals=") for p in a[10:].split(",") if p}
 tray_flag = "--tray" in args
+mpris_flag = "--mpris" in args
 paths = [a for a in args if not a.startswith("--")]
 out = []
 def row(state, name, detail=""):
@@ -319,10 +321,11 @@ if bus and shutil.which("gdbus"):
     else:
         row("EXPOSED", "  Portal: documents", "reachable (should be blocked)")
 
-    # Tray icon and media controls (tray=1). The proxy lets a program own org.kde.StatusNotifierItem-PID-1..3 for the PIDs
-    # 2..64 (its PID inside the sandbox) and org.mpris.MediaPlayer2.*, nothing else. Owning a name is tried for real;
-    # nothing stays registered after the call. Pass --tray if you turned it on.
+    # Tray icon (tray=1) lets a program own org.kde.StatusNotifierItem-PID-1..3 for the PIDs 2..64 (its PID inside the
+    # sandbox); media controls (mpris=1) let it own org.mpris.MediaPlayer2.*. Owning a name is tried for real; nothing
+    # stays registered after the call. Pass --tray and --mpris for what you turned on.
     tray_on = "2-64" if tray_flag else ""
+    mpris_on = "1" if mpris_flag else ""
     tray_at = len(out)                 # the summary row is inserted here, above the detail rows
     def own(name):
         rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path",
@@ -345,8 +348,8 @@ if bus and shutil.which("gdbus"):
         "any org.kde name can be owned (too broad)" if ok else "blocked")
     ok, o = own("org.mpris.MediaPlayer2.sbx-selftest")
     m_ok = ok
-    if tray_on: row("ALLOWED" if ok else "blocked", "  Media controls (MPRIS)", "can be owned" if ok else "refused although tray is on")
-    else: row("EXPOSED" if ok else "blocked", "  Media controls (MPRIS)", "can be owned although tray is off" if ok else "blocked (tray is off)")
+    if mpris_on: row("ALLOWED" if ok else "blocked", "  Media controls (MPRIS)", "can be owned" if ok else "refused although mpris is on")
+    else: row("EXPOSED" if ok else "blocked", "  Media controls (MPRIS)", "can be owned although mpris is off" if ok else "blocked (mpris is off)")
     rc, o = sh(["gdbus", "call", "--session", "--dest", "org.kde.StatusNotifierWatcher", "--object-path",
                 "/StatusNotifierWatcher", "--method", "org.freedesktop.DBus.Peer.Ping"])
     if "AccessDenied" in o or "not allowed" in o:
@@ -355,14 +358,11 @@ if bus and shutil.which("gdbus"):
         row("INFO", "  Tray host (StatusNotifierWatcher)", "none running: icons show only with a tray host (GNOME needs the AppIndicator extension)")
     else:
         row("EXPOSED" if not tray_on else "ALLOWED", "  Tray host (StatusNotifierWatcher)", "reachable")
-    if tray_on:
-        state = "ALLOWED" if t_ok and m_ok else "blocked"
-        detail = ("tray icon and media controls can register" if t_ok and m_ok else
-                  "tray icon refused" if m_ok else "media controls refused" if t_ok else "both refused although tray is on")
-    else:
-        state = "EXPOSED" if t_ok or m_ok else "blocked"
-        detail = "reachable although tray is off" if t_ok or m_ok else "off"
-    out.insert(tray_at, f"{state:8} {'Tray icon and media keys':<26} {detail}")
+    for label, on, got, sw in (("Tray icon", tray_on, t_ok, "tray"), ("Media keys", mpris_on, m_ok, "mpris")):
+        if on: state, detail = ("ALLOWED", "can register") if got else ("blocked", f"refused although {sw} is on")
+        else: state, detail = ("EXPOSED", f"reachable although {sw} is off") if got else ("blocked", "off")
+        out.insert(tray_at, f"{state:8} {label:<26} {detail}")
+        tray_at += 1
 
 nr = {"x86_64": 298, "aarch64": 241}.get(platform.machine())
 if nr:
@@ -380,7 +380,7 @@ row(yn(rc == 0), "Nested sandboxes (userns)", "" if rc == 0 else o[:60])
 
 bad = [l for l in out if l.startswith("EXPOSED")]
 summary = (f"{len(bad)} row{'s' if len(bad) != 1 else ''} say EXPOSED: something is reachable that sbx normally hides. If you turned it on\n"
-           "on purpose, tell the report (--portals=..., --tray); otherwise look at that setting.") if bad else \
+           "on purpose, tell the report (--portals=..., --tray, --mpris); otherwise look at that setting.") if bad else \
           "Nothing EXPOSED: everything reachable is something a switch allows."
 text = "sbx report\n" + "=" * 10 + "\n" + "\n".join(out) + "\n\n" + summary + "\n"
 print(text)
