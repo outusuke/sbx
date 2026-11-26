@@ -1982,6 +1982,11 @@ class Win(Adw.ApplicationWindow):
                 k.add_suffix(rm); row.add_row(k); kids.append(k)
             if not members:
                 k = Adw.ActionRow(title="Nothing added yet", sensitive=False); row.add_row(k); kids.append(k)
+            elif len(members) > 1:
+                k = Adw.ActionRow(title=f"Take all {len(members)} out of this sandbox", use_markup=False)
+                rm = Gtk.Button(label="Take all out", valign=Gtk.Align.CENTER, css_classes=["destructive-action"])
+                rm.connect("clicked", lambda *_: self.family_remove_all(members, refill))
+                k.add_suffix(rm); row.add_row(k); kids.append(k)
             row.set_expanded(bool(members) and (expand or row.get_expanded()))
         add.connect("clicked", lambda *_: self.family_dialog(scope, lambda: refill(True)))
         refill()
@@ -1993,6 +1998,24 @@ class Win(Adw.ApplicationWindow):
         if r.returncode != 0: self.alert("Couldn't take it out", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
         else: self.toasts.add_toast(Adw.Toast(title=f"{member['name']} no longer uses this sandbox"))
         on_change()
+
+    def family_remove_all(self, members, on_change):
+        d = Adw.AlertDialog(heading=f"Take all {len(members)} menu entries out?", body="The original menu entries come back.")
+        d.add_response("cancel", "Cancel"); d.add_response("remove", "Take all out")
+        d.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+        d.set_close_response("cancel")
+
+        def done(dlg, res):
+            if dlg.choose_finish(res) != "remove": return
+            failed = []
+            for m in members:
+                r = self.run_desktop([sbx_cmd(), "desktop", "--remove", m["id"]])
+                if r is None: break
+                if r.returncode != 0: failed.append(f"{m['id']}: {(r.stderr or r.stdout).strip()[-200:] or f'exit code {r.returncode}'}")
+            if failed: self.alert("Couldn't take these out", "\n\n".join(failed)[-1500:])
+            else: self.toasts.add_toast(Adw.Toast(title="Menu entries taken out of this sandbox"))
+            on_change()
+        d.choose(self, None, done)
 
     def run_desktop(self, argv):
         """The finished `sbx desktop` run; None (after an alert) if it couldn't start."""

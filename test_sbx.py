@@ -3870,6 +3870,18 @@ class Gui(unittest.TestCase):
                 with open(f"{d}/{n}.desktop", "w") as f: f.write(t)
         return mock.patch.dict(os.environ, {"XDG_DATA_DIRS": f"{self.tmp}/share"})
 
+    def test_taking_all_entries_out_asks_first_then_removes_each_id(self):
+        G = self.G; adw = G["Adw"]; win = mock.MagicMock(); done = mock.Mock(); adw.AlertDialog.reset_mock()
+        members = [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]
+        G["Win"].family_remove_all(win, members, done)
+        dlg = adw.AlertDialog.return_value; cb = dlg.choose.call_args[0][2]
+        dlg.choose_finish.return_value = "cancel"; cb(dlg, None)
+        win.run_desktop.assert_not_called(); done.assert_not_called()
+        win.run_desktop.side_effect = [mock.Mock(returncode=0, stdout="", stderr=""), mock.Mock(returncode=1, stdout="", stderr="boom")]
+        dlg.choose_finish.return_value = "remove"; cb(dlg, None)
+        self.assertEqual([c[0][0][-1] for c in win.run_desktop.call_args_list], ["a", "b"])
+        self.assertEqual(win.alert.call_args[0][1], "b: boom"); done.assert_called_once()
+
     def test_the_picker_lists_menu_entries_with_where_each_one_stands(self):
         G = self.G
         app = lambda name, extra="": f"[Desktop Entry]\nType=Application\nName={name}\nExec=/usr/bin/{name.lower()}\n{extra}"
