@@ -68,6 +68,7 @@ GROUPS = [
 SHARE_NAMES = ("Downloads", "Documents", "Pictures", "Music", "Videos")      # the folders share_dirs may list (all of them by default)
 SHARE_ALL = ",".join(SHARE_NAMES)
 WL_RESTRICTED = False      # can this desktop restrict Wayland programs (wp_security_context_v1)? Learned from `sbx schema`; wayland_strict is on by default only where it can
+SBX_VERSION = ""          # learned from `sbx schema`, so it is never a second copy of the number in sbx
 GROUP_INFO = {"What can this program use?": "Changes apply the next time the program starts. Everything else on your computer stays hidden from it."}      # a line under a group's title
 ADVANCED = ("portal_file_transfer", "portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network", "portal_location", "portal_shortcuts", "portal_wallpaper", "portal_launcher", "portal_remote_desktop", "portal_input_capture", "portal_secret", "portal_background", "portal_usb", "portal_clipboard")      # shown in one collapsed row, "More desktop portals"
 SWITCHES = {k: (t, s, d) for _, rows in GROUPS for k, t, s, d in rows}

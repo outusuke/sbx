@@ -124,7 +124,19 @@ class Win(Adw.ApplicationWindow):
         add.connect("clicked", lambda *_: self.add_program())
         ts = Gtk.Button(icon_name="utilities-terminal-symbolic", tooltip_text="Troubleshooting: the health checks and what happened when programs started or stopped")
         ts.connect("clicked", lambda *_: self.open_trouble(None))
-        return self.page("sbx", page, [ts], banner=self.pending_banner, start=[add])
+        about = Gio.SimpleAction.new("about", None)
+        about.connect("activate", lambda *_: self.show_about())
+        self.add_action(about)
+        menu = Gio.Menu()
+        menu.append("About sbx", "win.about")
+        main_menu = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True, tooltip_text="Main menu")
+        return self.page("sbx", page, [main_menu, ts], banner=self.pending_banner, start=[add])
+
+    def show_about(self):
+        Adw.AboutDialog(
+            application_icon="org.sbx.Gui", application_name="sbx", version=SBX_VERSION,
+            developer_name=DEVELOPER, developers=[DEVELOPER], website=REPO_URL,
+            issue_url=REPO_URL + "/issues", license_type=Gtk.License.GPL_3_0).present(self)
 
     def open_trouble(self, scope):
         """Health checks (sbx doctor) and the recent log, for one program or all."""

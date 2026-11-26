@@ -12,6 +12,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
+REPO_URL  = "https://github.com/outusuke/sbx"
+DEVELOPER = "outusuke"
 HOME  = os.path.realpath(os.path.expanduser("~"))
 USER  = pwd.getpwuid(os.getuid()).pw_name
 CONF  = HOME + "/.config/sbx"

@@ -415,12 +415,13 @@ def sbx_cmd():
 
 def load_schema():
     """Ask sbx which switches and secret folders exist, so this window can't drift from the command line."""
-    global GROUPS, SWITCHES, SENSITIVE, LIMIT_PATTERNS, WL_RESTRICTED
+    global GROUPS, SWITCHES, SENSITIVE, LIMIT_PATTERNS, WL_RESTRICTED, SBX_VERSION
     try:
         r = subprocess.run([sbx_cmd(), "schema"], capture_output=True, text=True, timeout=10)
         sch = json.loads(r.stdout)
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return
+    SBX_VERSION = str(sch.get("version", ""))
     known = set(sch.get("switches", {}))
     if not known: return
     SENSITIVE = list(sch.get("sensitive", SENSITIVE))
