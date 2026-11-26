@@ -114,7 +114,7 @@ LOG_HINTS = [
      "The program may need a graphics device that this mode hides.", {"gpu": True}),
     (r"failed to connect to (the )?wayland|wayland.{0,30}(connection|display).{0,30}(fail|refused)",
      "wayland", True, "Turn on Wayland", "The program looked for Wayland, which is off. Better than X11 where it works.", {}),
-    (r"cannot open display|could not connect to display|unable to open display|platform plugin .?xcb|failed to connect to (the )?wayland",
+    (r"cannot open display|could not connect to display|unable to open display|missing x server|platform plugin .?xcb|failed to connect to (the )?wayland",
      "x11", True, "Turn on X11", "The program looks for X11. This weakens isolation, so use it only for this program.", {}),
     (r"temporary failure in name resolution|name or service not known|network is unreachable",
      "net", True, "Allow the network", "The program tried to use the network.", {}),

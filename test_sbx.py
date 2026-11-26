@@ -3587,7 +3587,7 @@ class Logging(unittest.TestCase):
             self.assertTrue(any(" H " in x for x in run.call_args_list[-1].args[0]))
         self.assertIn("Allow 32-bit programs", S["HINT_32BIT"])
 
-    def run_32bit(self, rc, allow=False, machine="x86_64", header=None):
+    def run_32bit(self, rc, allow=False, machine="x86_64", header=None, x11=False, saw_x11=False):
         """What run() tells about a program that ended with RC: (stderr, notifications sent)."""
         S, sent = self.S, []
         prog = f"{self.tmp}/prog"
@@ -3597,8 +3597,9 @@ class Logging(unittest.TestCase):
         S["subprocess"] = types.SimpleNamespace(Popen=lambda *a, **k: child, PIPE=-1)
         S["platform"] = types.SimpleNamespace(machine=lambda: machine)
         S["build"] = lambda prog, args, live, opts: ("app", [prog], {"prefix": [], "wrap": [], "fds": []})
-        S["effective"] = lambda name, o: ({**S["SCALARS"], "allow_32bit": allow}, {})
-        for fn in ("teardown", "mark_running", "unmark_running", "sweep_stale", "tee_stderr"): S[fn] = lambda *a, **k: None
+        S["effective"] = lambda name, o: ({**S["SCALARS"], "allow_32bit": allow, "x11": x11}, {})
+        for fn in ("teardown", "mark_running", "unmark_running", "sweep_stale"): S[fn] = lambda *a, **k: None
+        S["tee_stderr"] = lambda fd, name, seen=None: seen.__setitem__(0, saw_x11)
         S["shutil"] = types.SimpleNamespace(which=lambda x: f"/usr/bin/{x}")
         S["notify_crash"] = lambda name, sig, hint="": sent.append(("crash", hint))
         S["notify_failure"] = lambda name, reason="": sent.append(("failure", reason))
@@ -3624,6 +3625,26 @@ class Logging(unittest.TestCase):
                           ("not an ELF file", {"rc": 1, "header": b"#!/bin/sh\n" + b"\0" * 40})):
             err, sent = self.run_32bit(**kw)
             self.assertNotIn(hint, err, label); self.assertTrue(all(not h for _, h in sent), label)
+
+    def test_a_program_that_cannot_find_an_x_server_gets_a_hint_while_x11_is_off(self):
+        hint = self.S["HINT_X11"]
+        elf64 = b"\x7fELF\x02\x01\x01" + b"\0" * 9 + b"\x02\0\x3e\0" + b"\0" * 32
+        err, sent = self.run_32bit(1, header=elf64, saw_x11=True)
+        self.assertIn(hint, err); self.assertEqual(sent, [("failure", hint)])
+        with open(self.S["LOG"]) as f: self.assertIn(f"WARNING {hint}", f.read())
+        for label, kw in (("x11 on", {"rc": 1, "x11": True}), ("not seen", {"rc": 1, "saw_x11": False}), ("exit 0", {"rc": 0})):
+            err, sent = self.run_32bit(header=elf64, **{"saw_x11": True, **kw})
+            self.assertNotIn(hint, err, label); self.assertTrue(all(not h for _, h in sent), label)
+
+    def test_tee_stderr_notes_a_missing_x_server(self):
+        S = self.S
+        for text, want in ((b"ERROR:ozone_platform_x11.cc:257] Missing X server or $DISPLAY\n", True), (b"all fine\n", False)):
+            r, w = os.pipe()
+            os.write(w, text); os.close(w)
+            seen = [False]
+            with contextlib.redirect_stderr(io.StringIO()): S["tee_stderr"](r, "app", seen)
+            os.close(r)
+            self.assertEqual(seen[0], want)
 
     def test_progress_notifications_replace_each_other_by_id(self):
         S = self.S
@@ -4612,6 +4633,7 @@ class Gui(unittest.TestCase):
         self.assertEqual(self.hint_keys(gl, gpu=False, gpu_render_only=True), [("gpu", True)])           # render-only means nothing without graphics
         self.assertEqual(self.hint_keys(run("cannot open /dev/video0"), camera=False), [("camera", True)])
         self.assertEqual(self.hint_keys(run("Error: cannot open display: :0")), [("x11", True)])
+        self.assertEqual(self.hint_keys(run("ERROR:ui/ozone/platform/x11/ozone_platform_x11.cc:257] Missing X server or $DISPLAY")), [("x11", True)])
         crash = run("./setup_linux.sh: line 21:  1116 Aborted                    (core dumped) ./setup_linux 2> /dev/null", code=134)
         self.assertEqual(self.hint_keys(crash, x11=False, userns=True), [("x11", True)])                  # no message in the log: a guess
         self.assertEqual(self.hint_keys(crash, x11=True, userns=True), [])

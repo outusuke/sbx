@@ -119,6 +119,8 @@ def notify_click(plain, clicked, label, gui_args, urgency="critical"):
 CRASH_SIGNALS = {"SIGSEGV": "segmentation fault", "SIGABRT": "aborted", "SIGBUS": "bus error", "SIGILL": "illegal instruction",
                  "SIGFPE": "arithmetic error", "SIGTRAP": "trap", "SIGSYS": "bad system call"}
 HINT_32BIT = "It is a 32-bit program and 'Allow 32-bit programs' is off. You can turn it on in sbx-gui or with --allow-32bit, but that weakens the network-socket filter for 32-bit programs."
+HINT_X11 = "It looks for an X11 display and 'X11 compatibility' is off. Turn it on for this program in sbx-gui or with --x11, or make the program use Wayland, e.g. args=--ozone-platform=wayland for Chrome and Electron programs."
+NEEDS_X11 = re.compile(r"missing x server|cannot open display|could not connect to display|unable to open display", re.I)
 STOP_CODES = (129, 130, 143)    # shell exit codes of SIGHUP, SIGINT, SIGTERM: someone stopped it, nothing went wrong
 
 

@@ -54,7 +54,7 @@ def undo_exec_bit(prog, mode):
         except OSError: pass
 
 
-def tee_stderr(fd, name):
+def tee_stderr(fd, name, x11_seen=None):
     """Copy a program's stderr to our own stderr and to the log, minus control characters, at most LOG_RUN_MAX bytes per run.
     Chunks, not lines, so a prompt without a newline shows at once."""
     lf = open_log()
@@ -71,6 +71,7 @@ def tee_stderr(fd, name):
             while len(pend) > LOG_LINE_MAX: lines.append(pend[:LOG_LINE_MAX] + "\n"); pend = pend[LOG_LINE_MAX:]
             if not data and pend: lines.append(pend + "\n"); pend = ""
             for line in lines:
+                if x11_seen is not None and NEEDS_X11.search(line): x11_seen[0] = True
                 if lf and n < LOG_RUN_MAX:
                     n += len(line)
                     log_write(lf, f"[{name}] {line}" + (f"[{name}] (more output not logged)\n" if n >= LOG_RUN_MAX else ""))
@@ -106,6 +107,7 @@ def run(prog, args, opts):
     try: mark_running(name)
     except OSError: pass                          # only `sbx stop`, `sbx list` and the running-check of `sbx clean` need it
     start, stopped, child, tree = time.time(), [False], [None], []
+    x11_seen = [False]
     piped = not sys.stderr.isatty()               # started from the app menu or a file manager: no terminal, so the log keeps stderr
     try:
         def stop(*_):                                  # first signal: ask politely, kill after STOP_GRACE s; a second one kills at once
@@ -120,7 +122,7 @@ def run(prog, args, opts):
         p = child[0] = subprocess.Popen(st["prefix"] + st["wrap"] + cmd, pass_fds=st["fds"], stderr=subprocess.PIPE if piped else None)
         mark_child(p.pid)
         if stopped[0]: p.terminate()                  # a signal that came while it was starting
-        t = threading.Thread(target=tee_stderr, args=(p.stderr.fileno(), name), daemon=True) if piped else None
+        t = threading.Thread(target=tee_stderr, args=(p.stderr.fileno(), name, x11_seen), daemon=True) if piped else None
         if t: t.start()
         rc = p.wait()
         if stopped[0]: finish_tree(tree, STOP_GRACE)
@@ -131,6 +133,7 @@ def run(prog, args, opts):
     log(f"EXIT code={code}" + (f" ({sig})" if sig else ""), name)
     exe = prog if "/" in prog else shutil.which(prog)
     hint = HINT_32BIT if rc != 0 and not stopped[0] and not cfg["allow_32bit"] and platform.machine() in COMPAT32 and exe and is_i386_elf(exe) else ""
+    if not hint and rc != 0 and not stopped[0] and not cfg["x11"] and x11_seen[0]: hint = HINT_X11
     if hint: warn(hint)
     if not stopped[0] and not os.environ.get("SBX_NO_POPUP"):
         if sig: notify_crash(name, sig, hint)                            # at any time, not only right after starting
