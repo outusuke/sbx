@@ -131,8 +131,9 @@ class Snapshot(unittest.TestCase):
     def test_invariants_in_every_scenario(self):
         for title, prog, flags, patch in SCENARIOS:
             _, a = fake_preview(prog, flags, patch)
-            for need in ("--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--seccomp"):
+            for need in ("--unshare-all", "--json-status-fd", "--new-session", "--clearenv", "--seccomp"):
                 self.assertIn(need, a, f"{title}: {need} missing")
+            self.assertNotIn("--die-with-parent", a, title)
             i = a.index("--ro-bind"); self.assertEqual(a[i:i + 3], ["--ro-bind", "/", "/"], title)
             self.assertEqual(a.count("--share-net"), 0 if "--net=none" in flags else 1, title)
             self.assertEqual("--disable-userns" in a, "--userns" not in flags, title)
@@ -184,7 +185,7 @@ class Snapshot(unittest.TestCase):
         wrap, a = fake_preview("firefox", ["--net-private", "--no-portals"])
         self.assertEqual(wrap, ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", "169.254.1.1",
                                 "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--",
-                                "/bin/sh", "-c", 'exec 9<"$1"; shift 1; exec "$@"', "sh", "/run/user/1000/sbx/PID.seccomp"])
+                                "/bin/sh", "-c", 'exec 7>"$1"; exec 9<"$2"; shift 2; exec "$@"', "sh", "/run/user/1000/sbx/PID.status", "/run/user/1000/sbx/PID.seccomp"])
         self.assertEqual(a[a.index("--seccomp") + 1], "9")                                  # the shell opens the file as descriptor 9
         self.assertNotIn("FD", a)
         self.assertEqual(a[a.index("--uid"):a.index("--uid") + 4], ["--uid", "1000", "--gid", "1000"])     # pasta's namespace maps you to root
@@ -506,6 +507,7 @@ class Units(unittest.TestCase):
         self.assertEqual(w[len(pasta):], ["/bin/sh", "-c", 'exec 9<"$1"; exec 8>"$2"; shift 2; exec "$@"', "sh", "/a", "/b"])
         self.assertLess(S["INFO_FD"], 10, "dash can't open a two-digit descriptor: exec 10>file runs a program called 10")
         self.assertNotEqual(S["INFO_FD"], S["SEC_FD"])
+        self.assertLess(S["STATUS_FD"], 10); self.assertEqual(len({S["STATUS_FD"], S["INFO_FD"], S["SEC_FD"]}), 3)
         src, dst = f"{self.tmp}/in", f"{self.tmp}/out"                                  # the shell part for real, without pasta
         with open(src, "w") as f: f.write("filter\n")
         r = subprocess.run(S["net_wrap"]([(S["SEC_FD"], "<", src), (S["INFO_FD"], ">", dst)])[len(pasta):] +
@@ -540,9 +542,9 @@ class Units(unittest.TestCase):
     def test_portals_with_a_private_network_have_the_shell_open_the_info_file_as_descriptor_8(self):
         S = self.S
         a, st, inst, info = self.live_portals_build({"net_private": True})
-        sec = f"{self.tmp}/run/sbx/{os.getpid()}.seccomp"
-        self.assertEqual(a[a.index("--info-fd") + 1], "8"); self.assertEqual(a[a.index("--seccomp") + 1], "9")
-        self.assertEqual(st["wrap"][len(S["PASTA"]):], ["/bin/sh", "-c", 'exec 9<"$1"; exec 8>"$2"; shift 2; exec "$@"', "sh", sec, info])
+        sec, stat = f"{self.tmp}/run/sbx/{os.getpid()}.seccomp", f"{self.tmp}/run/sbx/{os.getpid()}.status"
+        self.assertEqual(a[a.index("--info-fd") + 1], "8"); self.assertEqual(a[a.index("--seccomp") + 1], "9"); self.assertEqual(a[a.index("--json-status-fd") + 1], "7")
+        self.assertEqual(st["wrap"][len(S["PASTA"]):], ["/bin/sh", "-c", 'exec 7>"$1"; exec 9<"$2"; exec 8>"$3"; shift 3; exec "$@"', "sh", stat, sec, info])
         self.assertEqual((st["fds"], st["keep"]), ([], []), "pasta would close anything inherited")
         self.assertEqual(os.stat(info).st_mode & 0o777, 0o600); self.assertIn(info, st["files"]); self.assertIn(inst, st["cleanup"])
         S["teardown"](st); self.assertFalse(os.path.exists(inst)); self.assertFalse(os.path.exists(sec))
@@ -1804,6 +1806,38 @@ class Units(unittest.TestCase):
         S["mark_running"]("app"); S["mark_child"](box.pid)
         with open(f"{S['RUNNING']}/{os.getpid()}") as f: self.assertEqual(f.read().split("\n")[2], str(box.pid))
         self.assertEqual(S["running"]("app"), [str(os.getpid())], "one run, one entry")
+
+    def test_sandbox_init_reads_child_pid_and_accepts_only_pid_1_of_a_namespace(self):
+        S = self.S; f = f"{self.tmp}/status"
+        self.assertIsNone(S["sandbox_init"](f))                                                  # no file
+        for text in ("", "{ \"child-pi", "[1]\n", f'{{ "child-pid": {os.getpid()} }}\n'):       # empty, cut off, wrong shape, not an init
+            with open(f, "w") as h: h.write(text)
+            self.assertIsNone(S["sandbox_init"](f), text)
+
+    def test_wait_exit_returns_when_the_process_ends_and_not_before_the_grace_is_over(self):
+        S = self.S
+        quick = subprocess.Popen(["sleep", "0.3"]); slow = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(lambda: [p.kill() or p.wait() for p in (quick, slow)])
+        t = time.time(); self.assertFalse(S["wait_exit"](slow.pid, S["proc_start"](slow.pid), 0.3)); self.assertGreaterEqual(time.time() - t, 0.25)
+        t = time.time(); quick.wait(); self.assertTrue(S["wait_exit"](quick.pid, S["proc_start"](quick.pid) or "x", 5)); self.assertLess(time.time() - t, 1)
+        self.assertTrue(S["wait_exit"](slow.pid, "1", 5), "another process with that PID counts as gone")
+
+    def test_a_run_whose_sbx_died_is_found_and_stopped_through_its_init(self):
+        S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
+        gone, init = subprocess.Popen(["true"]), subprocess.Popen(["sleep", "60"]); gone.wait(); self.addCleanup(lambda: init.kill() or init.wait())
+        os.makedirs(S["RUNNING"])
+        with open(f"{S['RUNNING']}/999999", "w") as f: f.write(f"app\n123\n{gone.pid}\n1\n{init.pid}\n{S['proc_start'](init.pid)}")
+        self.assertEqual(S["running"]("app"), ["999999"]); self.assertEqual(S["live_pid"]("999999"), init.pid)
+        self.assertEqual(S["stop_program"]("app"), 1); self.assertEqual(init.wait(5), -15)
+
+    def test_sweep_orphans_kills_what_a_killed_sbx_left_but_not_a_live_run(self):
+        S = self.S; S["RUNNING"] = f"{self.tmp}/run"
+        orphan, mine = (subprocess.Popen(["sleep", "60"]) for _ in range(2)); self.addCleanup(lambda: [p.kill() or p.wait() for p in (orphan, mine)])
+        os.makedirs(S["RUNNING"])
+        with open(f"{S['RUNNING']}/999999", "w") as f: f.write(f"app\n123\n{orphan.pid}\n{S['proc_start'](orphan.pid)}")
+        self.running_file(os.getpid(), "app"); S["mark_child"](mine.pid)
+        S["sweep_orphans"]()
+        self.assertEqual(orphan.wait(5), -9); self.assertIsNone(mine.poll())
 
     def test_clean_refuses_a_running_program_and_stop_needs_one(self):
         S = self.S; S["RUNNING"] = f"{self.tmp}/run"; S["live_sbx"] = lambda pid: True
@@ -5289,6 +5323,31 @@ class Isolation(unittest.TestCase):
         if self.has_disable_userns: self.assertRegex(r.stdout, r"PASS  user namespaces are blocked")
         r = self.sbx_run("--userns", self.script, "--expect=userns0")                       # negative control: with --userns they work
         if self.has_disable_userns and r.returncode == 0: self.fail("user namespaces were blocked despite --userns")
+
+    def leftover(self, name, body):
+        """Run a program that exits at once but starts BODY in the background; returns how long sbx took and the program's home."""
+        prog = f"{self.home}/{name}"
+        with open(prog, "w") as f: f.write(f"#!/bin/sh\n({body}) >/dev/null 2>&1 &\nexit 0\n")
+        os.chmod(prog, 0o755)
+        t = time.time(); r = self.sbx_run("--ignore-config", "--no-portals", prog); self.assertEqual(r.returncode, 0, r.stderr)
+        return time.time() - t, f"{self.home}/.sbx-homes/{name}"
+
+    def test_what_a_program_leaves_running_gets_to_finish_and_is_then_ended(self):
+        linger = load_sbx()["LINGER_GRACE"]
+        took, home = self.leftover("lazysaver", 'sleep 1; echo saved > "$HOME/saved"')
+        with open(f"{home}/saved") as f: self.assertEqual(f.read(), "saved\n")              # the lazy write a wineserver does
+        self.assertLess(took, linger, "sbx waited for the init longer than needed")
+        marker = "sleep 61.5"
+        took, _ = self.leftover("lingerer", marker)
+        self.assertGreaterEqual(took, linger - 0.5); self.assertLess(took, linger + 5)
+        alive = [p for p in os.listdir("/proc") if p.isdigit() and marker.split()[1] in open(f"/proc/{p}/cmdline", "rb").read().decode(errors="replace")]
+        self.assertEqual(alive, [], "the sandbox outlived sbx")
+
+    def test_a_program_that_leaves_nothing_behind_does_not_wait(self):
+        prog = f"{self.home}/plain"
+        with open(prog, "w") as f: f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(prog, 0o755)
+        t = time.time(); self.sbx_run("--ignore-config", "--no-portals", prog); self.assertLess(time.time() - t, 2)
 
     def portals_leave_bwrapinfo(self, name, *flags):
         """Run a program that waits, with a stand-in xdg-dbus-proxy (answers ready, makes the socket file), and check that bwrap

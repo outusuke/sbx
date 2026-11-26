@@ -67,7 +67,7 @@ def build(prog, args, live=False, o=None):
     a = ["bwrap", "--unshare-all"] + (["--share-net"] if cfg["net"] else [])
     if not cfg["userns"]: a += ["--unshare-user", "--disable-userns"]
     if priv: a += ["--uid", str(os.getuid()), "--gid", str(os.getgid())]      # pasta's user namespace maps you to root; keep your own ids inside
-    a += ["--die-with-parent", "--new-session", "--clearenv"]
+    a += ["--new-session", "--clearenv"]
     if cfg["hostname"]: a += ["--hostname", "sbx"]
 
     def put(src, blob):                         # a private file next to the other helper files, removed when the run ends
@@ -77,6 +77,13 @@ def build(prog, args, live=False, o=None):
         with os.fdopen(fd, "wb") as f: f.write(blob)
         state["files"].append(src)
 
+    status = tag + ".status"        # bwrap writes {"child-pid": N} here: N is the sandbox's init, which sbx stops when the program leaves something behind
+    put(status, b""); state["status"] = status
+    if priv: a += ["--json-status-fd", str(STATUS_FD)]; wrapfiles.append((STATUS_FD, ">", status))
+    elif live:
+        f = os.fdopen(os.open(status, os.O_WRONLY | os.O_NOFOLLOW), "wb"); os.set_inheritable(f.fileno(), True)
+        state["keep"].append(f); state["fds"].append(f.fileno()); a += ["--json-status-fd", str(f.fileno())]
+    else: a += ["--json-status-fd", "FD"]
     machine = platform.machine()
     c32 = bool(cfg["allow_32bit"]) and machine in COMPAT32
     if cfg["allow_32bit"] and live:

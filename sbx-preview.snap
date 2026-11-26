@@ -7,9 +7,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -87,10 +87,10 @@ bwrap
 --unshare-all
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
 --hostname sbx
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -146,9 +146,9 @@ bwrap
 bwrap
 --unshare-all
 --share-net
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -227,9 +227,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -312,9 +312,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -397,9 +397,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -478,9 +478,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -559,9 +559,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -641,9 +641,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -725,9 +725,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -807,9 +807,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -897,9 +897,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -982,9 +982,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -1063,9 +1063,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -1127,9 +1127,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -1205,7 +1205,7 @@ bwrap
 -- /usr/bin/firefox
 
 ## private network (pasta): sbx --net-private firefox
-PREFIX pasta --quiet --config-net --no-map-gw --dns-forward 169.254.1.1 -t none -u none -T none -U none -- /bin/sh -c exec 9<"$1"; exec 8>"$2"; shift 2; exec "$@" sh /run/user/1000/sbx/PID.seccomp /run/user/1000/.flatpak/PID/bwrapinfo.json
+PREFIX pasta --quiet --config-net --no-map-gw --dns-forward 169.254.1.1 -t none -u none -T none -U none -- /bin/sh -c exec 7>"$1"; exec 9<"$2"; exec 8>"$3"; shift 3; exec "$@" sh /run/user/1000/sbx/PID.status /run/user/1000/sbx/PID.seccomp /run/user/1000/.flatpak/PID/bwrapinfo.json
 bwrap
 --unshare-all
 --share-net
@@ -1213,9 +1213,9 @@ bwrap
 --disable-userns
 --uid 1000
 --gid 1000
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd 7
 --seccomp 9
 --ro-bind / /
 --dev /dev
@@ -1291,7 +1291,7 @@ bwrap
 -- /usr/bin/firefox
 
 ## portals and a private network: sbx --portals --net-private firefox
-PREFIX pasta --quiet --config-net --no-map-gw --dns-forward 169.254.1.1 -t none -u none -T none -U none -- /bin/sh -c exec 9<"$1"; exec 8>"$2"; shift 2; exec "$@" sh /run/user/1000/sbx/PID.seccomp /run/user/1000/.flatpak/PID/bwrapinfo.json
+PREFIX pasta --quiet --config-net --no-map-gw --dns-forward 169.254.1.1 -t none -u none -T none -U none -- /bin/sh -c exec 7>"$1"; exec 9<"$2"; exec 8>"$3"; shift 3; exec "$@" sh /run/user/1000/sbx/PID.status /run/user/1000/sbx/PID.seccomp /run/user/1000/.flatpak/PID/bwrapinfo.json
 bwrap
 --unshare-all
 --share-net
@@ -1299,9 +1299,9 @@ bwrap
 --disable-userns
 --uid 1000
 --gid 1000
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd 7
 --seccomp 9
 --ro-bind / /
 --dev /dev
@@ -1382,9 +1382,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev
@@ -1463,9 +1463,9 @@ bwrap
 --share-net
 --unshare-user
 --disable-userns
---die-with-parent
 --new-session
 --clearenv
+--json-status-fd FD
 --seccomp FD
 --ro-bind / /
 --dev /dev

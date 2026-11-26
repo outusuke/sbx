@@ -2,7 +2,8 @@
 #| Layer rule: this fragment may use names from lower-numbered fragments (and its own) only; build.py enforces it.
 
 # ---------------------------------------------------------------- running programs
-RUNNING = f"{STATE}/running"      # RUNNING/PID: "NAME\nSTARTTIME" of an sbx process, then "\nPID\nSTARTTIME" of its sandbox
+RUNNING = f"{STATE}/running"      # RUNNING/PID: "NAME\nSTARTTIME" of an sbx process, then "\nPID\nSTARTTIME" of its sandbox, then the same for the sandbox's init
+STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when sbx is told to stop
 
 
 def proc_start(pid):
@@ -28,11 +29,12 @@ def live_sbx(pid):
 def live_pid(entry):
     """The PID to signal for the run in RUNNING/ENTRY: its sbx process, else its sandbox if sbx is gone; None when neither is alive."""
     try:
-        with open(f"{RUNNING}/{entry}") as f: lines = [x.strip() for x in f.read().split("\n")] + ["", "", "", ""]
+        with open(f"{RUNNING}/{entry}") as f: lines = [x.strip() for x in f.read().split("\n")] + [""] * 6
     except OSError:
         return None
     if lines[1] and lines[1] == proc_start(entry) and live_sbx(entry): return int(entry)
-    if lines[2].isdigit() and lines[3] and lines[3] == proc_start(lines[2]): return int(lines[2])
+    for i in (2, 4):
+        if lines[i].isdigit() and lines[i + 1] and lines[i + 1] == proc_start(lines[i]): return int(lines[i])
     return None
 
 
@@ -89,6 +91,34 @@ def descendants(pid):
     return found
 
 
+def sandbox_init(path):
+    """(pid, start) of the sandbox's init, from the child-pid bwrap wrote to PATH; None if it isn't there yet or isn't pid 1 of its namespace."""
+    try:
+        with open(path) as f: pid = int(json.loads(f.readline())["child-pid"])
+        with open(f"/proc/{pid}/status") as f: nspid = [l.split() for l in f if l.startswith("NSpid:")]
+    except (OSError, ValueError, KeyError, TypeError): return None
+    start = proc_start(pid)
+    return (pid, start) if start and nspid and nspid[0][-1] == "1" else None
+
+
+def wait_exit(pid, start, grace):
+    """True if PID (the process with this START) ends within GRACE seconds; returns at the moment it ends."""
+    fd = None
+    if hasattr(os, "pidfd_open"):
+        try: fd = os.pidfd_open(pid)
+        except OSError: pass
+    try:
+        if proc_start(pid) != start: return True
+        if fd is not None: return bool(select.select([fd], [], [], grace)[0])
+        end = time.time() + grace
+        while proc_start(pid) == start:
+            if time.time() >= end: return False
+            time.sleep(0.02)
+        return True
+    finally:
+        if fd is not None: os.close(fd)
+
+
 def signal_tree(tree, sig):
     for pid, start in tree:
         if proc_start(pid) != start: continue
@@ -107,7 +137,7 @@ def stop_program(name):
     """SIGTERM every running sbx process of NAME; returns how many were signalled. A PID can be reused between listing the
     processes and signalling one, so each PID is first pinned with a pidfd and only then checked against its file: the
     signal goes to the process that was checked, never to a newcomer that took the number."""
-    sent = 0
+    sent, left = 0, []
     use_fd = hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")
     for entry in running(name):
         pid = live_pid(entry)
@@ -123,9 +153,11 @@ def stop_program(name):
             if fd is None: os.kill(pid, signal.SIGTERM)
             else: signal.pidfd_send_signal(fd, signal.SIGTERM)
             sent += 1
+            if pid != int(entry): left += [(pid, proc_start(pid))] + below      # no sbx left to follow up with SIGKILL
             signal_tree(below, signal.SIGTERM)
         except OSError:
             pass
         finally:
             if fd is not None: os.close(fd)
+    finish_tree(left, STOP_GRACE)
     return sent

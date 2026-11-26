@@ -464,6 +464,7 @@ PASTA = ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", DNS
          "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--"]
 SEC_FD = 9      # pasta closes inherited descriptors, so bwrap's seccomp filter is re-opened from a file inside it
 INFO_FD = 8     # and the file bwrap writes its --info-fd to likewise (one digit: dash, the usual /bin/sh, can't open "10>file")
+STATUS_FD = 7   # likewise for --json-status-fd, which gives sbx the sandbox's init pid
 
 
 def net_wrap(files=()):
@@ -1890,7 +1891,7 @@ def build(prog, args, live=False, o=None):
     a = ["bwrap", "--unshare-all"] + (["--share-net"] if cfg["net"] else [])
     if not cfg["userns"]: a += ["--unshare-user", "--disable-userns"]
     if priv: a += ["--uid", str(os.getuid()), "--gid", str(os.getgid())]      # pasta's user namespace maps you to root; keep your own ids inside
-    a += ["--die-with-parent", "--new-session", "--clearenv"]
+    a += ["--new-session", "--clearenv"]
     if cfg["hostname"]: a += ["--hostname", "sbx"]
 
     def put(src, blob):                         # a private file next to the other helper files, removed when the run ends
@@ -1900,6 +1901,13 @@ def build(prog, args, live=False, o=None):
         with os.fdopen(fd, "wb") as f: f.write(blob)
         state["files"].append(src)
 
+    status = tag + ".status"        # bwrap writes {"child-pid": N} here: N is the sandbox's init, which sbx stops when the program leaves something behind
+    put(status, b""); state["status"] = status
+    if priv: a += ["--json-status-fd", str(STATUS_FD)]; wrapfiles.append((STATUS_FD, ">", status))
+    elif live:
+        f = os.fdopen(os.open(status, os.O_WRONLY | os.O_NOFOLLOW), "wb"); os.set_inheritable(f.fileno(), True)
+        state["keep"].append(f); state["fds"].append(f.fileno()); a += ["--json-status-fd", str(f.fileno())]
+    else: a += ["--json-status-fd", "FD"]
     machine = platform.machine()
     c32 = bool(cfg["allow_32bit"]) and machine in COMPAT32
     if cfg["allow_32bit"] and live:
@@ -2094,7 +2102,8 @@ def build(prog, args, live=False, o=None):
 
 
 # ---------------------------------------------------------------- running programs
-RUNNING = f"{STATE}/running"      # RUNNING/PID: "NAME\nSTARTTIME" of an sbx process, then "\nPID\nSTARTTIME" of its sandbox
+RUNNING = f"{STATE}/running"      # RUNNING/PID: "NAME\nSTARTTIME" of an sbx process, then "\nPID\nSTARTTIME" of its sandbox, then the same for the sandbox's init
+STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when sbx is told to stop
 
 
 def proc_start(pid):
@@ -2120,11 +2129,12 @@ def live_sbx(pid):
 def live_pid(entry):
     """The PID to signal for the run in RUNNING/ENTRY: its sbx process, else its sandbox if sbx is gone; None when neither is alive."""
     try:
-        with open(f"{RUNNING}/{entry}") as f: lines = [x.strip() for x in f.read().split("\n")] + ["", "", "", ""]
+        with open(f"{RUNNING}/{entry}") as f: lines = [x.strip() for x in f.read().split("\n")] + [""] * 6
     except OSError:
         return None
     if lines[1] and lines[1] == proc_start(entry) and live_sbx(entry): return int(entry)
-    if lines[2].isdigit() and lines[3] and lines[3] == proc_start(lines[2]): return int(lines[2])
+    for i in (2, 4):
+        if lines[i].isdigit() and lines[i + 1] and lines[i + 1] == proc_start(lines[i]): return int(lines[i])
     return None
 
 
@@ -2181,6 +2191,34 @@ def descendants(pid):
     return found
 
 
+def sandbox_init(path):
+    """(pid, start) of the sandbox's init, from the child-pid bwrap wrote to PATH; None if it isn't there yet or isn't pid 1 of its namespace."""
+    try:
+        with open(path) as f: pid = int(json.loads(f.readline())["child-pid"])
+        with open(f"/proc/{pid}/status") as f: nspid = [l.split() for l in f if l.startswith("NSpid:")]
+    except (OSError, ValueError, KeyError, TypeError): return None
+    start = proc_start(pid)
+    return (pid, start) if start and nspid and nspid[0][-1] == "1" else None
+
+
+def wait_exit(pid, start, grace):
+    """True if PID (the process with this START) ends within GRACE seconds; returns at the moment it ends."""
+    fd = None
+    if hasattr(os, "pidfd_open"):
+        try: fd = os.pidfd_open(pid)
+        except OSError: pass
+    try:
+        if proc_start(pid) != start: return True
+        if fd is not None: return bool(select.select([fd], [], [], grace)[0])
+        end = time.time() + grace
+        while proc_start(pid) == start:
+            if time.time() >= end: return False
+            time.sleep(0.02)
+        return True
+    finally:
+        if fd is not None: os.close(fd)
+
+
 def signal_tree(tree, sig):
     for pid, start in tree:
         if proc_start(pid) != start: continue
@@ -2199,7 +2237,7 @@ def stop_program(name):
     """SIGTERM every running sbx process of NAME; returns how many were signalled. A PID can be reused between listing the
     processes and signalling one, so each PID is first pinned with a pidfd and only then checked against its file: the
     signal goes to the process that was checked, never to a newcomer that took the number."""
-    sent = 0
+    sent, left = 0, []
     use_fd = hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")
     for entry in running(name):
         pid = live_pid(entry)
@@ -2215,30 +2253,46 @@ def stop_program(name):
             if fd is None: os.kill(pid, signal.SIGTERM)
             else: signal.pidfd_send_signal(fd, signal.SIGTERM)
             sent += 1
+            if pid != int(entry): left += [(pid, proc_start(pid))] + below      # no sbx left to follow up with SIGKILL
             signal_tree(below, signal.SIGTERM)
         except OSError:
             pass
         finally:
             if fd is not None: os.close(fd)
+    finish_tree(left, STOP_GRACE)
     return sent
 
 
 # ---------------------------------------------------------------- running it
-STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when sbx is told to stop
+LINGER_GRACE = 5    # how long what the program left behind may keep running after it exits
 
 def sweep_stale():
-    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.a11y, PID.system, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp)."""
+    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.a11y, PID.system, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp, PID.status)."""
     d = f"{runtime_dir()}/sbx"
     try: names = os.listdir(d)
     except OSError: return
     for n in names:
-        m = re.fullmatch(r"(\d+)\.(bus|a11y|system|xauth|wl|gsettings|boot_id|hostname|hosts|passwd|resolv\.conf|seccomp)", n)
+        m = re.fullmatch(r"(\d+)\.(bus|a11y|system|xauth|wl|gsettings|boot_id|hostname|hosts|passwd|resolv\.conf|seccomp|status)", n)
         if not m: continue
         try: os.kill(int(m.group(1)), 0); continue          # still running
         except ProcessLookupError: pass
         except OSError: continue
         try: os.unlink(f"{d}/{n}")
         except OSError: pass
+
+
+def sweep_orphans():
+    """Kill the sandboxes of sbx processes that were killed outright: without --die-with-parent nothing else ends them."""
+    try: entries = [f for f in os.listdir(RUNNING) if f.isdigit()]
+    except OSError: return
+    for e in entries:
+        try:
+            with open(f"{RUNNING}/{e}") as f: lines = [x.strip() for x in f.read().split("\n")] + [""] * 6
+        except OSError: continue
+        if not lines[1] or lines[1] == proc_start(e): continue          # that sbx is still there
+        tree = [(int(p), s) for p, s in ((lines[2], lines[3]), (lines[4], lines[5])) if p.isdigit() and s]
+        for pid, _ in tree[:]: tree += descendants(pid)
+        signal_tree(tree, signal.SIGKILL)
 
 
 def teardown(st):
@@ -2311,7 +2365,7 @@ def run(prog, args, opts):
     LOG_NAME[0] = clean(opts.get("name") or os.path.basename(prog))      # same name build() will use; from here on warnings and errors are logged too
     if not shutil.which("bwrap"): die(f"bubblewrap missing: {install_hint('bubblewrap')}")
     if platform.machine() not in ARCHES: die(f"no system-call filter for {platform.machine()}; not starting without it")
-    sweep_stale()
+    sweep_stale(); sweep_orphans()
     os.makedirs(HOMES, mode=0o700, exist_ok=True)
     restore = None
     if not opts.get("loader") and "/" in prog:
@@ -2330,14 +2384,14 @@ def run(prog, args, opts):
     try: mark_running(name)
     except OSError: pass                          # only `sbx stop`, `sbx list` and the running-check of `sbx clean` need it
     start, stopped, child, tree = time.time(), [False], [None], []
-    x11_seen = [False]
+    x11_seen, init = [False], []                  # init: (pid, start) of the sandbox's init once known
     piped = not sys.stderr.isatty()               # started from the app menu or a file manager: no terminal, so the log keeps stderr
     jout = piped and on_journal(1)                # stdout goes only to the journal there, so log it and check it for hints too
     try:
         def stop(*_):                                  # first signal: ask politely, kill after STOP_GRACE s; a second one kills at once
             again, stopped[0] = stopped[0], True
             if not child[0]: return
-            tree[:] = descendants(child[0].pid) or tree           # pasta dies on SIGTERM but leaves bwrap and the program running
+            tree[:] = descendants(child[0].pid) + ([init[0]] + descendants(init[0][0]) if init else []) or tree           # pasta dies on SIGTERM but leaves bwrap and the program running
             if again: child[0].kill(); signal_tree(tree, signal.SIGKILL)
             else:
                 child[0].terminate(); signal_tree(tree, signal.SIGTERM)
@@ -2345,11 +2399,18 @@ def run(prog, args, opts):
         for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, stop)      # before the child exists, so no signal is missed
         p = child[0] = subprocess.Popen(st["prefix"] + st["wrap"] + cmd, pass_fds=st["fds"], stdout=subprocess.PIPE if jout else None, stderr=subprocess.PIPE if piped else None)
         mark_child(p.pid)
+        def note_init():
+            r = None if init or not st.get("status") else sandbox_init(st["status"])
+            if r: init.append(r); mark_child(r[0])
+        end = time.time() + 2
+        while st.get("status") and not init and p.poll() is None and time.time() < end: note_init(); time.sleep(0.005)
         if stopped[0]: p.terminate()                  # a signal that came while it was starting
         ts = [threading.Thread(target=tee_stderr, args=a, daemon=True) for a in
               ([(p.stderr.fileno(), name, x11_seen)] if piped else []) + ([(p.stdout.fileno(), name, x11_seen, sys.stdout)] if jout else [])]
         for t in ts: t.start()
         rc = p.wait()
+        note_init()
+        if init and not wait_exit(*init[0], STOP_GRACE if stopped[0] else LINGER_GRACE): signal_tree(init, signal.SIGKILL)       # ends the whole sandbox
         if stopped[0]: finish_tree(tree, STOP_GRACE)
         for t in ts: t.join(2)
     finally:

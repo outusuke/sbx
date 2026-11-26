@@ -2,21 +2,35 @@
 #| Layer rule: this fragment may use names from lower-numbered fragments (and its own) only; build.py enforces it.
 
 # ---------------------------------------------------------------- running it
-STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when sbx is told to stop
+LINGER_GRACE = 5    # how long what the program left behind may keep running after it exits
 
 def sweep_stale():
-    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.a11y, PID.system, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp)."""
+    """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.a11y, PID.system, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp, PID.status)."""
     d = f"{runtime_dir()}/sbx"
     try: names = os.listdir(d)
     except OSError: return
     for n in names:
-        m = re.fullmatch(r"(\d+)\.(bus|a11y|system|xauth|wl|gsettings|boot_id|hostname|hosts|passwd|resolv\.conf|seccomp)", n)
+        m = re.fullmatch(r"(\d+)\.(bus|a11y|system|xauth|wl|gsettings|boot_id|hostname|hosts|passwd|resolv\.conf|seccomp|status)", n)
         if not m: continue
         try: os.kill(int(m.group(1)), 0); continue          # still running
         except ProcessLookupError: pass
         except OSError: continue
         try: os.unlink(f"{d}/{n}")
         except OSError: pass
+
+
+def sweep_orphans():
+    """Kill the sandboxes of sbx processes that were killed outright: without --die-with-parent nothing else ends them."""
+    try: entries = [f for f in os.listdir(RUNNING) if f.isdigit()]
+    except OSError: return
+    for e in entries:
+        try:
+            with open(f"{RUNNING}/{e}") as f: lines = [x.strip() for x in f.read().split("\n")] + [""] * 6
+        except OSError: continue
+        if not lines[1] or lines[1] == proc_start(e): continue          # that sbx is still there
+        tree = [(int(p), s) for p, s in ((lines[2], lines[3]), (lines[4], lines[5])) if p.isdigit() and s]
+        for pid, _ in tree[:]: tree += descendants(pid)
+        signal_tree(tree, signal.SIGKILL)
 
 
 def teardown(st):
@@ -89,7 +103,7 @@ def run(prog, args, opts):
     LOG_NAME[0] = clean(opts.get("name") or os.path.basename(prog))      # same name build() will use; from here on warnings and errors are logged too
     if not shutil.which("bwrap"): die(f"bubblewrap missing: {install_hint('bubblewrap')}")
     if platform.machine() not in ARCHES: die(f"no system-call filter for {platform.machine()}; not starting without it")
-    sweep_stale()
+    sweep_stale(); sweep_orphans()
     os.makedirs(HOMES, mode=0o700, exist_ok=True)
     restore = None
     if not opts.get("loader") and "/" in prog:
@@ -108,14 +122,14 @@ def run(prog, args, opts):
     try: mark_running(name)
     except OSError: pass                          # only `sbx stop`, `sbx list` and the running-check of `sbx clean` need it
     start, stopped, child, tree = time.time(), [False], [None], []
-    x11_seen = [False]
+    x11_seen, init = [False], []                  # init: (pid, start) of the sandbox's init once known
     piped = not sys.stderr.isatty()               # started from the app menu or a file manager: no terminal, so the log keeps stderr
     jout = piped and on_journal(1)                # stdout goes only to the journal there, so log it and check it for hints too
     try:
         def stop(*_):                                  # first signal: ask politely, kill after STOP_GRACE s; a second one kills at once
             again, stopped[0] = stopped[0], True
             if not child[0]: return
-            tree[:] = descendants(child[0].pid) or tree           # pasta dies on SIGTERM but leaves bwrap and the program running
+            tree[:] = descendants(child[0].pid) + ([init[0]] + descendants(init[0][0]) if init else []) or tree           # pasta dies on SIGTERM but leaves bwrap and the program running
             if again: child[0].kill(); signal_tree(tree, signal.SIGKILL)
             else:
                 child[0].terminate(); signal_tree(tree, signal.SIGTERM)
@@ -123,11 +137,18 @@ def run(prog, args, opts):
         for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, stop)      # before the child exists, so no signal is missed
         p = child[0] = subprocess.Popen(st["prefix"] + st["wrap"] + cmd, pass_fds=st["fds"], stdout=subprocess.PIPE if jout else None, stderr=subprocess.PIPE if piped else None)
         mark_child(p.pid)
+        def note_init():
+            r = None if init or not st.get("status") else sandbox_init(st["status"])
+            if r: init.append(r); mark_child(r[0])
+        end = time.time() + 2
+        while st.get("status") and not init and p.poll() is None and time.time() < end: note_init(); time.sleep(0.005)
         if stopped[0]: p.terminate()                  # a signal that came while it was starting
         ts = [threading.Thread(target=tee_stderr, args=a, daemon=True) for a in
               ([(p.stderr.fileno(), name, x11_seen)] if piped else []) + ([(p.stdout.fileno(), name, x11_seen, sys.stdout)] if jout else [])]
         for t in ts: t.start()
         rc = p.wait()
+        note_init()
+        if init and not wait_exit(*init[0], STOP_GRACE if stopped[0] else LINGER_GRACE): signal_tree(init, signal.SIGKILL)       # ends the whole sandbox
         if stopped[0]: finish_tree(tree, STOP_GRACE)
         for t in ts: t.join(2)
     finally:

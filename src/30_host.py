@@ -102,6 +102,7 @@ PASTA = ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", DNS
          "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--"]
 SEC_FD = 9      # pasta closes inherited descriptors, so bwrap's seccomp filter is re-opened from a file inside it
 INFO_FD = 8     # and the file bwrap writes its --info-fd to likewise (one digit: dash, the usual /bin/sh, can't open "10>file")
+STATUS_FD = 7   # likewise for --json-status-fd, which gives sbx the sandbox's init pid
 
 
 def net_wrap(files=()):
