@@ -128,6 +128,12 @@ def set_limit(scope, key, text):
     save(scope, [l for l in read_lines(scope) if key_of(l) != key] + ([f"{key}={text}"] if text is not None else []))
 
 
+def args_text(scope):
+    vals = [strip(l).partition("=")[2].strip() for l in read_lines(scope) if key_of(l) == "args"]
+    if not vals and scope is not None: return args_text(None)
+    return vals[-1] if vals else ""
+
+
 def share_valid(v):
     return all(x.strip() in SHARE_NAMES for x in v.split(",")) if v else True
 

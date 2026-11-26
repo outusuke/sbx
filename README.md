@@ -117,6 +117,8 @@ A program that reads or creates files in the folder it starts in needs `folder=1
 
 Per-program folders: for each of Downloads, Documents, Pictures, Music and Videos that is set in `~/.config/user-dirs.dirs` and exists, `<folder>/sbx/NAME` is mounted over the same folder in the private home (`~/Downloads/sbx/firefox` is `~/Downloads` for firefox). The program sees only its own files there. `share_dirs=Downloads,Pictures` picks some, `share_dirs=` (or `--no-share-dirs`) turns it off, and `sbx-gui` has a switch on each program's page and on the defaults page. Files the program's private home already holds in those folders are moved over on first use, never overwriting. sbx creates the folders with mode 0700 and never deletes them, empty or not; if `sbx` or `sbx/NAME` is a link, sbx warns and that folder stays in the private home. `private=1` ignores it. `sbx clean` removes only the private home.
 
+Launch arguments: `args=--profile work` in a program's settings file adds those arguments, split like a shell would, before the ones you type (`sbx-gui` has a row for it on each program's page).
+
 Environment variables: `setenv=NAME=value` sets one for the program, `env=NAME` passes your own value through (also `--setenv=NAME=value`). `sbx-gui` has a list for both on each program's page.
 
 D-Bus names: `talk=org.freedesktop.FileManager1` (or `--talk=NAME`) lets the program call that session-bus name through `xdg-dbus-proxy`. It gives full access to that service, so list only what the program needs. A wildcard needs three parts before the `.*` (`org.example.App.*`). `sbx-gui` has a list for it.

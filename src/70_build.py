@@ -267,4 +267,4 @@ def build(prog, args, live=False, o=None):
     limits = [f"-p{p}={cfg[k]}" for k, p in (("memory", "MemoryMax"), ("tasks", "TasksMax"), ("cpu", "CPUQuota")) if cfg[k]]
     if limits: state["prefix"] = ["systemd-run", "--user", "--scope", "--quiet"] + limits + ["--"]
     if priv: state["wrap"] = net_wrap(wrapfiles)
-    return name, a + ["--chdir", cwd or HOME, "--"] + ([loader] if loader else []) + [exe] + args, state
+    return name, a + ["--chdir", cwd or HOME, "--"] + ([loader] if loader else []) + [exe] + shlex.split(cfg["args"]) + args, state

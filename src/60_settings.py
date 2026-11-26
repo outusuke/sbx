@@ -11,6 +11,12 @@ def env_name_ok(k):
     return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k))
 
 
+def args_ok(v):
+    try: shlex.split(v)
+    except ValueError: return False
+    return True
+
+
 def syscall_ok(n):
     return n == "io_uring" or n in EXTRA_SYSCALLS
 
@@ -42,7 +48,8 @@ def parse_conf(path):
             if b is None: warn(f"{at}: {k}={v} is not 0 or 1, ignored")
             else: sc[k] = b
         elif k in LIMITS:
-            if v == "" or re.fullmatch(LIMITS[k], v): lim[k] = v
+            if k == "args" and not args_ok(v): warn(f"{at}: args has an unclosed quote, ignored")
+            elif v == "" or re.fullmatch(LIMITS[k], v): lim[k] = v
             else: warn(f"{at}: {k}={v} is not a valid limit, ignored")
         else:
             warn(f"{at}: ignoring unknown setting '{k}'")

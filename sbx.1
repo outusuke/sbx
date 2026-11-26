@@ -496,8 +496,11 @@ sbx never deletes these folders, not even empty ones, and
 .B sbx clean
 removes only the private home.
 .PP
+args is a line of command\-line arguments, split like a shell would (quotes work), that sbx puts after the program name and before
+any arguments given at start. For example args=\-\-profile work. An unclosed quote is reported and the line ignored.
+.PP
 Lists that add up across the two files: whitelist, read_only, env, setenv, allow_syscall, talk. Limits: memory, tasks,
-cpu (and gtk_portal, which takes auto, 1 or 0, and share_dirs); an empty value in a program's file cancels the default's. Command\-line flags beat the files.
+cpu (and gtk_portal, which takes auto, 1 or 0, share_dirs and args); an empty value in a program's file cancels the default's. Command\-line flags beat the files.
 .PP
 .B sbx show
 prints the result of all this.

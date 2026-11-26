@@ -313,6 +313,12 @@ def set_limit(scope, key, text):
     save(scope, [l for l in read_lines(scope) if key_of(l) != key] + ([f"{key}={text}"] if text is not None else []))
 
 
+def args_text(scope):
+    vals = [strip(l).partition("=")[2].strip() for l in read_lines(scope) if key_of(l) == "args"]
+    if not vals and scope is not None: return args_text(None)
+    return vals[-1] if vals else ""
+
+
 def share_valid(v):
     return all(x.strip() in SHARE_NAMES for x in v.split(",")) if v else True
 
@@ -1575,7 +1581,9 @@ class Win(Adw.ApplicationWindow):
         logb = Gtk.Button(label="Log", valign=Gtk.Align.CENTER)
         stop = Gtk.Button(label="Stop", valign=Gtk.Align.CENTER)
         launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER)
-        for w in (badge, logb, stop, launch): row.add_suffix(w)
+        opts = Gtk.Button(icon_name="emblem-system-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Launch options")
+        opts.connect("clicked", lambda *_: self.args_dialog(scope))
+        for w in (badge, logb, stop, opts, launch): row.add_suffix(w)
 
         def redraw(*_):
             live = program_running(scope)
@@ -1908,6 +1916,24 @@ class Win(Adw.ApplicationWindow):
         set_active(link_is_ours(scope))
         row.connect("notify::active", toggled)
         return row
+
+    def args_dialog(self, scope, on_change=None):
+        """Dialog for args=, saved in the program's file."""
+        d = Adw.AlertDialog(heading="Launch options", body="Added before any arguments given at start, for example --profile work.")
+        entry = Gtk.Entry(text=args_text(scope), activates_default=True)
+        d.set_extra_child(entry)
+        d.add_response("cancel", "Cancel"); d.add_response("save", "Save")
+        d.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("save"); d.set_close_response("cancel")
+
+        def done(dlg, res):
+            if dlg.choose_finish(res) != "save": return
+            text = entry.get_text().strip()
+            try: shlex.split(text)
+            except ValueError: return self.toasts.add_toast(Adw.Toast(title="Unclosed quote in the arguments"))
+            set_limit(scope, "args", text or None)
+            if on_change: on_change()
+        d.choose(self, None, done)
 
     def share_group(self, scope, on_change=None):
         """The switch for share_dirs: each program gets its own subfolder (<folder>/sbx/NAME) of Downloads, Documents, Pictures, Music and Videos

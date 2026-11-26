@@ -2542,6 +2542,17 @@ class Units(unittest.TestCase):
         self.assertIn(".ssh", sch["sensitive"])
 
 
+    # -- launch arguments (args)
+    def test_args_setting_goes_between_the_program_and_the_arguments_given_at_start(self):
+        self.write(".config/sbx/apps/tool.conf", "args=--profile 'my work'\n")
+        cmd = self.S["build"]("/bin/true", ["x.txt"], False, {"name": "tool", "portals": False})[1]
+        self.assertEqual(cmd[cmd.index("/bin/true") + 1:], ["--profile", "my work", "x.txt"])
+
+    def test_args_with_an_unclosed_quote_is_reported_and_ignored(self):
+        self.write(".config/sbx/apps/tool.conf", "args=--title 'oops\n")
+        self.assertEqual(self.S["effective"]("tool", {})[0]["args"], "")
+        self.assertTrue(self.warned)
+
     # -- per-program shared folders (share_dirs)
     def share_env(self, text=None):
         text = 'XDG_DOWNLOAD_DIR="$HOME/Transferencias"\nXDG_DOCUMENTS_DIR="$HOME/Documentos"\nXDG_MUSIC_DIR="$HOME/"\nXDG_PICTURES_DIR="$HOME/Fotos"\nXDG_VIDEOS_DIR="$HOME/Videos"\nXDG_DESKTOP_DIR="$HOME/Escritorio"\n' if text is None else text
