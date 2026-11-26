@@ -418,25 +418,64 @@ def sbx_cmd():
     return shutil.which("sbx") or "/usr/local/bin/sbx"
 
 
-def family_preview(scope, out, err=""):
-    """The `sbx desktop --dry-run` output as a short list for the confirm dialog."""
-    entries = []
-    for line in out.splitlines():
-        if line.startswith("would write "): entries.append([os.path.basename(line[12:].strip())[:-8], ""])
-        elif line.startswith("  Exec=") and entries and not entries[-1][1]:
-            try: w = shlex.split(line[7:])
-            except ValueError: w = line[7:].split()
-            w = w[1:]
-            while w and w[0].startswith(("--app-id=", "--name=")): w = w[1:]
-            entries[-1][1] = " ".join(w)
-    if not entries: return out.strip()
-    shown = entries[:12]
-    text = f"{len(entries)} menu entr{'y' if len(entries) == 1 else 'ies'} will start in the {scope} sandbox:\n\n"
-    text += "\n".join(f"{i}\n    runs: {cmd}" for i, cmd in shown)
-    if len(entries) > len(shown): text += f"\nand {len(entries) - len(shown)} more"
-    skipped = [x.strip().removeprefix("sbx: ") for x in err.splitlines() if x.strip()]
-    if skipped: text += "\n\nLeft alone:\n" + "\n".join(skipped)
-    return text
+ENTRY_ID = re.compile(r"[A-Za-z0-9._+-]+")        # no glob characters, so one tick is exactly one entry
+
+
+def desktop_field(text, key):
+    group = ""
+    for line in text.splitlines():
+        if line.startswith("["): group = line.strip()
+        elif group == "[Desktop Entry]" and line.startswith(key + "="): return line[len(key) + 1:].strip()
+    return None
+
+
+def read_launcher(path):
+    try:
+        with open(path, errors="replace") as f: return f.read()
+    except OSError: return ""
+
+
+def menu_entries(scope):
+    """Menu entries as dicts (id, name, icon, program, state), sorted by name. state: free, here, other:NAME or blocked (a launcher sbx didn't make is in the way)."""
+    dirs = [d for d in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":") if d]
+    mine = f"{HOME}/.local/share/applications"
+    seen, out = set(), []
+    for d in dirs:
+        for path in sorted(glob.glob(f"{glob.escape(d)}/applications/*.desktop")):
+            base = os.path.basename(path)
+            if base in seen: continue
+            seen.add(base)
+            ident, text = base[:-8], read_launcher(path)
+            if not ENTRY_ID.fullmatch(ident) or ident.startswith("."): continue
+            if desktop_field(text, "Type") != "Application": continue
+            if "true" in (desktop_field(text, "NoDisplay"), desktop_field(text, "Hidden")): continue
+            state, copy = "free", f"{mine}/{base}"
+            if os.path.lexists(copy):
+                ours = read_launcher(copy)
+                if "X-Sbx-Sandboxed=true" not in ours: state = "blocked"
+                else:
+                    owner = launcher_name(ours) or launcher_program(ours)
+                    state = "here" if owner == scope else f"other:{owner}"
+            out.append({"id": ident, "name": desktop_field(text, "Name") or ident, "icon": desktop_field(text, "Icon") or "",
+                        "program": launcher_program(text) or "", "state": state})
+    return sorted(out, key=lambda e: (e["name"].casefold(), e["id"]))
+
+
+def family_members(scope):
+    out = []
+    for path in glob.glob(f"{HOME}/.local/share/applications/*.desktop"):
+        text = read_launcher(path)
+        if "X-Sbx-Sandboxed=true" not in text or launcher_name(text) != scope: continue
+        ident = os.path.basename(path)[:-8]
+        name = desktop_field(text, "Name") or ident
+        out.append({"id": ident, "name": name[:-6] if name.endswith(" (sbx)") else name})
+    return sorted(out, key=lambda e: (e["name"].casefold(), e["id"]))
+
+
+def family_summary(scope, members):
+    if not members: return f"Let other menu entries, like a viewer or a settings app, share the {scope} sandbox and its settings"
+    names = [m["name"] for m in members]
+    return ", ".join(names) if len(names) <= 3 else f"{', '.join(names[:2])} and {len(names) - 2} more"
 
 
 def desktop_args(scope, pattern, via="", dry=False):

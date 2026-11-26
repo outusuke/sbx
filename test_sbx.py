@@ -3862,63 +3862,63 @@ class Gui(unittest.TestCase):
         self.assertEqual(G["desktop_args"]("myapp", "myapp*", "myapp", dry=True), [cli, "desktop", "--dry-run", "--name=myapp", "--via=myapp", "myapp*"])
         self.assertEqual(G["desktop_args"]("fam", "app"), [cli, "desktop", "--name=fam", "app"])
 
-    def test_the_preview_lists_each_entry_with_its_command_and_what_was_left_alone(self):
-        fp = self.G["family_preview"]
-        out = ("would write ~/.local/share/applications/myapp-app.desktop\n  Exec=/usr/local/bin/sbx --app-id=myapp-app --name=myapp myapp app.dat %f\n"
-               "  Exec=/usr/local/bin/sbx --app-id=myapp-app --name=myapp myapp other\n"
-               "would write ~/.local/share/applications/myapp-notepad.desktop\n  Exec=/usr/local/bin/sbx --app-id=myapp-notepad --name=myapp myapp notepad\n")
-        err = "sbx: 'Exec=env A=1 myapp e.dat' starts with env: skipped, --via would put myapp in front of env. Edit the file by hand.\n"
-        self.assertEqual(fp("myapp", out, err), "2 menu entries will start in the myapp sandbox:\n\nmyapp-app\n    runs: myapp app.dat %f\nmyapp-notepad\n    runs: myapp notepad"
-                                              "\n\nLeft alone:\n'Exec=env A=1 myapp e.dat' starts with env: skipped, --via would put myapp in front of env. Edit the file by hand.")
-        many = "".join(f"would write ~/a/e{n}.desktop\n  Exec=sbx x{n}\n" for n in range(15))
-        self.assertIn("and 3 more", fp("myapp", many)); self.assertNotIn("e12", fp("myapp", many))
-        self.assertEqual(fp("myapp", "something else\n"), "something else")
+    def _launchers(self, system, mine):
+        sysdir, home = f"{self.tmp}/share/applications", f"{self.tmp}/.local/share/applications"
+        for d, files in ((sysdir, system), (home, mine)):
+            os.makedirs(d, exist_ok=True)
+            for n, t in files.items():
+                with open(f"{d}/{n}.desktop", "w") as f: f.write(t)
+        return mock.patch.dict(os.environ, {"XDG_DATA_DIRS": f"{self.tmp}/share"})
 
-    def _family_dialog(self, pattern, via):
-        G = self.G; adw, gtk = G["Adw"], G["Gtk"]
-        entries = [mock.MagicMock(), mock.MagicMock()]
-        entries[0].get_text.return_value, entries[1].get_text.return_value = pattern, via
-        gtk.Entry.side_effect = entries
-        self.addCleanup(setattr, gtk.Entry, "side_effect", None)
-        win = mock.MagicMock(); adw.AlertDialog.reset_mock()
-        G["Win"].family_dialog(win, "myapp")
-        dlg = adw.AlertDialog.return_value
-        return win, dlg, dlg.choose.call_args[0][2]
-
-    def test_the_group_dialog_previews_with_dry_run_before_it_writes(self):
+    def test_the_picker_lists_menu_entries_with_where_each_one_stands(self):
         G = self.G
-        win, dlg, done = self._family_dialog("myapp-*", "myapp")
-        win.run_desktop.return_value = mock.Mock(returncode=0, stdout="would write ~/x.desktop\n  Exec=sbx --app-id=x --name=myapp myapp notepad\n", stderr="")
-        dlg.choose_finish.return_value = "preview"; done(dlg, None)
-        self.assertEqual(win.run_desktop.call_args[0][0], G["desktop_args"]("myapp", "myapp-*", "myapp", dry=True))
-        win.family_confirm.assert_called_once_with("myapp", "myapp-*", "myapp", "1 menu entry will start in the myapp sandbox:\n\nx\n    runs: myapp notepad")
-        win.toasts.add_toast.assert_not_called()
+        app = lambda name, extra="": f"[Desktop Entry]\nType=Application\nName={name}\nExec=/usr/bin/{name.lower()}\n{extra}"
+        ours = lambda name, scope: f"[Desktop Entry]\nType=Application\nName={name}\nX-Sbx-Sandboxed=true\nExec=/usr/local/bin/sbx --app-id=x --name={scope} {scope} {name.lower()}\n"
+        with self._launchers({"free": app("Free"), "here": app("Here"), "other": app("Other"), "blocked": app("Blocked"), "hidden": app("Hidden", "NoDisplay=true\n"),
+                              "a b": app("Spaced"), "glob*": app("Glob")},
+                             {"here": ours("Here", "fam"), "other": ours("Other", "elsewhere"), "blocked": app("Blocked")}):
+            got = {e["id"]: e["state"] for e in G["menu_entries"]("fam")}
+        self.assertEqual(got, {"blocked": "blocked", "free": "free", "here": "here", "other": "other:elsewhere"})
 
-    def test_the_group_dialog_writes_nothing_when_cancelled_empty_or_refused(self):
-        win, dlg, done = self._family_dialog("myapp-*", "myapp")
-        dlg.choose_finish.return_value = "cancel"; done(dlg, None)
-        win.run_desktop.assert_not_called()
-        win, dlg, done = self._family_dialog("  ", "")
-        dlg.choose_finish.return_value = "preview"; done(dlg, None)
-        win.run_desktop.assert_not_called(); win.toasts.add_toast.assert_called_once()
-        win, dlg, done = self._family_dialog("nomatch*", "")
-        win.run_desktop.return_value = mock.Mock(returncode=1, stdout="", stderr="sbx: no launcher id matches nomatch*")
-        dlg.choose_finish.return_value = "preview"; done(dlg, None)
-        win.family_confirm.assert_not_called(); self.assertIn("no launcher id matches", win.alert.call_args[0][1])
+    def test_the_picker_sorts_by_name_and_the_first_folder_wins(self):
+        G = self.G
+        a = lambda n: f"[Desktop Entry]\nType=Application\nName={n}\nExec=x\n"
+        with self._launchers({"zed": a("Alpha"), "amy": a("beta")}, {}):
+            os.makedirs(f"{self.tmp}/share2/applications")
+            with open(f"{self.tmp}/share2/applications/zed.desktop", "w") as f: f.write(a("Shadowed"))
+            with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": f"{self.tmp}/share:{self.tmp}/share2"}):
+                self.assertEqual([e["name"] for e in G["menu_entries"]("fam")], ["Alpha", "beta"])
 
-    def test_confirming_the_group_runs_the_real_command_once(self):
-        G = self.G; win = mock.MagicMock(); adw = G["Adw"]; adw.AlertDialog.reset_mock()
-        G["Win"].family_confirm(win, "myapp", "myapp-*", "myapp", "would write ~/x.desktop")
-        dlg = adw.AlertDialog.return_value; done = dlg.choose.call_args[0][2]
-        self.assertEqual(adw.AlertDialog.call_args.kwargs["body"], "would write ~/x.desktop")
-        dlg.choose_finish.return_value = "cancel"; done(dlg, None)
-        win.run_desktop.assert_not_called()
-        win.run_desktop.return_value = mock.Mock(returncode=0, stdout="wrote ~/x.desktop", stderr="")
-        dlg.choose_finish.return_value = "add"; done(dlg, None)
-        win.run_desktop.assert_called_once_with(G["desktop_args"]("myapp", "myapp-*", "myapp"))
-        win.toasts.add_toast.assert_called_once()
+    def test_the_family_lists_only_the_entries_made_for_that_sandbox(self):
+        G = self.G
+        ours = lambda name, scope: f"[Desktop Entry]\nName={name} (sbx)\nX-Sbx-Sandboxed=true\nExec=/usr/local/bin/sbx --name={scope} {scope} x\n"
+        with self._launchers({}, {"b": ours("Beta", "fam"), "a": ours("Alpha", "fam"), "c": ours("Gamma", "other"), "d": "[Desktop Entry]\nName=Mine\n"}):
+            members = G["family_members"]("fam")
+        self.assertEqual(members, [{"id": "a", "name": "Alpha"}, {"id": "b", "name": "Beta"}])
+        self.assertIn("share the fam sandbox", G["family_summary"]("fam", []))
+        self.assertEqual(G["family_summary"]("fam", members), "Alpha, Beta")
+        self.assertEqual(G["family_summary"]("fam", members + [{"id": "c", "name": "C"}, {"id": "d", "name": "D"}]), "Alpha, Beta and 2 more")
+
+    def test_adding_entries_runs_one_command_per_id_and_reports_once(self):
+        G = self.G; win = mock.MagicMock()
+        win.run_desktop.side_effect = [mock.Mock(returncode=0, stdout="", stderr=""), mock.Mock(returncode=0, stdout="", stderr="")]
+        G["Win"].family_add(win, "fam", ["a", "b"], "fam")
+        self.assertEqual([c[0][0] for c in win.run_desktop.call_args_list], [G["desktop_args"]("fam", "a", "fam"), G["desktop_args"]("fam", "b", "fam")])
+        win.toasts.add_toast.assert_called_once(); win.alert.assert_not_called()
+        win.reset_mock()
+        win.run_desktop.side_effect = [mock.Mock(returncode=0, stdout="", stderr=""), mock.Mock(returncode=1, stdout="", stderr="sbx: not touching it\n")]
+        G["Win"].family_add(win, "fam", ["a", "b"])
+        self.assertEqual(win.alert.call_args[0][0], "Check these"); self.assertEqual(win.alert.call_args[0][1], "b: not touching it")
+
+    def test_taking_an_entry_out_removes_just_that_id_and_refreshes(self):
+        G = self.G; win = mock.MagicMock(); done = mock.Mock()
+        win.run_desktop.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        G["Win"].family_remove(win, {"id": "app", "name": "App"}, done)
+        win.run_desktop.assert_called_once_with([G["sbx_cmd"](), "desktop", "--remove", "app"])
+        done.assert_called_once(); win.alert.assert_not_called()
         win.run_desktop.return_value = mock.Mock(returncode=1, stdout="", stderr="boom")
-        done(dlg, None); self.assertEqual(win.alert.call_args[0][1], "boom")
+        G["Win"].family_remove(win, {"id": "app", "name": "App"}, done)
+        self.assertEqual(win.alert.call_args[0][1], "boom"); self.assertEqual(done.call_count, 2)
 
     def test_inherited_folders_get_their_own_group_instead_of_a_note_on_every_row(self):
         G = self.G

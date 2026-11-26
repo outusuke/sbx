@@ -768,54 +768,113 @@ class Win(Adw.ApplicationWindow):
         return row
 
     def family_row(self, scope):
-        row = Adw.ActionRow(title="Add other menu entries to this sandbox", use_markup=False,
-                            subtitle=f"Entries you pick by id start in the {scope} sandbox and share its settings")
-        btn = Gtk.Button(label="Add…", valign=Gtk.Align.CENTER)
-        btn.connect("clicked", lambda *_: self.family_dialog(scope))
-        row.add_suffix(btn)
+        row = Adw.ExpanderRow(title="Other menu entries in this sandbox", use_markup=False)
+        add = Gtk.Button(label="Add…", valign=Gtk.Align.CENTER, tooltip_text="Choose menu entries to start in this sandbox")
+        row.add_suffix(add)
+        kids = []
+
+        def refill(expand=False):
+            members = family_members(scope)
+            for k in kids: row.remove(k)
+            kids.clear()
+            row.set_subtitle(family_summary(scope, members))
+            for m in members:
+                k = Adw.ActionRow(title=m["name"], subtitle=m["id"], use_markup=False)
+                rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                                tooltip_text="Take out of this sandbox. The original menu entry comes back.")
+                rm.connect("clicked", lambda _b, m=m: self.family_remove(m, refill))
+                k.add_suffix(rm); row.add_row(k); kids.append(k)
+            if not members:
+                k = Adw.ActionRow(title="Nothing added yet", sensitive=False); row.add_row(k); kids.append(k)
+            row.set_expanded(bool(members) and (expand or row.get_expanded()))
+        add.connect("clicked", lambda *_: self.family_dialog(scope, lambda: refill(True)))
+        refill()
         return row
+
+    def family_remove(self, member, on_change):
+        r = self.run_desktop([sbx_cmd(), "desktop", "--remove", member["id"]])
+        if r is None: return
+        if r.returncode != 0: self.alert("Couldn't take it out", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
+        else: self.toasts.add_toast(Adw.Toast(title=f"{member['name']} no longer uses this sandbox"))
+        on_change()
 
     def run_desktop(self, argv):
         """The finished `sbx desktop` run; None (after an alert) if it couldn't start."""
         try: return subprocess.run(argv, capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as e: self.alert("Couldn't run sbx", str(e))
 
-    def family_dialog(self, scope):
-        d = Adw.AlertDialog(heading="Add menu entries to this sandbox",
-                            body=f"Type the id of an app menu entry, or a pattern such as org.gnome.*. Those entries will start through sbx in the {scope} sandbox, "
-                                 "sharing its private home and settings. You see a preview before anything is written.")
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        pattern = Gtk.Entry(placeholder_text="Menu entry id or pattern", activates_default=True)
-        via = Gtk.Entry(placeholder_text="Command to put in front (optional)", activates_default=True)
-        box.append(pattern); box.append(via)
-        d.set_extra_child(box)
-        d.add_response("cancel", "Cancel"); d.add_response("preview", "Preview")
-        d.set_response_appearance("preview", Adw.ResponseAppearance.SUGGESTED)
-        d.set_default_response("preview"); d.set_close_response("cancel")
+    def entry_image(self, icon):
+        img = Gtk.Image(pixel_size=32)
+        if icon.startswith("/") and os.path.isfile(icon): img.set_from_file(icon)
+        else: img.set_from_icon_name(icon or "application-x-executable")
+        return img
 
-        def done(dlg, res):
-            if dlg.choose_finish(res) != "preview": return
-            pat, runner = pattern.get_text().strip(), via.get_text().strip()
-            if not pat: return self.toasts.add_toast(Adw.Toast(title="Type an entry id or a pattern"))
-            r = self.run_desktop(desktop_args(scope, pat, runner, dry=True))
+    def family_dialog(self, scope, on_change=None):
+        entries = menu_entries(scope)
+        dlg = Adw.Dialog(title="Add menu entries", content_width=460, content_height=640)
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_start=12, margin_end=12, margin_top=6, margin_bottom=12)
+        intro = Gtk.Label(label=f"Ticked entries start in the {scope} sandbox and share its private home and settings.",
+                          wrap=True, xalign=0, css_classes=["dim-label"])
+        search = Gtk.SearchEntry(placeholder_text="Search the app menu", hexpand=True)
+        lst = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"])
+        lst.set_placeholder(Gtk.Label(label="No matching entries" if entries else "No app menu entries found", margin_top=24, margin_bottom=24, css_classes=["dim-label"]))
+        scroller = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER, child=lst)
+        via = Adw.EntryRow(title="Command to put in front (optional)")
+        adv = Adw.ExpanderRow(title="Advanced", subtitle="For entries that start the program under another name")
+        adv.add_row(via)
+        adv_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"]); adv_box.append(adv)
+        add = Gtk.Button(label="Add", css_classes=["suggested-action", "pill"], halign=Gtk.Align.CENTER, sensitive=False)
+        for w in (intro, search, scroller, adv_box, add): body.append(w)
+        view.set_content(body); dlg.set_child(view)
+
+        hay, checks = {}, {}
+        WHY = {"here": "already in this sandbox", "blocked": "a menu entry sbx didn't make is in the way"}
+        for e in entries:
+            state = e["state"]
+            note = WHY.get(state) or (f"already in the {state[6:]} sandbox" if state.startswith("other:") else "")
+            r = Adw.ActionRow(title=e["name"], subtitle=e["id"] + (f" · {note}" if note else ""), use_markup=False)
+            r.add_prefix(self.entry_image(e["icon"]))
+            chk = Gtk.CheckButton(valign=Gtk.Align.CENTER, active=state == "here", sensitive=state == "free")
+            r.add_suffix(chk)
+            if state == "free": r.set_activatable_widget(chk)
+            else: r.set_sensitive(False)
+            lst.append(r)
+            hay[r] = f"{e['name']} {e['id']} {e['program']}".casefold()
+            if state == "free": checks[e["id"]] = chk
+
+        def picked(): return sorted(i for i, c in checks.items() if c.get_active())
+
+        def tick(*_):
+            n = len(picked())
+            add.set_label("Add" if n == 0 else "Add 1 entry" if n == 1 else f"Add {n} entries")
+            add.set_sensitive(n > 0)
+        for c in checks.values(): c.connect("notify::active", tick)
+        lst.set_filter_func(lambda r: search.get_text().strip().casefold() in hay.get(r, ""))
+        search.connect("search-changed", lambda *_: lst.invalidate_filter())
+
+        def go(*_):
+            ids, runner = picked(), via.get_text().strip()
+            if not ids: return
+            dlg.close()
+            self.family_add(scope, ids, runner)
+            if on_change: on_change()
+        add.connect("clicked", go)
+        dlg.set_focus(search)
+        dlg.present(self)
+
+    def family_add(self, scope, ids, runner=""):
+        added, problems = 0, []
+        for ident in ids:
+            r = self.run_desktop(desktop_args(scope, ident, runner))
             if r is None: return
-            if r.returncode != 0: return self.alert("Nothing to add", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
-            self.family_confirm(scope, pat, runner, family_preview(scope, r.stdout, r.stderr))
-        d.choose(self, None, done)
-
-    def family_confirm(self, scope, pattern, via, preview):
-        d = Adw.AlertDialog(heading="Add these menu entries?", body=preview[:1500])
-        d.add_response("cancel", "Cancel"); d.add_response("add", "Add")
-        d.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
-        d.set_default_response("add"); d.set_close_response("cancel")
-
-        def done(dlg, res):
-            if dlg.choose_finish(res) != "add": return
-            r = self.run_desktop(desktop_args(scope, pattern, via))
-            if r is None: return
-            if r.returncode != 0: return self.alert("Couldn't add the menu entries", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
-            self.toasts.add_toast(Adw.Toast(title="Added to the app menu"))
-        d.choose(self, None, done)
+            notes = [x.strip().removeprefix("sbx: ") for x in r.stderr.splitlines() if x.strip()]
+            if r.returncode == 0: added += 1
+            else: notes = notes or [(r.stdout.strip()[-300:] or f"Exit code {r.returncode}")]
+            problems += [f"{ident}: {n}" for n in notes]
+        if added: self.toasts.add_toast(Adw.Toast(title="Added 1 menu entry" if added == 1 else f"Added {added} menu entries"))
+        if problems: self.alert("Check these" if added else "Couldn't add the menu entries", "\n\n".join(problems)[-1500:])
 
     def link_row(self, scope):
         """Switch that makes typing the program's name in a terminal start it through sbx too, through `sbx link NAME`."""
