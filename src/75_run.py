@@ -54,9 +54,10 @@ def undo_exec_bit(prog, mode):
         except OSError: pass
 
 
-def tee_stderr(fd, name, x11_seen=None):
+def tee_stderr(fd, name, x11_seen=None, out=None):
     """Copy a program's stderr to our own stderr and to the log, minus control characters, at most LOG_RUN_MAX bytes per run.
     Chunks, not lines, so a prompt without a newline shows at once."""
+    if out is None: out = sys.stderr
     lf = open_log()
     n, pend = 0, ""                               # pend: the unfinished line, kept short so a flood without newlines can't fill memory
     dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -64,7 +65,7 @@ def tee_stderr(fd, name, x11_seen=None):
         while True:
             data = os.read(fd, 4096)
             text = CTRL.sub("", dec.decode(data, final=not data))
-            try: sys.stderr.write(text); sys.stderr.flush()
+            try: out.write(text); out.flush()
             except (OSError, ValueError): pass
             lines = (pend + text).split("\n"); pend = lines.pop()
             lines = [x + "\n" for x in lines]
@@ -109,6 +110,7 @@ def run(prog, args, opts):
     start, stopped, child, tree = time.time(), [False], [None], []
     x11_seen = [False]
     piped = not sys.stderr.isatty()               # started from the app menu or a file manager: no terminal, so the log keeps stderr
+    jout = piped and on_journal(1)                # stdout goes only to the journal there, so log it and check it for hints too
     try:
         def stop(*_):                                  # first signal: ask politely, kill after STOP_GRACE s; a second one kills at once
             again, stopped[0] = stopped[0], True
@@ -119,14 +121,15 @@ def run(prog, args, opts):
                 child[0].terminate(); signal_tree(tree, signal.SIGTERM)
                 t = threading.Timer(STOP_GRACE, lambda: child[0].kill()); t.daemon = True; t.start()
         for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sg, stop)      # before the child exists, so no signal is missed
-        p = child[0] = subprocess.Popen(st["prefix"] + st["wrap"] + cmd, pass_fds=st["fds"], stderr=subprocess.PIPE if piped else None)
+        p = child[0] = subprocess.Popen(st["prefix"] + st["wrap"] + cmd, pass_fds=st["fds"], stdout=subprocess.PIPE if jout else None, stderr=subprocess.PIPE if piped else None)
         mark_child(p.pid)
         if stopped[0]: p.terminate()                  # a signal that came while it was starting
-        t = threading.Thread(target=tee_stderr, args=(p.stderr.fileno(), name, x11_seen), daemon=True) if piped else None
-        if t: t.start()
+        ts = [threading.Thread(target=tee_stderr, args=a, daemon=True) for a in
+              ([(p.stderr.fileno(), name, x11_seen)] if piped else []) + ([(p.stdout.fileno(), name, x11_seen, sys.stdout)] if jout else [])]
+        for t in ts: t.start()
         rc = p.wait()
         if stopped[0]: finish_tree(tree, STOP_GRACE)
-        if t: t.join(2)
+        for t in ts: t.join(2)
     finally:
         unmark_running(); teardown(st); undo_exec_bit(prog, restore)
     code, sig = exit_code(rc), crash_signal(rc)

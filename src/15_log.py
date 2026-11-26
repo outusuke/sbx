@@ -54,20 +54,22 @@ def log(msg, name=None):
 JOURNAL_SOCK = "/run/systemd/journal/stdout"
 
 
+def on_journal(fd, sock=JOURNAL_SOCK):
+    mine = os.environ.get("JOURNAL_STREAM", "")      # not always set (GNOME's launcher doesn't), so the socket's address counts too
+    try: st = os.fstat(fd)
+    except OSError: return False
+    if mine == f"{st.st_dev}:{st.st_ino}": return True
+    if st.st_mode & 0o170000 != 0o140000: return False      # not a socket
+    try:
+        with socket.socket(fileno=os.dup(fd)) as c: return c.getpeername() == sock
+    except OSError: return False
+
+
 def journal_tag(ident, sock=JOURNAL_SOCK):
     """Started from the app menu or a file manager, our output goes to the journal under the launcher's name (sbx-run.desktop).
     Reconnect those streams, and only those, so lines carry IDENT (the program's name) instead. Anything else is left alone."""
-    mine = os.environ.get("JOURNAL_STREAM", "")      # not always set (GNOME's launcher doesn't), so the socket's address counts too
-
-    def is_journal(fd):
-        st = os.fstat(fd)
-        if mine == f"{st.st_dev}:{st.st_ino}": return True
-        if st.st_mode & 0o170000 != 0o140000: return False      # not a socket
-        try:
-            with socket.socket(fileno=os.dup(fd)) as c: return c.getpeername() == sock
-        except OSError: return False
     try:
-        fds = [fd for fd in (1, 2) if is_journal(fd)]
+        fds = [fd for fd in (1, 2) if on_journal(fd, sock)]
         if not fds: return
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         with s:

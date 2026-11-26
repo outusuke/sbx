@@ -3600,6 +3600,7 @@ class Logging(unittest.TestCase):
         S["effective"] = lambda name, o: ({**S["SCALARS"], "allow_32bit": allow, "x11": x11}, {})
         for fn in ("teardown", "mark_running", "unmark_running", "sweep_stale"): S[fn] = lambda *a, **k: None
         S["tee_stderr"] = lambda fd, name, seen=None: seen.__setitem__(0, saw_x11)
+        S["on_journal"] = lambda fd: False
         S["shutil"] = types.SimpleNamespace(which=lambda x: f"/usr/bin/{x}")
         S["notify_crash"] = lambda name, sig, hint="": sent.append(("crash", hint))
         S["notify_failure"] = lambda name, reason="": sent.append(("failure", reason))
@@ -3645,6 +3646,16 @@ class Logging(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()): S["tee_stderr"](r, "app", seen)
             os.close(r)
             self.assertEqual(seen[0], want)
+
+    def test_tee_stderr_can_copy_stdout_to_stdout_and_the_log(self):
+        S = self.S
+        r, w = os.pipe()
+        os.write(w, b"Missing X server or $DISPLAY\n"); os.close(w)
+        seen, out = [False], io.StringIO()
+        with contextlib.redirect_stderr(io.StringIO()) as err: S["tee_stderr"](r, "app", seen, out)
+        os.close(r)
+        self.assertIn("Missing X server", out.getvalue()); self.assertEqual(err.getvalue(), ""); self.assertTrue(seen[0])
+        with open(S["LOG"]) as f: self.assertIn("[app] Missing X server", f.read())
 
     def test_progress_notifications_replace_each_other_by_id(self):
         S = self.S
