@@ -141,7 +141,7 @@ def launcher_is_ours(name):
             with open(path, errors="replace") as f: text = f.read()
         except OSError: continue
         if "X-Sbx-Sandboxed=true" not in text: continue
-        if os.path.basename(path) == f"{name}.desktop" or path.endswith(f".{name}.desktop") or launcher_program(text) == name: return True
+        if os.path.basename(path) == f"{name}.desktop" or path.endswith(f".{name}.desktop") or name in (launcher_program(text), launcher_name(text)): return True
     return False
 
 
@@ -155,9 +155,14 @@ def launcher_program(text):
             except ValueError: return None
             if w and os.path.basename(w[0]) == "sbx":
                 w = w[1:]
-                while w and w[0].startswith("--app-id="): w = w[1:]
+                while w and w[0].startswith(("--app-id=", "--name=")): w = w[1:]
             return os.path.basename(w[0]) if w else None
     return None
+
+
+def launcher_name(text):
+    m = re.search(r'^Exec=[^\n]*?\bsbx"?(?: --app-id=\S+)? --name=(\S+)', text, re.M)
+    return m.group(1) if m else None
 
 
 def link_is_ours(name):
@@ -411,6 +416,31 @@ def start_variants(name):
 
 def sbx_cmd():
     return shutil.which("sbx") or "/usr/local/bin/sbx"
+
+
+def family_preview(scope, out, err=""):
+    """The `sbx desktop --dry-run` output as a short list for the confirm dialog."""
+    entries = []
+    for line in out.splitlines():
+        if line.startswith("would write "): entries.append([os.path.basename(line[12:].strip())[:-8], ""])
+        elif line.startswith("  Exec=") and entries and not entries[-1][1]:
+            try: w = shlex.split(line[7:])
+            except ValueError: w = line[7:].split()
+            w = w[1:]
+            while w and w[0].startswith(("--app-id=", "--name=")): w = w[1:]
+            entries[-1][1] = " ".join(w)
+    if not entries: return out.strip()
+    shown = entries[:12]
+    text = f"{len(entries)} menu entr{'y' if len(entries) == 1 else 'ies'} will start in the {scope} sandbox:\n\n"
+    text += "\n".join(f"{i}\n    runs: {cmd}" for i, cmd in shown)
+    if len(entries) > len(shown): text += f"\nand {len(entries) - len(shown)} more"
+    skipped = [x.strip().removeprefix("sbx: ") for x in err.splitlines() if x.strip()]
+    if skipped: text += "\n\nLeft alone:\n" + "\n".join(skipped)
+    return text
+
+
+def desktop_args(scope, pattern, via="", dry=False):
+    return [sbx_cmd(), "desktop"] + (["--dry-run"] if dry else []) + [f"--name={scope}"] + ([f"--via={via}"] if via else []) + [pattern]
 
 
 def load_schema():

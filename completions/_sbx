@@ -36,7 +36,7 @@ _sbx() {
                               '-o[write to a file instead of the terminal]:file:_files' '*:program:_sbx_apps'; return ;;
             import) _arguments '--force[replace settings that differ]' '*:file:_files'; return ;;
             doctor|schema) return ;;
-            desktop) compadd -- --install-opener --remove-opener --install-installer --remove-installer --install-menu --remove-menu --remove; return ;;
+            desktop) compadd -- --install-opener --remove-opener --install-installer --remove-installer --install-menu --remove-menu --remove --name= --via= --dry-run; return ;;
             *) _files; return ;;                          # the program's own arguments
         esac
     done

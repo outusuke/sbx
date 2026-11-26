@@ -2492,6 +2492,108 @@ class Units(unittest.TestCase):
         new, _ = self.S["rewrite_desktop"]("[Desktop Entry]\nExec=app\n", "/opt/my tools/sbx")
         self.assertIn('Exec="/opt/my tools/sbx" app', new)
 
+    def test_exec_lines_look_past_the_name_a_launcher_was_given(self):
+        ep = self.S["exec_program"]
+        self.assertEqual(ep("/usr/local/bin/sbx --name=myapp myapp x.dat"), "myapp")
+        self.assertEqual(ep("/usr/local/bin/sbx --app-id=a --name=shared notepad"), "notepad")
+        self.assertEqual(ep("/usr/local/bin/sbx --name=shared"), None)
+
+    def test_via_puts_the_runner_in_front_unless_the_exec_starts_with_it(self):
+        rw = lambda t, **kw: self.S["rewrite_desktop"](t, "/usr/local/bin/sbx", **kw)
+        text = ("[Desktop Entry]\nName=A\nExec=myapp x.dat %f\n\n[Desktop Action n]\nExec=notepad\n\n[Desktop Action p]\nExec=/usr/bin/myapp start /unix %f\n"
+                "\n[Desktop Action q]\nExec=\"myapp\" y.dat\n")
+        new, notes = rw(text, via="myapp")
+        lines = new.splitlines()
+        self.assertEqual(notes, [])
+        self.assertIn("Exec=/usr/local/bin/sbx myapp x.dat %f", lines)
+        self.assertIn("Exec=/usr/local/bin/sbx myapp notepad", lines)
+        self.assertIn("Exec=/usr/local/bin/sbx /usr/bin/myapp start /unix %f", lines)
+        self.assertIn('Exec=/usr/local/bin/sbx "myapp" y.dat', lines)
+        self.assertIn("Exec=/usr/local/bin/sbx app", rw("[Desktop Entry]\nExec=app\n")[0].splitlines(), "without --via nothing is put in front")
+        self.assertIn("Exec=/usr/local/bin/sbx --app-id=a --name=fam myapp notepad", rw("[Desktop Entry]\nExec=notepad\n", app_id="a", name="fam", via="myapp")[0].splitlines())
+        self.assertIn("Exec=/usr/local/bin/sbx --name=fam app", rw("[Desktop Entry]\nExec=app\n", name="fam")[0].splitlines())
+
+    def test_via_skips_launchers_that_start_with_a_wrapper(self):
+        rw = lambda t, **kw: self.S["rewrite_desktop"](t, "/usr/local/bin/sbx", **kw)
+        for first in ("env VAR=/p myapp x.dat", "sh -c x", "bash -c x", "VAR=/p myapp x.dat"):
+            text, notes = rw(f"[Desktop Entry]\nExec={first}\n", via="myapp")
+            self.assertIsNone(text, first); self.assertEqual(len(notes), 1, first)
+            text, notes = rw(f"[Desktop Entry]\nExec=myapp ok.dat\n\n[Desktop Action a]\nExec={first}\n", via="myapp")
+            self.assertIsNone(text, "one wrapped Exec skips the whole launcher: " + first)
+            text, notes = rw(f"[Desktop Entry]\nExec={first}\n")
+            self.assertIsNotNone(text, "without --via it is written, with a warning"); self.assertTrue(notes)
+
+    def test_desktop_with_a_glob_name_and_via_makes_one_family_and_remove_takes_the_glob(self):
+        S, h = self.S, self.home
+        share = self._launcher_share(("myapp-notepad.desktop", "[Desktop Entry]\nName=Notepad\nExec=notepad\n"),
+                                     ("myapp-app.desktop", "[Desktop Entry]\nName=App\nExec=myapp app.dat\n"),
+                                     ("myapp-env.desktop", "[Desktop Entry]\nName=Env\nExec=env A=1 myapp e.dat\n"),
+                                     ("myapps.desktop", "[Desktop Entry]\nName=Other\nExec=myapps\n"),
+                                     ("other.desktop", "[Desktop Entry]\nName=Other\nExec=other\n"))
+        apps = f"{h}/.local/share/applications"
+        env = {"XDG_DATA_DIRS": share}
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", ["/usr/local/bin/sbx"]):
+            self.assertEqual(S["system_launchers"]("myapp-*"), [f"{share}/applications/myapp-app.desktop", f"{share}/applications/myapp-env.desktop", f"{share}/applications/myapp-notepad.desktop"])
+            self.assertEqual(S["system_launchers"]("myapp*"), sorted(f"{share}/applications/{n}.desktop" for n in ("myapp-app", "myapp-env", "myapp-notepad", "myapps")))
+            with contextlib.redirect_stdout(io.StringIO()): S["cmd_desktop"](["--name=myapp", "--via=myapp", "myapp-*"])
+            self.assertEqual(sorted(os.listdir(apps)), ["myapp-app.desktop", "myapp-notepad.desktop"], "the env launcher is skipped, the others are not touched")
+            self.assertTrue(any("myapp-env" not in w and "starts with env" in w for w in self.warned))
+            for n, want in (("myapp-notepad", "myapp notepad"), ("myapp-app", "myapp app.dat")):
+                with open(f"{apps}/{n}.desktop") as f: self.assertIn(f"Exec=/usr/local/bin/sbx --app-id={n} --name=myapp {want}", f.read().splitlines())
+                self.assertEqual(S["launcher_program"](f"{apps}/{n}.desktop"), "myapp")
+            self.assertEqual(S["our_launchers"]("myapp-*"), [f"{apps}/myapp-app.desktop", f"{apps}/myapp-notepad.desktop"])
+            self.assertEqual(S["our_launchers"]("myapp"), [f"{apps}/myapp-app.desktop", f"{apps}/myapp-notepad.desktop"], "by the program they start")
+            with contextlib.redirect_stdout(io.StringIO()): S["cmd_desktop"](["--remove", "myapp-*"])
+            self.assertEqual(os.listdir(apps), [])
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["cmd_desktop"](["--remove", "myapp-*"])
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["cmd_desktop"](["nomatch*"])
+
+    def test_desktop_options_are_checked(self):
+        S = self.S
+        share = self._launcher_share(("app.desktop", "[Desktop Entry]\nName=App\nExec=app\n"))
+        apps = f"{self.home}/.local/share/applications"
+        with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": share}), mock.patch.object(sys, "argv", ["/usr/local/bin/sbx"]):
+            for args in (["--via=myapp", "--remove", "app"], ["--name=x", "--remove", "app"], ["--via=", "app"], ["--via=a b", "app"], ["--via=-x", "app"],
+                         ["--via=a;b", "app"], ["--name=a b", "app"], ["--name=", "app"], ["--via=myapp"], ["--via=myapp", "a", "b"]):
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit, msg=str(args)): S["cmd_desktop"](args)
+            self.assertFalse(os.path.exists(apps), "nothing was written")
+            with contextlib.redirect_stdout(io.StringIO()): S["cmd_desktop"](["--via=/usr/bin/myapp", "app"])
+        with open(f"{apps}/app.desktop") as f: self.assertIn("Exec=/usr/local/bin/sbx --app-id=app /usr/bin/myapp app", f.read().splitlines())
+
+    def test_desktop_dry_run_says_what_it_would_do_and_changes_nothing(self):
+        S, h = self.S, self.home
+        share = self._launcher_share(("myapp-app.desktop", "[Desktop Entry]\nName=App\nExec=myapp app.dat\n"),
+                                     ("myapp-notepad.desktop", "[Desktop Entry]\nName=Notepad\nExec=notepad\n"))
+        apps = f"{h}/.local/share/applications"
+        with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": share}), mock.patch.object(sys, "argv", ["/usr/local/bin/sbx"]):
+            with contextlib.redirect_stdout(io.StringIO()) as out: S["cmd_desktop"](["--dry-run", "--name=myapp", "--via=myapp", "myapp-*"])
+            self.assertIn("would write ~/.local/share/applications/myapp-notepad.desktop", out.getvalue())
+            self.assertIn("  Exec=/usr/local/bin/sbx --app-id=myapp-notepad --name=myapp myapp notepad", out.getvalue().splitlines())
+            self.assertFalse(os.path.exists(apps), "nothing was written")
+            with contextlib.redirect_stdout(io.StringIO()): S["cmd_desktop"](["--name=myapp", "--via=myapp", "myapp-*"])
+            with contextlib.redirect_stdout(io.StringIO()) as out: S["cmd_desktop"](["--dry-run", "--remove", "myapp-*"])
+            self.assertEqual(sorted(l for l in out.getvalue().splitlines() if l.startswith("would remove")),
+                             [f"would remove ~/.local/share/applications/myapp-{n}.desktop" for n in ("app", "notepad")])
+            self.assertEqual(sorted(os.listdir(apps)), ["myapp-app.desktop", "myapp-notepad.desktop"], "nothing was removed")
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): S["cmd_desktop"](["--dry-run", "nomatch*"])
+
+    def test_remove_by_name_takes_launchers_whose_program_differs(self):
+        S, h = self.S, self.home
+        share = self._launcher_share(("grp-a.desktop", "[Desktop Entry]\nName=A\nExec=viewer a\n"), ("grp-b.desktop", "[Desktop Entry]\nName=B\nExec=other\n"))
+        apps = f"{h}/.local/share/applications"
+        with mock.patch.dict(os.environ, {"XDG_DATA_DIRS": share}), mock.patch.object(sys, "argv", ["/usr/local/bin/sbx"]):
+            with contextlib.redirect_stdout(io.StringIO()): S["cmd_desktop"](["--name=grp", "--via=runner", "grp-*"])
+            self.assertEqual(S["our_launchers"]("grp"), [f"{apps}/grp-a.desktop", f"{apps}/grp-b.desktop"])
+            with contextlib.redirect_stdout(io.StringIO()): S["cmd_desktop"](["--remove", "grp"])
+            self.assertEqual(os.listdir(apps), [])
+
+    def test_desktop_via_documents(self):
+        with open(f"{HERE}/sbx.1") as f: man = f.read().replace("\\-", "-")
+        with open(f"{HERE}/README.md") as f: readme = f.read()
+        for text in (man, readme, self.S["USAGE"]): self.assertIn("--via", text); self.assertIn("--dry-run", text)
+        for f, want in (("sbx.bash", "--via="), ("_sbx", "--via="), ("sbx.fish", "-l via"), ("sbx.bash", "--dry-run"), ("_sbx", "--dry-run"), ("sbx.fish", "-l dry-run")):
+            with open(f"{HERE}/completions/{f}") as fh: self.assertIn(want, fh.read(), f)
+
     def test_app_id_option_takes_a_desktop_file_name_and_nothing_else(self):
         S = self.S
         self.assertEqual(S["parse_options"](["--app-id=org.example.App-2", "prog"]), ({"app_id": "org.example.App-2"}, ["prog"]))
@@ -3752,6 +3854,71 @@ class Gui(unittest.TestCase):
         lp = self.G["launcher_program"]
         self.assertEqual(lp("[Desktop Entry]\nExec=/usr/local/bin/sbx --app-id=my-app /usr/bin/x %U\n"), "x")
         self.assertEqual(lp("[Desktop Entry]\nExec=/usr/local/bin/sbx /usr/bin/x %U\n"), "x")
+        self.assertEqual(lp("[Desktop Entry]\nExec=/usr/local/bin/sbx --app-id=my-app --name=fam myapp notepad\n"), "myapp")
+
+    def test_the_window_builds_the_desktop_command_for_a_group_of_entries(self):
+        G = self.G; cli = G["sbx_cmd"]()
+        self.assertEqual(G["desktop_args"]("myapp", "myapp*", "myapp"), [cli, "desktop", "--name=myapp", "--via=myapp", "myapp*"])
+        self.assertEqual(G["desktop_args"]("myapp", "myapp*", "myapp", dry=True), [cli, "desktop", "--dry-run", "--name=myapp", "--via=myapp", "myapp*"])
+        self.assertEqual(G["desktop_args"]("fam", "app"), [cli, "desktop", "--name=fam", "app"])
+
+    def test_the_preview_lists_each_entry_with_its_command_and_what_was_left_alone(self):
+        fp = self.G["family_preview"]
+        out = ("would write ~/.local/share/applications/myapp-app.desktop\n  Exec=/usr/local/bin/sbx --app-id=myapp-app --name=myapp myapp app.dat %f\n"
+               "  Exec=/usr/local/bin/sbx --app-id=myapp-app --name=myapp myapp other\n"
+               "would write ~/.local/share/applications/myapp-notepad.desktop\n  Exec=/usr/local/bin/sbx --app-id=myapp-notepad --name=myapp myapp notepad\n")
+        err = "sbx: 'Exec=env A=1 myapp e.dat' starts with env: skipped, --via would put myapp in front of env. Edit the file by hand.\n"
+        self.assertEqual(fp("myapp", out, err), "2 menu entries will start in the myapp sandbox:\n\nmyapp-app\n    runs: myapp app.dat %f\nmyapp-notepad\n    runs: myapp notepad"
+                                              "\n\nLeft alone:\n'Exec=env A=1 myapp e.dat' starts with env: skipped, --via would put myapp in front of env. Edit the file by hand.")
+        many = "".join(f"would write ~/a/e{n}.desktop\n  Exec=sbx x{n}\n" for n in range(15))
+        self.assertIn("and 3 more", fp("myapp", many)); self.assertNotIn("e12", fp("myapp", many))
+        self.assertEqual(fp("myapp", "something else\n"), "something else")
+
+    def _family_dialog(self, pattern, via):
+        G = self.G; adw, gtk = G["Adw"], G["Gtk"]
+        entries = [mock.MagicMock(), mock.MagicMock()]
+        entries[0].get_text.return_value, entries[1].get_text.return_value = pattern, via
+        gtk.Entry.side_effect = entries
+        self.addCleanup(setattr, gtk.Entry, "side_effect", None)
+        win = mock.MagicMock(); adw.AlertDialog.reset_mock()
+        G["Win"].family_dialog(win, "myapp")
+        dlg = adw.AlertDialog.return_value
+        return win, dlg, dlg.choose.call_args[0][2]
+
+    def test_the_group_dialog_previews_with_dry_run_before_it_writes(self):
+        G = self.G
+        win, dlg, done = self._family_dialog("myapp-*", "myapp")
+        win.run_desktop.return_value = mock.Mock(returncode=0, stdout="would write ~/x.desktop\n  Exec=sbx --app-id=x --name=myapp myapp notepad\n", stderr="")
+        dlg.choose_finish.return_value = "preview"; done(dlg, None)
+        self.assertEqual(win.run_desktop.call_args[0][0], G["desktop_args"]("myapp", "myapp-*", "myapp", dry=True))
+        win.family_confirm.assert_called_once_with("myapp", "myapp-*", "myapp", "1 menu entry will start in the myapp sandbox:\n\nx\n    runs: myapp notepad")
+        win.toasts.add_toast.assert_not_called()
+
+    def test_the_group_dialog_writes_nothing_when_cancelled_empty_or_refused(self):
+        win, dlg, done = self._family_dialog("myapp-*", "myapp")
+        dlg.choose_finish.return_value = "cancel"; done(dlg, None)
+        win.run_desktop.assert_not_called()
+        win, dlg, done = self._family_dialog("  ", "")
+        dlg.choose_finish.return_value = "preview"; done(dlg, None)
+        win.run_desktop.assert_not_called(); win.toasts.add_toast.assert_called_once()
+        win, dlg, done = self._family_dialog("nomatch*", "")
+        win.run_desktop.return_value = mock.Mock(returncode=1, stdout="", stderr="sbx: no launcher id matches nomatch*")
+        dlg.choose_finish.return_value = "preview"; done(dlg, None)
+        win.family_confirm.assert_not_called(); self.assertIn("no launcher id matches", win.alert.call_args[0][1])
+
+    def test_confirming_the_group_runs_the_real_command_once(self):
+        G = self.G; win = mock.MagicMock(); adw = G["Adw"]; adw.AlertDialog.reset_mock()
+        G["Win"].family_confirm(win, "myapp", "myapp-*", "myapp", "would write ~/x.desktop")
+        dlg = adw.AlertDialog.return_value; done = dlg.choose.call_args[0][2]
+        self.assertEqual(adw.AlertDialog.call_args.kwargs["body"], "would write ~/x.desktop")
+        dlg.choose_finish.return_value = "cancel"; done(dlg, None)
+        win.run_desktop.assert_not_called()
+        win.run_desktop.return_value = mock.Mock(returncode=0, stdout="wrote ~/x.desktop", stderr="")
+        dlg.choose_finish.return_value = "add"; done(dlg, None)
+        win.run_desktop.assert_called_once_with(G["desktop_args"]("myapp", "myapp-*", "myapp"))
+        win.toasts.add_toast.assert_called_once()
+        win.run_desktop.return_value = mock.Mock(returncode=1, stdout="", stderr="boom")
+        done(dlg, None); self.assertEqual(win.alert.call_args[0][1], "boom")
 
     def test_inherited_folders_get_their_own_group_instead_of_a_note_on_every_row(self):
         G = self.G
@@ -3898,6 +4065,8 @@ class Gui(unittest.TestCase):
         put("mine.desktop", "[Desktop Entry]\nExec=/usr/bin/mine\n")                      # not made by sbx
         for n in ("google-chrome-stable", "google-chrome", "firefox", "org.mozilla.firefox"): self.assertTrue(G["launcher_is_ours"](n), n)
         for n in ("chrome", "mine", "missing", "fire"): self.assertFalse(G["launcher_is_ours"](n), n)
+        put("grp-viewer.desktop", "[Desktop Entry]\nX-Sbx-Sandboxed=true\nExec=/usr/local/bin/sbx --app-id=grp-viewer --name=grp viewer\n")
+        self.assertTrue(G["launcher_is_ours"]("grp"), "a launcher added with --name belongs to that name whatever program it starts")
 
     def test_removing_a_program_takes_it_off_the_list_and_trashes_only_its_home(self):
         G = self.G; os.makedirs(G["APPS"], exist_ok=True)

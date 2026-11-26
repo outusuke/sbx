@@ -42,7 +42,7 @@ sbx \- run a program in a bubblewrap sandbox
 \fIFILE\fR
 .br
 .B sbx desktop
-\fINAME\fR | \fB\-\-remove\fR \fINAME\fR | \fB\-\-install\-opener\fR | \fB\-\-remove\-opener\fR |
+[\fB\-\-dry\-run\fR] [\fB\-\-name\fR=\fINAME\fR] [\fB\-\-via\fR=\fIPROGRAM\fR] \fIPATTERN\fR | \fB\-\-remove\fR \fIPATTERN\fR | \fB\-\-install\-opener\fR | \fB\-\-remove\-opener\fR |
 \fB\-\-install\-installer\fR | \fB\-\-remove\-installer\fR | \fB\-\-install\-menu\fR | \fB\-\-remove\-menu\fR
 .SH DESCRIPTION
 .B sbx
@@ -191,14 +191,22 @@ and
 Run a downloaded program with sensible defaults. This is what "Open with" calls; see
 .BR "DOWNLOADED PROGRAMS" .
 .TP
-.B sbx desktop NAME
-Make a launcher (a
-.I .desktop
-file) start the program through sbx. NAME is the launcher's id (firefox, org.mozilla.firefox) or, when no launcher has that id, the program the launcher starts (google\-chrome\-stable). A launcher in
+.B sbx desktop [\-\-dry\-run] [\-\-name=NAME] [\-\-via=PROGRAM] PATTERN
+Make launchers (\fI.desktop\fR files) start the program through sbx. PATTERN is a launcher's id (firefox, org.mozilla.firefox), a glob over ids (quote it: 'myapp*'), or, when no launcher has that id, the program the launcher starts (google\-chrome\-stable). A launcher in
 .I ~/.local/share/applications
 that sbx did not make is never replaced.
 .B \-\-remove
-undoes that.
+undoes that; it takes a pattern too.
+.IP
+.B \-\-name=NAME
+adds that private home and settings name to each Exec, as
+.B \-\-name
+does on the command line.
+.B \-\-via=PROGRAM
+puts PROGRAM in front of each Exec unless it already starts with it, so launchers whose Exec lines differ (myapp x.dat, notepad) all run as one program and share one sandbox. A launcher whose Exec starts with env, sh, bash or VAR= is skipped with a warning, because PROGRAM in front of those would not run what the launcher meant. Both go with adding a launcher, not with
+.BR \-\-remove .
+.B \-\-dry\-run
+prints the launchers it would write (with their Exec lines) or remove, and changes nothing.
 .TP
 .B sbx desktop \-\-install\-opener
 Add "Run in sbx" to the file manager's Open With.

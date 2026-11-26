@@ -33,6 +33,8 @@ sbx desktop --install-menu          # sbx-gui in the app menu
 sbx desktop --install-installer     # right-click a folder or archive: Open With Other Application, Install in sbx
 ```
 
+App-menu launchers: `sbx desktop PATTERN` copies the system launchers that match to `~/.local/share/applications` with the program started through sbx, `sbx desktop --remove PATTERN` removes them. PATTERN is a launcher id (`firefox`), a glob over ids (`'myapp*'`) or the program a launcher starts. `--via=PROGRAM` puts PROGRAM in front of each Exec unless it already starts with it, and `--name=NAME` gives them one home and settings name, so a family of launchers (`myapp x.dat`, `notepad`) shares one sandbox: `sbx desktop --name=myapp --via=myapp 'myapp*'`. Launchers starting with `env`, `sh`, `bash` or `VAR=` are skipped under `--via`, with a warning. `--dry-run` shows what would be written or removed and changes nothing; sbx-gui uses it for its preview.
+
 Ubuntu 24.04+: AppArmor blocks user namespaces. `sbx doctor` shows the fix.
 
 ## What the program sees

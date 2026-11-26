@@ -28,7 +28,7 @@ _sbx() {
                 COMPREPLY=($(compgen -W "--default --all --force -o $(ls ~/.config/sbx/apps 2>/dev/null | sed 's/\.conf$//')" -- "$cur")); return ;;
             import) compopt -o filenames; COMPREPLY=($(compgen -W "--force" -- "$cur") $(compgen -f -- "$cur")); return ;;
             doctor|schema) return ;;
-            desktop) COMPREPLY=($(compgen -W "--install-opener --remove-opener --install-installer --remove-installer --install-menu --remove-menu --remove" -- "$cur")); return ;;
+            desktop) COMPREPLY=($(compgen -W "--install-opener --remove-opener --install-installer --remove-installer --install-menu --remove-menu --remove --name= --via= --dry-run" -- "$cur")); return ;;
             *) COMPREPLY=($(compgen -f -- "$cur")); return ;;
         esac
     done

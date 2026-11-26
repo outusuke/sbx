@@ -486,6 +486,7 @@ class Win(Adw.ApplicationWindow):
         redraw()
         g.add(row)
         g.add(self.app_menu_row(scope))
+        g.add(self.family_row(scope))
         g.add(self.link_row(scope))
         return g
 
@@ -765,6 +766,56 @@ class Win(Adw.ApplicationWindow):
         set_active(launcher_is_ours(scope))
         row.connect("notify::active", toggled)
         return row
+
+    def family_row(self, scope):
+        row = Adw.ActionRow(title="Add other menu entries to this sandbox", use_markup=False,
+                            subtitle=f"Entries you pick by id start in the {scope} sandbox and share its settings")
+        btn = Gtk.Button(label="Add…", valign=Gtk.Align.CENTER)
+        btn.connect("clicked", lambda *_: self.family_dialog(scope))
+        row.add_suffix(btn)
+        return row
+
+    def run_desktop(self, argv):
+        """The finished `sbx desktop` run; None (after an alert) if it couldn't start."""
+        try: return subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as e: self.alert("Couldn't run sbx", str(e))
+
+    def family_dialog(self, scope):
+        d = Adw.AlertDialog(heading="Add menu entries to this sandbox",
+                            body=f"Type the id of an app menu entry, or a pattern such as org.gnome.*. Those entries will start through sbx in the {scope} sandbox, "
+                                 "sharing its private home and settings. You see a preview before anything is written.")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        pattern = Gtk.Entry(placeholder_text="Menu entry id or pattern", activates_default=True)
+        via = Gtk.Entry(placeholder_text="Command to put in front (optional)", activates_default=True)
+        box.append(pattern); box.append(via)
+        d.set_extra_child(box)
+        d.add_response("cancel", "Cancel"); d.add_response("preview", "Preview")
+        d.set_response_appearance("preview", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("preview"); d.set_close_response("cancel")
+
+        def done(dlg, res):
+            if dlg.choose_finish(res) != "preview": return
+            pat, runner = pattern.get_text().strip(), via.get_text().strip()
+            if not pat: return self.toasts.add_toast(Adw.Toast(title="Type an entry id or a pattern"))
+            r = self.run_desktop(desktop_args(scope, pat, runner, dry=True))
+            if r is None: return
+            if r.returncode != 0: return self.alert("Nothing to add", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
+            self.family_confirm(scope, pat, runner, family_preview(scope, r.stdout, r.stderr))
+        d.choose(self, None, done)
+
+    def family_confirm(self, scope, pattern, via, preview):
+        d = Adw.AlertDialog(heading="Add these menu entries?", body=preview[:1500])
+        d.add_response("cancel", "Cancel"); d.add_response("add", "Add")
+        d.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("add"); d.set_close_response("cancel")
+
+        def done(dlg, res):
+            if dlg.choose_finish(res) != "add": return
+            r = self.run_desktop(desktop_args(scope, pattern, via))
+            if r is None: return
+            if r.returncode != 0: return self.alert("Couldn't add the menu entries", (r.stderr or r.stdout).strip()[-700:] or f"Exit code {r.returncode}")
+            self.toasts.add_toast(Adw.Toast(title="Added to the app menu"))
+        d.choose(self, None, done)
 
     def link_row(self, scope):
         """Switch that makes typing the program's name in a terminal start it through sbx too, through `sbx link NAME`."""

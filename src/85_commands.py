@@ -416,19 +416,32 @@ def cmd_rebind(a):
     print(f"'{name}' now belongs to {tilde(p['new'])}, with the settings and private home it had. Start it again.")
 
 
-def rewrite_desktop(text, sbx, app_id=None):
+def exec_first(rest):
+    try: w = shlex.split(rest)
+    except ValueError: w = rest.split(None, 1)
+    return w[0] if w else ""
+
+
+def rewrite_desktop(text, sbx, app_id=None, name=None, via=None):
     """A copy of a .desktop file whose launchers go through sbx. With APP_ID, each Exec= tells sbx that id (--app-id), which sbx
-    gives the desktop as the program's id. Returns (new text, list of warnings)."""
+    gives the desktop as the program's id. Returns (new text, list of warnings).
+    NAME sets the home and settings name, VIA a program to put in front of each Exec=; the text is None when VIA skips the launcher."""
     out, notes, group = [], [], ""
     q = f'"{sbx}"' if " " in sbx else sbx
-    opt = f" --app-id={app_id}" if app_id else ""
+    opt = (f" --app-id={app_id}" if app_id else "") + (f" --name={name}" if name is not None else "")
+    if via:
+        for line in text.splitlines():
+            first = exec_first(line[5:]) if line.startswith("Exec=") else ""
+            if first in ("env", "sh", "bash") or "=" in first:
+                return None, [f"'{line}' starts with {first}: skipped, --via would put {via} in front of {first}. Edit the file by hand."]
     for line in text.splitlines():
         if line.startswith("["): group = line
         if line.startswith("Exec="):
             rest = line[5:]
-            first = rest.split(None, 1)[0] if rest.strip() else ""
+            first = exec_first(rest)
             if first in ("env", "sh", "bash") or "=" in first:
                 notes.append(f"'{line}' starts with {first}: sbx would name the program '{first}'. Edit the file by hand.")
+            if via and first and os.path.basename(first) != os.path.basename(via): rest = f"{via} {rest}"
             line = f"Exec={q}{opt} {rest}"
         elif line.startswith("DBusActivatable="): line = "DBusActivatable=false"       # D-Bus activation would bypass sbx
         elif line.startswith("Name=") and group == "[Desktop Entry]": line += " (sbx)"
@@ -465,7 +478,7 @@ def exec_program(value):
     except ValueError: return None
     if w and os.path.basename(w[0]) == "sbx":
         w = w[1:]
-        while w and w[0].startswith("--app-id="): w = w[1:]        # the id add_launcher gives the launcher
+        while w and w[0].startswith(("--app-id=", "--name=")): w = w[1:]        # the id and name add_launcher gives the launcher
     return os.path.basename(w[0]) if w else None
 
 
@@ -484,6 +497,11 @@ def launcher_program(path):
     return None
 
 
+def launcher_name(path):
+    m = re.search(r'^Exec=[^\n]*?\bsbx"?(?: --app-id=\S+)? --name=(\S+)', launcher_text(path), re.M)
+    return m.group(1) if m else None
+
+
 def launchers_starting(name):
     """System launchers whose Exec= starts a program called NAME. Of two with the same file name the first in XDG_DATA_DIRS wins, as in the menu."""
     seen, out = set(), []
@@ -496,9 +514,19 @@ def launchers_starting(name):
     return out
 
 
+GLOB = re.compile(r"[*?\[]")
+
+
 def system_launchers(ident):
-    """What `sbx desktop IDENT` changes: the launcher with that id (IDENT.desktop, or *.IDENT.desktop), else every one that starts a program called IDENT."""
+    """What `sbx desktop IDENT` changes: the launcher with that id (IDENT.desktop, or *.IDENT.desktop), else every one that starts a program called IDENT.
+    A glob in IDENT matches ids only."""
     dirs = [d for d in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":") if d]
+    if GLOB.search(ident):
+        seen, out = set(), []
+        for d in dirs:
+            for p in sorted(glob.glob(f"{glob.escape(d)}/applications/{ident}.desktop")):
+                if os.path.basename(p) not in seen: seen.add(os.path.basename(p)); out.append(p)
+        return out
     cands = [f"{d}/applications/{ident}.desktop" for d in dirs]
     cands += [p for d in dirs for p in sorted(glob.glob(f"{d}/applications/*.{ident}.desktop"))]
     first = next((p for p in cands if os.path.isfile(p)), None)
@@ -510,22 +538,30 @@ def our_launchers(ident, by_program=False):
     (the name kept from the system launcher), else those that start a program called IDENT. by_program skips to the last."""
     d = user_launchers()
     ours = lambda p: "X-Sbx-Sandboxed=true" in launcher_text(p)
+    if GLOB.search(ident): return [p for p in sorted(glob.glob(f"{glob.escape(d)}/{ident}.desktop")) if ours(p)]
     if not by_program:
         found = [p for p in [f"{d}/{ident}.desktop"] if ours(p)] or [p for p in sorted(glob.glob(f"{d}/*.{ident}.desktop")) if ours(p)]
         if found: return found
-    return [p for p in sorted(glob.glob(f"{d}/*.desktop")) if ours(p) and launcher_program(p) == ident]
+    return [p for p in sorted(glob.glob(f"{d}/*.desktop")) if ours(p) and ident in (launcher_program(p), launcher_name(p))]
 
 
-def add_launcher(src, ident):
-    """Write the sbx copy of the system launcher SRC to ~/.local/share/applications. Never replaces a file sbx didn't make."""
+def add_launcher(src, ident, name=None, via=None, dry=False):
+    """Write the sbx copy of the system launcher SRC to ~/.local/share/applications. Never replaces a file sbx didn't make.
+    With DRY it only prints what it would write. Returns whether it wrote or would write."""
     dest = f"{user_launchers()}/{os.path.basename(src)}"
     if os.path.lexists(dest) and "X-Sbx-Sandboxed=true" not in launcher_text(dest):
         warn(f"{tilde(dest)} already exists and was not made by sbx; not touching it"); return False
     ident_of_file = os.path.basename(src)[:-8] if src.endswith(".desktop") else ""        # a launcher's id is its file name without .desktop
-    text, notes = rewrite_desktop(launcher_text(src), shutil.which("sbx") or os.path.realpath(sys.argv[0]), ident_of_file if re.fullmatch(APP_ID, ident_of_file) else None)
+    text, notes = rewrite_desktop(launcher_text(src), shutil.which("sbx") or os.path.realpath(sys.argv[0]), ident_of_file if re.fullmatch(APP_ID, ident_of_file) else None, name, via)
+    for n in notes: warn(n)
+    if text is None: return False
+    if dry:
+        print(f"would write {tilde(dest)}")
+        for line in text.splitlines():
+            if line.startswith("Exec="): print(f"  {line}")
+        return True
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, "w") as f: f.write(text)
-    for n in notes: warn(n)
     print(f"wrote {tilde(dest)}: the launcher now starts the program through sbx.\nUndo with: sbx desktop --remove {ident}")
     return True
 
@@ -631,27 +667,39 @@ def cmd_desktop(a):
     if a in (["--install-opener"], ["--remove-opener"]): return cmd_opener(a[0] == "--install-opener")
     if a in (["--install-menu"], ["--remove-menu"]): return cmd_menu(a[0] == "--install-menu")
     if a in (["--install-installer"], ["--remove-installer"]): return cmd_installer(a[0] == "--install-installer")
-    remove = "--remove" in a
-    a = [x for x in a if x != "--remove"]
-    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx desktop NAME   |   sbx desktop --remove NAME   (NAME = the launcher's id, e.g. firefox or org.mozilla.firefox, or the program it starts, e.g. google-chrome-stable)")
+    remove, dry = "--remove" in a, "--dry-run" in a
+    a = [x for x in a if x not in ("--remove", "--dry-run")]
+    name = via = None
+    for x in [x for x in a if x.startswith(("--name=", "--via="))]:
+        if x.startswith("--name="): name = x[7:]
+        else: via = x[6:]
+        a.remove(x)
+    if len(a) != 1 or a[0].startswith("-"): die("usage: sbx desktop [--dry-run] [--name=NAME] [--via=PROGRAM] PATTERN   |   sbx desktop [--dry-run] --remove PATTERN   (PATTERN = a launcher's id, e.g. firefox or org.mozilla.firefox, a glob over ids, e.g. 'myapp*', or the program it starts, e.g. google-chrome-stable)")
+    if remove and (name is not None or via is not None): die("--name and --via go with adding a launcher, not with --remove")
+    if name is not None and clean(name) != name: die(bad_name(name))
+    if via is not None and not re.fullmatch(r"[A-Za-z0-9_+/][A-Za-z0-9._+/-]*", via): die(f"'{via}' is not a program for --via (a name or a path, no spaces)")
     ident = a[0][:-8] if a[0].endswith(".desktop") else a[0]
-    if not re.fullmatch(r"[A-Za-z0-9._+-]+", ident) or ident.startswith("."): die(f"'{ident}' is not a launcher id")
+    if not re.fullmatch(r"[A-Za-z0-9._+*?\[\]!-]+", ident) or ident.startswith("."): die(f"'{ident}' is not a launcher id")
     mine = f"{user_launchers()}/{ident}.desktop"
     if remove:
         if os.path.exists(mine) and "X-Sbx-Sandboxed=true" not in launcher_text(mine): die(f"{tilde(mine)} was not made by sbx; not removing it")
         found = our_launchers(ident)
         if not found: die(f"{tilde(mine)} doesn't exist, and no launcher made by sbx is called *.{ident}.desktop or starts {ident}")
-        for p in found: os.unlink(p); print(f"removed {tilde(p)}")
+        for p in found:
+            if dry: print(f"would remove {tilde(p)}")
+            else: os.unlink(p); print(f"removed {tilde(p)}")
         return
     found = system_launchers(ident)
-    main = None if found else installed_main(ident)
+    main = None if found or GLOB.search(ident) else installed_main(ident)
     if main:                                                  # made by `sbx install` and the launcher was removed: write it again
+        if name is not None or via is not None: die(f"--name and --via don't apply to '{ident}': the launcher sbx install made already names it")
         if os.path.lexists(mine) and "X-Sbx-Sandboxed=true" not in launcher_text(mine): die(f"{tilde(mine)} already exists and was not made by sbx; not touching it")
+        if dry: print(f"would write {tilde(mine)}: the launcher sbx install made for {ident}"); return
         path, icon = write_install_launcher(ident, main, shutil.which("sbx") or os.path.realpath(sys.argv[0]))
         print(f"wrote {tilde(path)}: the launcher starts the program through sbx" + (f", icon {icon}" if icon else ", no icon found in its folder") + f".\nUndo with: sbx desktop --remove {ident}")
         return
-    if not found: die(f"no launcher called {ident}.desktop, and none that starts {ident}, in the applications folders of XDG_DATA_DIRS")
-    if not any([add_launcher(p, ident) for p in found]): sys.exit(1)
+    if not found: die(f"no launcher called {ident}.desktop, and none that starts {ident}, in the applications folders of XDG_DATA_DIRS" if not GLOB.search(ident) else f"no launcher id matches {ident} in the applications folders of XDG_DATA_DIRS")
+    if not any([add_launcher(p, ident, name, via, dry) for p in found]): sys.exit(1)
 
 
 # ---------------------------------------------------------------- opening downloaded programs
