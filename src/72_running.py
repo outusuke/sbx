@@ -3,7 +3,6 @@
 
 # ---------------------------------------------------------------- running programs
 RUNNING = f"{STATE}/running"      # RUNNING/PID: "NAME\nSTARTTIME" of an sbx process, then "\nPID\nSTARTTIME" of its sandbox, then the same for the sandbox's init
-STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when sbx is told to stop
 
 
 def proc_start(pid):

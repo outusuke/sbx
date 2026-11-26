@@ -2,7 +2,7 @@
 #| Layer rule: this fragment may use names from lower-numbered fragments (and its own) only; build.py enforces it.
 
 # ---------------------------------------------------------------- running it
-LINGER_GRACE = 5    # how long what the program left behind may keep running after it exits
+
 
 def sweep_stale():
     """Remove helper files that a killed sbx left behind in $XDG_RUNTIME_DIR/sbx (named PID.bus, PID.a11y, PID.system, PID.xauth, PID.wl, PID.gsettings, PID.boot_id, PID.hostname, PID.hosts, PID.passwd, PID.resolv.conf, PID.seccomp, PID.status)."""

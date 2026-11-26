@@ -100,6 +100,8 @@ def private_net(cfg):
 DNS_FWD = "169.254.1.1"
 PASTA = ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", DNS_FWD,
          "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--"]
+LINGER_GRACE = 5    # how long what the program left behind may keep running after it exits
+STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when sbx is told to stop
 SEC_FD = 9      # pasta closes inherited descriptors, so bwrap's seccomp filter is re-opened from a file inside it
 INFO_FD = 8     # and the file bwrap writes its --info-fd to likewise (one digit: dash, the usual /bin/sh, can't open "10>file")
 STATUS_FD = 7   # likewise for --json-status-fd, which gives sbx the sandbox's init pid
@@ -110,7 +112,11 @@ def net_wrap(files=()):
     a shell first opens each file as that descriptor, which bwrap then inherits."""
     if not files: return PASTA
     opens = "; ".join(f'exec {fd}{op}"${i}"' for i, (fd, op, _) in enumerate(files, 1))
-    return PASTA + ["/bin/sh", "-c", f'{opens}; shift {len(files)}; exec "$@"', "sh"] + [path for _, _, path in files]
+    # No exec: when bwrap's outer process exits, pasta's pid namespace ends and the kernel SIGKILLs everything in it, so this shell stays
+    # as pid 1 there, waits for the leftovers (w: until only it is left in /proc, or N polls of 0.05 s), then SIGTERM, then SIGKILL.
+    wait = 'w() { n=$1; i=0; while [ $i -lt $n ]; do set -- /proc/[0-9]*; [ $# -le 1 ] && return 0; sleep 0.05; i=$((i+1)); done; return 1; }'
+    tail = f'"$@"; rc=$?; {wait}; w {LINGER_GRACE * 20} || {{ kill -TERM -1; w {STOP_GRACE * 20} || kill -KILL -1; }}; exit $rc'
+    return PASTA + ["/bin/sh", "-c", f'{opens}; shift {len(files)}; {tail}', "sh"] + [path for _, _, path in files]
 
 
 def pasta_problem():

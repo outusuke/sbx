@@ -185,7 +185,8 @@ class Snapshot(unittest.TestCase):
         wrap, a = fake_preview("firefox", ["--net-private", "--no-portals"])
         self.assertEqual(wrap, ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", "169.254.1.1",
                                 "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--",
-                                "/bin/sh", "-c", 'exec 7>"$1"; exec 9<"$2"; shift 2; exec "$@"', "sh", "/run/user/1000/sbx/PID.status", "/run/user/1000/sbx/PID.seccomp"])
+                                "/bin/sh", "-c", wrap[17], "sh", "/run/user/1000/sbx/PID.status", "/run/user/1000/sbx/PID.seccomp"])
+        self.assertTrue(wrap[17].startswith('exec 7>"$1"; exec 9<"$2"; shift 2; "$@"; rc=$?; '))
         self.assertEqual(a[a.index("--seccomp") + 1], "9")                                  # the shell opens the file as descriptor 9
         self.assertNotIn("FD", a)
         self.assertEqual(a[a.index("--uid"):a.index("--uid") + 4], ["--uid", "1000", "--gid", "1000"])     # pasta's namespace maps you to root
@@ -504,14 +505,18 @@ class Units(unittest.TestCase):
         self.assertEqual(S["net_wrap"](), pasta)
         w = S["net_wrap"]([(9, "<", "/a"), (8, ">", "/b")])
         self.assertEqual(w[:len(pasta)], pasta)
-        self.assertEqual(w[len(pasta):], ["/bin/sh", "-c", 'exec 9<"$1"; exec 8>"$2"; shift 2; exec "$@"', "sh", "/a", "/b"])
+        self.assertEqual(w[len(pasta):len(pasta) + 2], ["/bin/sh", "-c"])
+        self.assertTrue(w[len(pasta) + 2].startswith('exec 9<"$1"; exec 8>"$2"; shift 2; "$@"; rc=$?; '), "no exec: the shell stays as pasta's pid 1 and waits")
+        self.assertTrue(w[len(pasta) + 2].endswith("; exit $rc"))
+        self.assertEqual(w[len(pasta) + 3:], ["sh", "/a", "/b"])
         self.assertLess(S["INFO_FD"], 10, "dash can't open a two-digit descriptor: exec 10>file runs a program called 10")
         self.assertNotEqual(S["INFO_FD"], S["SEC_FD"])
         self.assertLess(S["STATUS_FD"], 10); self.assertEqual(len({S["STATUS_FD"], S["INFO_FD"], S["SEC_FD"]}), 3)
         src, dst = f"{self.tmp}/in", f"{self.tmp}/out"                                  # the shell part for real, without pasta
         with open(src, "w") as f: f.write("filter\n")
-        r = subprocess.run(S["net_wrap"]([(S["SEC_FD"], "<", src), (S["INFO_FD"], ">", dst)])[len(pasta):] +
-                           ["/bin/sh", "-c", f"cat <&{S['SEC_FD']}; echo info >&{S['INFO_FD']}"], capture_output=True, text=True)
+        sh = S["net_wrap"]([(S["SEC_FD"], "<", src), (S["INFO_FD"], ">", dst)])[len(pasta):]
+        sh[2] = sh[2].split("; rc=$?")[0]            # only the part before the wait: its `kill -1` would kill this test runner
+        r = subprocess.run(sh + ["/bin/sh", "-c", f"cat <&{S['SEC_FD']}; echo info >&{S['INFO_FD']}"], capture_output=True, text=True)
         self.assertEqual((r.returncode, r.stdout), (0, "filter\n"), r.stderr)
         with open(dst) as f: self.assertEqual(f.read(), "info\n")
 
@@ -544,7 +549,9 @@ class Units(unittest.TestCase):
         a, st, inst, info = self.live_portals_build({"net_private": True})
         sec, stat = f"{self.tmp}/run/sbx/{os.getpid()}.seccomp", f"{self.tmp}/run/sbx/{os.getpid()}.status"
         self.assertEqual(a[a.index("--info-fd") + 1], "8"); self.assertEqual(a[a.index("--seccomp") + 1], "9"); self.assertEqual(a[a.index("--json-status-fd") + 1], "7")
-        self.assertEqual(st["wrap"][len(S["PASTA"]):], ["/bin/sh", "-c", 'exec 7>"$1"; exec 9<"$2"; exec 8>"$3"; shift 3; exec "$@"', "sh", stat, sec, info])
+        wrap = st["wrap"][len(S["PASTA"]):]
+        self.assertEqual(wrap[:2], ["/bin/sh", "-c"]); self.assertEqual(wrap[3:], ["sh", stat, sec, info])
+        self.assertTrue(wrap[2].startswith('exec 7>"$1"; exec 9<"$2"; exec 8>"$3"; shift 3; "$@"; rc=$?; '))
         self.assertEqual((st["fds"], st["keep"]), ([], []), "pasta would close anything inherited")
         self.assertEqual(os.stat(info).st_mode & 0o777, 0o600); self.assertIn(info, st["files"]); self.assertIn(inst, st["cleanup"])
         S["teardown"](st); self.assertFalse(os.path.exists(inst)); self.assertFalse(os.path.exists(sec))
@@ -5324,12 +5331,13 @@ class Isolation(unittest.TestCase):
         r = self.sbx_run("--userns", self.script, "--expect=userns0")                       # negative control: with --userns they work
         if self.has_disable_userns and r.returncode == 0: self.fail("user namespaces were blocked despite --userns")
 
-    def leftover(self, name, body):
+    def leftover(self, name, body, *flags):
         """Run a program that exits at once but starts BODY in the background; returns how long sbx took and the program's home."""
         prog = f"{self.home}/{name}"
         with open(prog, "w") as f: f.write(f"#!/bin/sh\n({body}) >/dev/null 2>&1 &\nexit 0\n")
         os.chmod(prog, 0o755)
-        t = time.time(); r = self.sbx_run("--ignore-config", "--no-portals", prog); self.assertEqual(r.returncode, 0, r.stderr)
+        t = time.time(); r = self.sbx_run("--ignore-config", "--no-portals", *flags, prog, env={"XDG_RUNTIME_DIR": f"{self.T}/run-{name}"} if flags else None)
+        self.assertEqual(r.returncode, 0, r.stderr)
         return time.time() - t, f"{self.home}/.sbx-homes/{name}"
 
     def test_what_a_program_leaves_running_gets_to_finish_and_is_then_ended(self):
@@ -5354,6 +5362,17 @@ class Isolation(unittest.TestCase):
         self.assertGreaterEqual(took, linger + stop - 0.5); self.assertLess(took, linger + stop + 5)
         alive = [p for p in os.listdir("/proc") if p.isdigit() and "61.7" in open(f"/proc/{p}/cmdline", "rb").read().decode(errors="replace")]
         self.assertEqual(alive, [], "the sandbox outlived sbx")
+
+    def test_leftovers_get_their_sigterm_to_save_under_a_private_network_too(self):
+        if not shutil.which("pasta"): self.skipTest("pasta is not installed")
+        if subprocess.run(["pasta", "--quiet", "--config-net", "--", "true"], capture_output=True, timeout=30).returncode != 0:
+            self.skipTest("pasta cannot start here")      # also covers a missing or unusable /dev/net/tun
+        linger = load_sbx()["LINGER_GRACE"]
+        took, home = self.leftover("pastasaver", "trap 'echo saved > \"$HOME/saved\"; exit 0' TERM; sleep 61.3 & wait", "--net-private")
+        with open(f"{home}/saved") as f: self.assertEqual(f.read(), "saved\n")            # pasta's namespace ending must not SIGKILL it first
+        self.assertGreaterEqual(took, linger - 0.5); self.assertLess(took, linger + 3)
+        t = time.time(); r = self.sbx_run("--ignore-config", "--no-portals", "--net-private", "/bin/true", env={"XDG_RUNTIME_DIR": f"{self.T}/run-true"})
+        self.assertEqual(r.returncode, 0, r.stderr); self.assertLess(time.time() - t, 2, "a program that leaves nothing behind must not wait")
 
     def test_a_signal_during_the_linger_ends_the_leftovers_within_the_grace(self):
         prog = f"{self.home}/lingers"
