@@ -148,7 +148,8 @@ def run(prog, args, opts):
         for t in ts: t.start()
         rc = p.wait()
         note_init()
-        if init and not wait_exit(*init[0], STOP_GRACE if stopped[0] else LINGER_GRACE): signal_tree(init, signal.SIGKILL)       # ends the whole sandbox
+        how = end_leftovers(init[0], STOP_GRACE if stopped[0] else LINGER_GRACE, stopped) if init else ""
+        if how: log(f"LEFTOVER still running after {LINGER_GRACE}s: ended with {'SIGTERM' if how == 'term' else 'SIGKILL'}", name)
         if stopped[0]: finish_tree(tree, STOP_GRACE)
         for t in ts: t.join(2)
     finally:

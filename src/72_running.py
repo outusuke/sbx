@@ -126,6 +126,16 @@ def signal_tree(tree, sig):
         except OSError: pass
 
 
+def end_leftovers(init, grace, stopped):
+    """Wait GRACE for init, then SIGTERM what is left so it can save, then SIGKILL init. Returns "", "term" or "kill"."""
+    if wait_exit(*init, grace): return ""
+    if not stopped[0]:
+        signal_tree(descendants(init[0]), signal.SIGTERM)
+        if wait_exit(*init, STOP_GRACE): return "term"
+    signal_tree([init], signal.SIGKILL)
+    return "kill"
+
+
 def finish_tree(tree, grace):
     """Give the processes in TREE GRACE seconds to end, then SIGKILL the rest."""
     end = time.time() + grace

@@ -8,7 +8,7 @@
 #     the Wayland client (against a fake compositor), launcher rewriting and more. Nothing here needs bubblewrap.
 #   * Isolation: runs sbx-selftest and small programs inside real sandboxes against canary files planted in a temporary
 #     "home". Needs bubblewrap; skipped without it. Nothing touches your real home.
-import contextlib, difflib, hashlib, io, json, os, re, select, shutil, socket, struct, subprocess, sys, tempfile, threading, time, types, unittest
+import contextlib, difflib, hashlib, io, json, os, re, select, shutil, signal, socket, struct, subprocess, sys, tempfile, threading, time, types, unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -5341,6 +5341,29 @@ class Isolation(unittest.TestCase):
         took, _ = self.leftover("lingerer", marker)
         self.assertGreaterEqual(took, linger - 0.5); self.assertLess(took, linger + 5)
         alive = [p for p in os.listdir("/proc") if p.isdigit() and marker.split()[1] in open(f"/proc/{p}/cmdline", "rb").read().decode(errors="replace")]
+        self.assertEqual(alive, [], "the sandbox outlived sbx")
+
+    def test_leftovers_that_are_still_running_get_a_sigterm_to_save_before_the_sigkill(self):
+        linger = load_sbx()["LINGER_GRACE"]
+        saver = "trap 'echo saved > \"$HOME/saved\"; exit 0' TERM; sleep 61.5 & wait"        # saves only on SIGTERM
+        took, home = self.leftover("persistent", saver)
+        with open(f"{home}/saved") as f: self.assertEqual(f.read(), "saved\n")
+        self.assertGreaterEqual(took, linger - 0.5); self.assertLess(took, linger + 3, "sbx waited for the SIGKILL grace although the SIGTERM was enough")
+        took, home = self.leftover("deaf", "trap '' TERM; sleep 61.7")  # needs the SIGKILL
+        stop = load_sbx()["STOP_GRACE"]
+        self.assertGreaterEqual(took, linger + stop - 0.5); self.assertLess(took, linger + stop + 5)
+        alive = [p for p in os.listdir("/proc") if p.isdigit() and "61.7" in open(f"/proc/{p}/cmdline", "rb").read().decode(errors="replace")]
+        self.assertEqual(alive, [], "the sandbox outlived sbx")
+
+    def test_a_signal_during_the_linger_ends_the_leftovers_within_the_grace(self):
+        prog = f"{self.home}/lingers"
+        with open(prog, "w") as f: f.write("#!/bin/sh\n(trap '' TERM; sleep 61.9) >/dev/null 2>&1 &\nexit 0\n")
+        os.chmod(prog, 0o755)
+        p = subprocess.Popen([sys.executable, self.sbx, "--ignore-config", "--no-portals", prog], cwd=self.home, env={**self.env, "SBX_NO_POPUP": "1"},
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.5); t = time.time(); p.send_signal(signal.SIGTERM); p.wait(timeout=20)
+        self.assertLess(time.time() - t, load_sbx()["LINGER_GRACE"] + 1)
+        alive = [x for x in os.listdir("/proc") if x.isdigit() and "61.9" in open(f"/proc/{x}/cmdline", "rb").read().decode(errors="replace")]
         self.assertEqual(alive, [], "the sandbox outlived sbx")
 
     def test_a_program_that_leaves_nothing_behind_does_not_wait(self):
