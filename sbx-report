@@ -3,10 +3,12 @@
 # sbx-report - run it INSIDE sbx and it prints what the program can reach: network, sockets, devices, folders, desktop
 # portals, the tray, system calls. Unlike sbx-selftest (which says PASS or FAIL) this is a readable overview, for
 # looking at a setup you made, for example before you give a program one more permission.
-#     sbx ./sbx-report [--portals=LIST] [--tray] [--mpris] [PATH ...]
+#     sbx ./sbx-report [--portals=LIST] [--portals-off=LIST] [--tray] [--mpris] [PATH ...]
 # Inside the sandbox the report can't see your settings, so tell it what you turned on, or those rows say EXPOSED:
 #     --portals=LIST   the extra portals that are on, comma separated: screenshot screencast location shortcuts
 #                      remote_desktop input_capture wallpaper launcher secret background camera
+#                      The default-on ones (screenshot screencast location shortcuts wallpaper secret) are assumed on.
+#     --portals-off=LIST  the default-on portals you switched off (portal_NAME=0): if one is still reachable it says EXPOSED
 #     --tray           tray=1 is on
 #     --mpris          mpris=1 is on
 # Extra PATHs are checked as "File argument": is it visible, and writable?
@@ -15,7 +17,9 @@
 import ctypes, glob, json, os, platform, re, shutil, socket, struct, subprocess, sys
 
 args = sys.argv[1:]
-on_portals = {p for a in args if a.startswith("--portals=") for p in a[10:].split(",") if p}
+DEFAULT_PORTALS = {"screenshot", "screencast", "location", "shortcuts", "wallpaper", "secret"}   # sbx's PORTAL_DEFAULT_ON
+listed = lambda flag: {p for a in args if a.startswith(flag) for p in a[len(flag):].split(",") if p}
+on_portals = (DEFAULT_PORTALS | listed("--portals=")) - listed("--portals-off=")
 tray_flag = "--tray" in args
 mpris_flag = "--mpris" in args
 paths = [a for a in args if not a.startswith("--")]

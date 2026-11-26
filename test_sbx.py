@@ -4968,6 +4968,30 @@ def bwrap_works():
         self.assertEqual(self.S["SHARE_DIRS"].keys(), dict.fromkeys(G["SHARE_NAMES"]).keys())
 
 
+class ReportPortals(unittest.TestCase):
+    """sbx-report against a stand-in gdbus that answers like a desktop whose portals are all reachable (no sandbox needed)."""
+    def report(self, *args):
+        with tempfile.TemporaryDirectory() as d:
+            fake = f"{d}/gdbus"
+            with open(fake, "w") as f:
+                f.write("#!/bin/sh\ncase \"$*\" in *Properties.Get*) echo '(<uint32 2>,)';; "
+                        "*) echo 'Error: GDBus.Error:org.freedesktop.DBus.Error.InvalidArgs: no arguments' >&2; exit 1;; esac\n")
+            os.chmod(fake, 0o755)
+            r = subprocess.run([sys.executable, f"{HERE}/sbx-report", *args], capture_output=True, text=True, timeout=60,
+                               env={**os.environ, "PATH": d + ":" + os.environ["PATH"], "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent"})
+        return r.stdout
+
+    def test_portals_that_are_on_by_default_are_not_exposed(self):
+        out = self.report()
+        for label in ("screenshots", "screen sharing", "location", "global shortcuts", "wallpaper", "secrets"):
+            self.assertRegex(out, rf"(?m)^ALLOWED\s+Portal: {label}\s")
+        for label in ("remote desktop", "input capture", "dynamic launcher", "background apps"):
+            self.assertRegex(out, rf"(?m)^EXPOSED\s+Portal: {label}\s")
+
+    def test_a_default_portal_switched_off_but_reachable_is_exposed(self):
+        self.assertRegex(self.report("--portals-off=screenshot,secret"), r"(?m)^EXPOSED\s+Portal: screenshots\s")
+
+
 class Isolation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
